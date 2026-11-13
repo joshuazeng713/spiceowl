@@ -7,8 +7,9 @@ https://learn.chatgpt.com/docs/enterprise/managed-configuration.md
 
 The native runtime alone owns credentials/config. We never read auth files,
 edit config, relax managed requirements, attach another thread, or select a
-fallback model/provider. Built-in providers with no tested zero-retry override
-remain metadata-only. Parent owns request deduplication and live smoke tests.
+fallback model/provider. Native-managed network retries retain their configured
+policy within the bounded process lifetime; the adapter sends turn/start once.
+Parent owns request deduplication and live smoke tests.
 """
 
 from contextlib import contextmanager
@@ -17,6 +18,7 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import time
 
 from spiceowl import __version__
 from spiceowl.domain.common import DomainError, require_id
@@ -31,6 +33,8 @@ _FIELDS = {"schema", "agent_id", "label", "executable", "model"}
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./:-]{0,199}")
 _NATIVE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,199}")
 _PROVIDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
+_SERVER_KEY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,95}")
+MAX_MCP_SERVERS = 64
 _DISABLED_FEATURES = (
     "shell_tool", "shell_snapshot", "shell_snapshot_v2", "apps",
     "apps_early_resource_discovery", "plugins", "multi_agent", "multi_agent_v2",
@@ -46,15 +50,14 @@ _OVERRIDES = (
 _ERRORS = {
     "native_start": "The selected native binary could not be started.",
     "native_version": "This native version has not passed the adapter's protocol checks.",
-    "native_timeout": "The bounded native operation timed out; no retry was sent.",
-    "native_disconnected": "The native connection closed; no retry was sent.",
+    "native_timeout": "The bounded native operation timed out; the adapter did not replay the question.",
+    "native_disconnected": "The native connection closed; the adapter did not replay the question.",
     "native_protocol": "The native response did not match the supported protocol.",
     "native_output_limit": "The native operation exceeded its bounded output limit.",
     "native_rejected": "The native runtime rejected the request; inspect native setup or managed policy separately.",
     "native_constraints": "Required Q&A-only runtime restrictions could not be verified.",
     "native_auth_required": "The native runtime requires its own login; no login was started.",
     "native_route": "The native provider/model changed or could not be identified; no inference was sent.",
-    "native_retry_control": "This provider has no tested zero-retry configuration in this adapter.",
     "native_permission_denied": "A native tool or permission request was denied by the Q&A-only adapter.",
     "native_tool_activity": "Unexpected native tool activity interrupted the Q&A-only operation.",
     "native_turn_failed": "The native turn ended without successful completion.",
@@ -105,12 +108,18 @@ def _workspace(workspace):
         yield child
 
 
-def _argv(profile):
+def _argv(profile, servers=()):
     argv = [profile["executable"], "app-server", "--listen", "stdio://"]
     for feature in _DISABLED_FEATURES:
         argv.extend(("--disable", feature))
     for setting in _OVERRIDES:
         argv.extend(("-c", setting))
+    for name in servers:
+        # A bare TOML key only; never accept dots, quoting, whitespace or
+        # arbitrary configuration fragments from the discovered server names.
+        if not isinstance(name, str) or not _SERVER_KEY.fullmatch(name):
+            raise NativeFailure("native_constraints")
+        argv.extend(("-c", f"mcp_servers.{name}.enabled=false"))
     return argv
 
 
@@ -126,7 +135,7 @@ def _check_version(profile, cwd):
     return SUPPORTED_VERSION
 
 
-def _safety(config):
+def _runtime_safety(config):
     features = config.get("features")
     if not isinstance(features, dict):
         raise NativeFailure("native_constraints")
@@ -134,13 +143,25 @@ def _safety(config):
         value = features.get(feature)
         if value is not False and not (feature == "code_mode" and isinstance(value, dict) and value.get("enabled") is False):
             raise NativeFailure("native_constraints")
-    servers = config.get("mcp_servers", {})
-    if not isinstance(servers, dict) or any(
-        not isinstance(value, dict) or value.get("enabled") is not False for value in servers.values()
-    ):
-        raise NativeFailure("native_constraints")
     if config.get("sandbox_mode") != "read-only" or config.get("approval_policy") != "never" or config.get("web_search") != "disabled":
         raise NativeFailure("native_constraints")
+
+
+def _server_names(config):
+    servers = config.get("mcp_servers", {})
+    if not isinstance(servers, dict) or len(servers) > MAX_MCP_SERVERS:
+        raise NativeFailure("native_constraints")
+    if any(not isinstance(name, str) or not _SERVER_KEY.fullmatch(name)
+           or not isinstance(value, dict) for name, value in servers.items()):
+        raise NativeFailure("native_constraints")
+    return tuple(sorted(servers))
+
+
+def _safety(config):
+    _runtime_safety(config)
+    for name in _server_names(config):
+        if config["mcp_servers"][name].get("enabled") is not False:
+            raise NativeFailure("native_constraints")
 
 
 class _State:
@@ -259,13 +280,42 @@ class _State:
                 self.usage.update(cost=None, source="native_last_turn")
 
 
-def _metadata(process, state, profile, cwd, *, catalog):
+def _read_config(process, state, cwd):
     process.request("initialize", {"clientInfo": {"name": "spiceowl_native", "title": "SpiceOwl", "version": __version__},
                                    "capabilities": {"experimentalApi": False}}, state.handle)
     process.send({"method": "initialized", "params": {}})
     config = process.request("config/read", {"includeLayers": False, "cwd": cwd}, state.handle).get("config")
     if not isinstance(config, dict):
         raise NativeFailure("native_protocol")
+    if state.permission_denied:
+        raise NativeFailure("native_permission_denied")
+    return config
+
+
+@contextmanager
+def _constrained_process(profile, cwd, timeout):
+    deadline = time.monotonic() + timeout
+
+    def remaining():
+        duration = deadline - time.monotonic()
+        if duration <= 0:
+            raise NativeFailure("native_timeout")
+        return duration
+
+    # An empty MCP table merges with inherited configuration. Discover only
+    # names through native metadata, then disable every literal key in the
+    # final process. This preflight never creates a thread or reads accounts.
+    with NativeProcess(_argv(profile), cwd, min(PROBE_TIMEOUT, remaining())) as discovery:
+        config = _read_config(discovery, _State(discovery), cwd)
+        _runtime_safety(config)
+        servers = _server_names(config)
+    del config
+    with NativeProcess(_argv(profile, servers), cwd, remaining()) as process:
+        yield process
+
+
+def _metadata(process, state, profile, cwd, *, catalog):
+    config = _read_config(process, state, cwd)
     _safety(config)
     # Project only nonsecret identifiers; never retain/return config layers,
     # headers, endpoints, credential references, email or workspace identity.
@@ -304,7 +354,7 @@ def probe_agent(profile, workspace):
     with _workspace(workspace) as cwd:
         try:
             result["version"] = _check_version(profile, cwd)
-            with NativeProcess(_argv(profile), cwd, PROBE_TIMEOUT) as process:
+            with _constrained_process(profile, cwd, PROBE_TIMEOUT) as process:
                 result.update(_metadata(process, _State(process), profile, cwd, catalog=True))
                 result.update(transport="reachable", catalog="advertised")
         except NativeFailure as exc:
@@ -324,7 +374,7 @@ def ask_agent(profile, question, workspace):
     with _workspace(workspace) as cwd:
         try:
             _check_version(profile, cwd)
-            with NativeProcess(_argv(profile), cwd, ASK_TIMEOUT) as process:
+            with _constrained_process(profile, cwd, ASK_TIMEOUT) as process:
                 state = _State(process)
                 metadata = _metadata(process, state, profile, cwd, catalog=False)
                 result.update(model=metadata["model"], provider=metadata["provider"])
@@ -333,15 +383,10 @@ def ask_agent(profile, question, workspace):
                 provider = metadata["provider"]
                 if not isinstance(provider, str) or not _PROVIDER.fullmatch(provider):
                     raise NativeFailure("native_route")
-                if provider in ("openai", "ollama", "lmstudio", "amazon-bedrock", "gcp"):
-                    raise NativeFailure("native_retry_control")
-                # Dotted thread overrides preserve the existing custom provider
-                # definition/auth. Reserved built-ins cannot be redefined.
-                retry_config = {f"model_providers.{provider}.request_max_retries": 0,
-                                f"model_providers.{provider}.stream_max_retries": 0,
-                                f"model_providers.{provider}.supports_websockets": False}
+                # Preserve the native provider and its transport policy. Only
+                # this adapter's dispatch is once-only; native network recovery
+                # remains subject to the same process deadline and cleanup.
                 params = {"cwd": cwd, "ephemeral": True, "sandbox": "read-only", "approvalPolicy": "never",
-                          "config": retry_config,
                           "developerInstructions": "Answer the user's question briefly in plain text. Do not call tools, read files, browse, run commands, or start other agents."}
                 if profile["model"] is not None:
                     params["model"] = profile["model"]

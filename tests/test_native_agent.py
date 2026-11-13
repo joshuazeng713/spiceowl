@@ -57,6 +57,15 @@ config = {"model":"gpt-6-astra", "model_provider":"fixture-api", "features":feat
 if options.get("unsafe_feature"):
     config["features"][options["unsafe_feature"]] = True
 config.update(options.get("config",{}))
+server_flags = [sys.argv[i+1] for i, v in enumerate(sys.argv[:-1]) if v == "-c"
+                and sys.argv[i+1].startswith("mcp_servers.")]
+if not options.get("ignore_server_disable"):
+    for setting in server_flags:
+        assert setting.endswith(".enabled=false")
+        name = setting[len("mcp_servers."):-len(".enabled=false")]
+        config["mcp_servers"][name]["enabled"] = False
+if options.get("new_server_after_discovery") and server_flags:
+    config["mcp_servers"]["late-server"] = {"enabled":True,"command":SENTINEL}
 while True:
     request = receive()
     method = request.get("method")
@@ -194,7 +203,8 @@ class NativeAgentTests(unittest.TestCase):
         self.assertEqual(result["version"],SUPPORTED_VERSION)
         self.assertIsNone(result["error"])
         self.assertNotIn(SENTINEL,json.dumps(result))
-        self.assertEqual(self.methods(),["initialize","initialized","config/read","account/read","model/list"])
+        self.assertEqual(self.methods(),["initialize","initialized","config/read",
+                                        "initialize","initialized","config/read","account/read","model/list"])
         self.assertEqual(list(self.workspace.iterdir()),[])
 
     def test_success_retains_effective_route_ids_answer_and_usage(self):
@@ -232,8 +242,7 @@ class NativeAgentTests(unittest.TestCase):
         self.assertNotIn("model",request)
         self.assertNotIn("modelProvider",request)
         self.assertNotIn("tools",request)
-        self.assertEqual(request["config"]["model_providers.fixture-api.request_max_retries"],0)
-        self.assertEqual(request["config"]["model_providers.fixture-api.stream_max_retries"],0)
+        self.assertNotIn("config",request)
         self.assertNotIn("model/list",self.methods())
         self.assertFalse(any("write" in method or "login" in method or "resume" in method for method in self.methods()))
 
@@ -252,7 +261,7 @@ class NativeAgentTests(unittest.TestCase):
 
     def test_managed_or_unsafe_restrictions_fail_before_inference(self):
         for options in [{"unsafe_feature":"shell_tool"}, {"unsafe_feature":"plugins"},
-                        {"config":{"mcp_servers":{"present":{"enabled":True}}}},
+                        {"config":{"mcp_servers":{"present":{"enabled":True}}},"ignore_server_disable":True},
                         {"sandbox":"workspaceWrite"}, {"approval":"on-request"}, {"ephemeral":False},
                         {"thread_provider":"unexpected-provider"}]:
             with self.subTest(options=options):
@@ -262,16 +271,68 @@ class NativeAgentTests(unittest.TestCase):
                 self.assertNotIn("turn/start",self.methods())
                 self.assertIn(result["error"]["code"],("native_constraints","native_route"))
 
-    def test_native_login_requirement_and_reserved_retry_policy_do_not_dispatch(self):
+    def test_inherited_mcp_servers_are_disabled_only_in_final_process(self):
+        self.configure(config={"mcp_servers":{
+            "fixture-one":{"enabled":True,"command":SENTINEL},
+            "fixture_two":{"url":SENTINEL,"headers":{"authorization":SENTINEL}},
+        }})
+        result = probe_agent(self.profile,self.workspace)
+        self.assertEqual(result["transport"],"reachable")
+        self.assertNotIn(SENTINEL,json.dumps(result))
+        packets = self.packets()
+        launches = [p["argv"] for p in packets if "argv" in p and "app-server" in p["argv"]]
+        self.assertEqual(len(launches),2)
+        self.assertFalse(any(s.startswith("mcp_servers.") for s in launches[0]))
+        for name in ("fixture-one","fixture_two"):
+            self.assertIn(f"mcp_servers.{name}.enabled=false",launches[1])
+        self.assertNotIn(SENTINEL,json.dumps(launches))
+        self.assertNotIn("thread/start",self.methods())
+        self.assertEqual(self.methods().count("account/read"),1)
+        self.assertEqual(self.methods().count("config/read"),2)
+        result = ask_agent(self.profile,"Question",self.workspace)
+        self.assertEqual(result["status"],"completed")
+        self.assertEqual(self.methods().count("thread/start"),1)
+        self.assertEqual(self.methods().count("turn/start"),1)
+
+    def test_unsafe_server_keys_and_configuration_changes_fail_before_thread_creation(self):
+        for key in ('bad.key','bad name','bad"key',"../server","$(touch forbidden)","x"*97):
+            with self.subTest(key=key):
+                self.configure(config={"mcp_servers":{key:{"enabled":True}}})
+                result = ask_agent(self.profile,"Question",self.workspace)
+                self.assertEqual(result["error"]["code"],"native_constraints")
+                self.assertEqual(self.methods().count("config/read"),1)
+                self.assertNotIn("thread/start",self.methods())
+        for options in ({"ignore_server_disable":True},{"new_server_after_discovery":True}):
+            with self.subTest(options=options):
+                self.configure(config={"mcp_servers":{"fixture":{"enabled":True}}},**options)
+                result = ask_agent(self.profile,"Question",self.workspace)
+                self.assertEqual(result["error"]["code"],"native_constraints")
+                self.assertEqual(self.methods().count("config/read"),2)
+                self.assertNotIn("thread/start",self.methods())
+        self.configure(config={"mcp_servers":{f"fixture{i}":{} for i in range(65)}})
+        result = ask_agent(self.profile,"Question",self.workspace)
+        self.assertEqual(result["error"]["code"],"native_constraints")
+        self.assertNotIn("thread/start",self.methods())
+
+    def test_native_login_requirement_does_not_dispatch(self):
         self.configure(account={"requiresOpenaiAuth":True,"account":None})
         self.assertEqual(probe_agent(self.profile,self.workspace)["authentication"],"required")
         result = ask_agent(self.profile,"Question",self.workspace)
         self.assertEqual(result["error"]["code"],"native_auth_required")
         self.assertNotIn("turn/start",self.methods())
-        self.configure(config={"model_provider":"openai"})
-        result = ask_agent(self.profile,"Question",self.workspace)
-        self.assertEqual(result["error"]["code"],"native_retry_control")
-        self.assertNotIn("thread/start",self.methods())
+
+    def test_native_provider_transport_policy_is_preserved_without_adapter_replay(self):
+        for provider in ("fixture-api","tbd","openai","ollama","lmstudio","amazon-bedrock","gcp"):
+            with self.subTest(provider=provider):
+                self.configure(config={"model_provider":provider})
+                result = ask_agent(self.profile,"Question",self.workspace)
+                self.assertEqual(result["status"],"completed")
+                self.assertEqual(result["provider"],provider)
+                self.assertEqual(self.methods().count("thread/start"),1)
+                self.assertEqual(self.methods().count("turn/start"),1)
+                request = next(p["params"] for p in self.packets() if p.get("method") == "thread/start")
+                self.assertNotIn("config",request)
+                self.assertNotIn("modelProvider",request)
 
     def test_account_metadata_does_not_expose_email_tokens_or_plan(self):
         self.configure(account={"requiresOpenaiAuth":True,"account":{"type":"chatgpt","email":SENTINEL,"planType":SENTINEL}})

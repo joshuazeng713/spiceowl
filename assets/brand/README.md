@@ -1,6 +1,6 @@
 # SpiceOwl brand assets
 
-The initial mark is an original, hand-authored SVG: a watchful owl with a smooth two-cycle sine waveform on its chest. It represents the project's overnight simulation-monitoring use case.
+The initial mark is an original, hand-authored SVG: a watchful owl with a small oscilloscope waveform. It represents the project's overnight simulation-monitoring use case.
 
 | File | Use |
 | --- | --- |

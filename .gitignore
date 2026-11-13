@@ -218,3 +218,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SpiceOwl local state and private simulation data
+/runs/
+/artifacts/
+/private/
+/local/
+/.spiceowl/
+/tmp/
+/pdk/
+/pdks/
+.env.*
+!.env.example
+!.env.*.example
+*.local.toml
+*.local.yaml
+*.local.yml
+.DS_Store
+
+# Future console build products
+node_modules/
+.next/
+
+# Permit intentional, authored public log fixtures despite the Python template.
+!tests/fixtures/synthetic/**/*.log
+!tests/fixtures/synthetic/*.log

@@ -331,6 +331,59 @@ class SSHProbeTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "ssh_unavailable")
         self.assertNotIn("/fictional", json.dumps(result))
 
+    def test_safe_ssh_error_categories_never_expose_raw_stderr(self):
+        cases = [
+            (b"Host key verification failed. /fictional/known_hosts", "ssh_host_key_unverified"),
+            (b"REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed. /fictional/key", "ssh_host_key_changed"),
+            (b"fixture@private-name: Permission denied (publickey).", "ssh_permission_denied"),
+            (b"connect to private-name port 123: Connection timed out", "ssh_connection_timeout"),
+            (b"Operation timed out /fictional/private", "ssh_connection_timeout"),
+            (b"Unrecognized remote error: /fictional/private", "ssh_probe_failed"),
+        ]
+        for stderr, code in cases:
+            with self.subTest(code=code):
+                result, peer = self.run_peer([{"stdout": b"", "stderr": stderr, "returncode": 255}])
+                self.assertEqual(len(peer.calls), 1)
+                self.assertEqual(result["error"]["code"], code)
+                self.assertEqual(result["transport"], "unknown")
+                self.assertFalse(result["identity"]["verified"])
+                serialized = json.dumps(result)
+                for raw in ("/fictional", "private-name", "publickey", "port 123"):
+                    self.assertNotIn(raw, serialized)
+                self.assertLess(len(result["error"]["message"]), 160)
+
+    def test_stderr_hints_do_not_override_success_or_remote_command_failure(self):
+        result, _ = self.run_peer([{"stderr": b"Host key verification failed"}], profile([]))
+        self.assertIsNone(result["error"])
+        self.assertTrue(result["identity"]["verified"])
+        result, _ = self.run_peer([{"stderr": b"Permission denied", "returncode": 70}])
+        self.assertEqual(result["error"]["code"], "ssh_probe_failed")
+        result, _ = self.run_peer([{"stdout": b"Host key verification failed", "returncode": 255}])
+        self.assertEqual(result["error"]["code"], "ssh_probe_failed")
+
+    def test_classified_later_ssh_failure_preserves_prior_tool_evidence(self):
+        result, peer = self.run_peer([
+            {}, {"banner": "sub-version 99.1.0.123"},
+            {"stdout": b"", "stderr": b"Host key verification failed", "returncode": 255},
+        ])
+        self.assertEqual(len(peer.calls), 3)
+        self.assertEqual(result["transport"], "unknown")
+        self.assertEqual(result["error"]["code"], "ssh_host_key_unverified")
+        self.assertEqual(result["tools"][0]["version"], "99.1.0.123")
+        self.assertEqual(result["tools"][1]["error"]["code"], "ssh_host_key_unverified")
+
+    def test_stderr_classifier_handles_split_phrases_with_bounded_tail(self):
+        hints = ssh._StderrHints()
+        for byte in b"prefix /fictional/private\nHOST KEY VERIFICATION FAILED.\n":
+            hints.feed(bytes([byte]))
+            self.assertLessEqual(len(hints._tail), ssh._STDERR_TAIL_BYTES)
+        self.assertEqual(hints.category(), "ssh_host_key_unverified")
+        hints.feed(b"REMOTE HOST IDENTIFICATION HAS CHANGED")
+        self.assertEqual(hints.category(), "ssh_host_key_changed")
+        hints.feed(b"x" * 4096)
+        self.assertLessEqual(len(hints._tail), ssh._STDERR_TAIL_BYTES)
+        self.assertEqual(hints.category(), "ssh_host_key_changed")
+
     def test_timeout_reaps_peer_and_returns_unknown(self):
         started = time.monotonic()
         with patch.object(ssh, "COMMAND_TIMEOUT_SECONDS", 0.15):

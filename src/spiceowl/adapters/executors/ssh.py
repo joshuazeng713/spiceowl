@@ -42,12 +42,57 @@ _SSH_OPTIONS = (
 )
 _IDENTITY_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", re.ASCII)
 _IDENTITY_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}", re.ASCII)
+_SSH_ERROR_PATTERNS = (
+    ("ssh_host_key_changed", (b"remote host identification has changed",)),
+    ("ssh_host_key_unverified", (b"host key verification failed",)),
+    ("ssh_permission_denied", (b"permission denied",)),
+    ("ssh_connection_timeout", (b"connection timed out", b"operation timed out")),
+)
+_SSH_ERROR_MESSAGES = {
+    "ssh_host_key_changed": "SSH reported a changed host key; administrator verification is required.",
+    "ssh_host_key_unverified": "SSH could not verify the host key using existing trust records.",
+    "ssh_permission_denied": "SSH reported access denied; check the selected route and existing authorization.",
+    "ssh_connection_timeout": "SSH reported a connection timeout; reachability remains unknown.",
+}
+_STDERR_TAIL_BYTES = max(len(pattern) for _, patterns in _SSH_ERROR_PATTERNS for pattern in patterns) - 1
 
 
 @dataclass(frozen=True)
 class _Reply:
     returncode: int
     stdout: bytes
+    error_category: str | None = None
+
+
+class _StderrHints:
+    """Recognize fixed phrases across chunks; retain only a short rolling tail.
+
+    Hints are untrusted diagnostic categories, never authorization or identity
+    evidence. Only an unsuccessful SSH client exit can expose a category.
+    """
+
+    def __init__(self):
+        self._tail = b""
+        self._matched = set()
+
+    def feed(self, chunk):
+        window = (self._tail + chunk).lower()
+        for code, patterns in _SSH_ERROR_PATTERNS:
+            if any(pattern in window for pattern in patterns):
+                self._matched.add(code)
+        self._tail = window[-_STDERR_TAIL_BYTES:]
+
+    def category(self):
+        # A changed-key warning outranks the generic verification-failed line
+        # that commonly follows it; raw text and matched locations stay local.
+        return next((code for code, _ in _SSH_ERROR_PATTERNS if code in self._matched), None)
+
+
+def _ssh_failure(reply, fallback_message):
+    code = reply.error_category if reply.returncode == 255 else None
+    if code in _SSH_ERROR_MESSAGES:
+        return DomainError(_SSH_ERROR_MESSAGES[code], code)
+    return DomainError(fallback_message, "ssh_probe_failed")
 
 
 def _error(code, message):
@@ -117,12 +162,13 @@ def _stop_owned_process(process):
 
 
 def _invoke(target, script, deadline, *, ssh_hostname=None):
-    """Read pipes incrementally; stderr is counted but never retained/returned."""
+    """Bound both pipes; stderr leaves only a fixed category, never raw text."""
     if time.monotonic() >= deadline:
         raise DomainError("SSH probe reached its time limit.", "probe_timeout")
     process = None
     output = bytearray()
     total = 0
+    stderr_hints = _StderrHints()
     try:
         process = subprocess.Popen(
             _ssh_argv(target, script, ssh_hostname=ssh_hostname), stdin=subprocess.DEVNULL,
@@ -146,8 +192,10 @@ def _invoke(target, script, deadline, *, ssh_hostname=None):
                         raise DomainError("SSH probe exceeded its output limit.", "probe_output_limit")
                     if key.data == "stdout":
                         output.extend(chunk)
+                    else:
+                        stderr_hints.feed(chunk)
             status = process.wait(timeout=max(0, deadline - time.monotonic()))
-        return _Reply(status, bytes(output))
+        return _Reply(status, bytes(output), stderr_hints.category())
     except subprocess.TimeoutExpired:
         raise DomainError("SSH probe reached its time limit.", "probe_timeout") from None
     except OSError:
@@ -238,7 +286,7 @@ def probe_profile(profile) -> dict:
                         min(deadline, time.monotonic() + COMMAND_TIMEOUT_SECONDS),
                         ssh_hostname=profile.get("ssh_hostname"))
         if reply.returncode != 0:
-            raise DomainError("SSH identity probe did not complete.", "ssh_probe_failed")
+            raise _ssh_failure(reply, "SSH identity probe did not complete.")
         _, identity = _identity(reply, nonce)
         result["transport"] = "reachable"
         result["identity"] = identity
@@ -252,13 +300,13 @@ def probe_profile(profile) -> dict:
                                 min(deadline, time.monotonic() + COMMAND_TIMEOUT_SECONDS),
                                 ssh_hostname=profile.get("ssh_hostname"))
                 if reply.returncode not in (0, 72):
-                    raise DomainError("SSH tool probe did not complete.", "ssh_probe_failed")
+                    raise _ssh_failure(reply, "SSH tool probe did not complete.")
                 text, identity = _identity(reply, nonce, tool=True)
                 if not _matches(identity, profile):
                     result["identity"] = identity
                     raise DomainError("Remote identity changed during the probe.", "identity_mismatch")
                 if reply.returncode != 0:
-                    raise DomainError("SSH tool probe did not complete.", "ssh_probe_failed")
+                    raise _ssh_failure(reply, "SSH tool probe did not complete.")
                 result["tools"][index] = _tool_result(reply, text, nonce, tool["kind"])
             except DomainError as exc:
                 result["tools"][index]["error"] = _error(exc.code, str(exc))
@@ -338,7 +386,7 @@ def probe_resource_profile(profile) -> dict:
         reply = _invoke(profile["ssh_target"], _identity_script(nonce), deadline,
                         ssh_hostname=profile.get("ssh_hostname"))
         if reply.returncode != 0:
-            raise DomainError("SSH identity probe did not complete.", "ssh_probe_failed")
+            raise _ssh_failure(reply, "SSH identity probe did not complete.")
         _, identity = _identity(reply, nonce)
         result["transport"] = "reachable"
         result["identity"] = identity
@@ -349,13 +397,13 @@ def probe_resource_profile(profile) -> dict:
         reply = _invoke(profile["ssh_target"], _resource_script(nonce, profile), deadline,
                         ssh_hostname=profile.get("ssh_hostname"))
         if reply.returncode not in (0, 72):
-            raise DomainError("SSH resource probe did not complete.", "ssh_probe_failed")
+            raise _ssh_failure(reply, "SSH resource probe did not complete.")
         text, identity = _identity(reply, nonce, resources=True)
         result["identity"] = identity
         if not _matches(identity, profile):
             raise DomainError("Remote identity changed during the probe.", "identity_mismatch")
         if reply.returncode != 0:
-            raise DomainError("SSH resource probe did not complete.", "ssh_probe_failed")
+            raise _ssh_failure(reply, "SSH resource probe did not complete.")
         _, _, identity_end = _extract(text, nonce, "IDENTITY")
         payload, resources_begin, _ = _extract(text, nonce, "RESOURCES")
         if resources_begin <= identity_end:

@@ -263,6 +263,20 @@ class ResourceProbeTests(unittest.TestCase):
         self.assertEqual(failed["resources"], empty_resources())
         self.assertEqual(good["resources"]["cpu_busy_percent"], 70.0)
 
+    def test_resource_probe_uses_safe_ssh_category_without_metrics_or_raw_output(self):
+        for replies in (
+            [{"stdout": b"", "stderr": b"Host key verification failed. /fictional/key", "returncode": 255}],
+            [{}, {"stdout": b"", "stderr": b"Host key verification failed. /fictional/key", "returncode": 255}],
+        ):
+            with self.subTest(requests=len(replies)):
+                result, peer = self.run_peer(replies)
+                self.assertEqual(len(peer.calls), len(replies))
+                self.assertEqual(result["error"]["code"], "ssh_host_key_unverified")
+                self.assertEqual(result["transport"], "unknown")
+                self.assertFalse(result["identity"]["verified"])
+                self.assertEqual(result["resources"], empty_resources())
+                self.assertNotIn("/fictional", json.dumps(result))
+
     def test_shared_deadline_and_no_retry(self):
         observed_deadlines = []
 

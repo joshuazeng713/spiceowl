@@ -13,9 +13,26 @@ This is a milestone plan, not a release or delivery-date promise. Only M0 exists
 
 The repository is documentation and scaffold only. There is no executable CLI, running service, tested simulator integration, or released package.
 
+## P0 — Agent and model-API connections (next implementation priority)
+
+Added at the maintainer's request on 2026-11-13. See [workstreams](workstreams.md) and the [connection-layer decision](decisions/0002-connection-layer.md). This milestone precedes M1; the simulation reliability and scientific acceptance boundaries remain unchanged.
+
+Deliver connection configuration/registry, separate agent-runtime and model-API contracts, capability-aware auth/session state, secret references, usage/budget records, and an initial management interface. Begin with deterministic fake backends, then verify one official local Codex path and an API-key route through the official OpenAI Python SDK before broadening ACP support. The [integrated implementation plan](design/integration-plan.md) defines P0.1–P0.3 and their observable demos. LiteLLM remains a later optional adapter.
+
+Acceptance:
+
+- Add, list, inspect, disable, and remove connection metadata without invoking a model or logging credentials.
+- Distinguish configuration validity, transport reachability, login status, and a successfully tested inference request.
+- Negotiate optional operations and expose unsupported/unknown capabilities honestly.
+- Preserve the connection owner/host and provider session mapping; do not imply cross-provider native-session portability.
+- Deny paid fallback unless it is explicitly configured within a budget; record model switches and their new session/context boundaries.
+- Keep provider-session cancellation separate from simulation cancellation.
+- Keep all public tests independent of subscriptions, API keys, Cadence, and private servers.
+- Real login and small paid smoke tests are separately authorized, opt-in integration checks, not automatic discovery.
+
 ## M1 — Read-only monitoring
 
-Deliver a Python CLI, mock executor, durable attempt records, incremental log observations, and a plain structured report. Packaging and its minimum Python version are introduced here; Python 3.11+ is the current proposal.
+Deliver a Python CLI, mock executor, durable attempt records, incremental log observations, and a plain structured report. Reuse the packaging introduced by P0; Python 3.11+ is the current proposal, subject to selected dependency support.
 
 Acceptance:
 
@@ -76,11 +93,13 @@ Acceptance:
 - Untrusted log/model content cannot authorize a command or change a policy.
 - Clearly identify implemented, experimental, and unsupported capabilities.
 
-## First three implementation slices
+## First implementation slices
 
-1. Add the domain models and a mock observation source for the disconnected-but-running fixture.
-2. Persist observations locally and produce a read-only report that survives restart.
-3. Add failure injection for duplicate events, rotated logs, and missing results before implementing real submission.
+1. Define connection records, capability/auth/session contracts, and fake agent/API backends.
+2. Add metadata persistence and a local management interface with secret-reference handling.
+3. Add one documented Codex route and one API-key route with isolated, opt-in smoke tests; expand ACP after the common contracts pass.
+4. Return to M1: implement the mock simulation monitor and durable observation/report flow.
+5. Inject duplicate events, rotated logs, lost responses, and missing results before real submission/recovery.
 
 ## Later, after the first backend works
 

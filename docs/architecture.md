@@ -2,6 +2,12 @@
 
 Status: proposed design. No runtime components are implemented yet.
 
+## Connection-layer priority
+
+The immediate implementation priority is user-owned agent and model-API connection management, as recorded in [ADR 0002](decisions/0002-connection-layer.md). The [design workstreams](design/README.md) refine its interfaces alongside simulator and debugging plans. The AI host may differ from the simulation execution host; authentication and provider sessions belong to that AI host and user, not to the simulation attempt.
+
+Use separate `AgentBackend` and `ModelBackend` contracts behind a connection manager. After fake-backed contracts, the first proposed integrations are native local Codex app-server and the official OpenAI Python SDK with an explicit API key. ACP follows; LiteLLM remains optional when additional API providers justify normalization. These are planned integrations, not current dependencies. Protocol negotiation does not replace provider authorization or OS isolation. The [AI design](design/ai-connections.md) records source evidence and authentication limits.
+
 ## First deployment
 
 Start with a single controller and one explicitly configured Linux execution environment. The first monitor uses a mock executor; the first real backend is selected only after the maintainer records the available Virtuoso/Spectre versions and whether execution is local, through SSH, or through a scheduler.
@@ -13,6 +19,7 @@ Keep these responsibilities separate:
 | `domain` | Experiment intent, attempt identity, observations, receipts, decisions | Simulator commands or framework-specific state |
 | `adapters/executors` | Job submission, reconciliation, resource observation, owned-job cancellation | Deciding whether a circuit meets its specification |
 | `adapters/simulators` | Input preparation, tool capabilities, log interpretation, result collection | Unreviewed electrical or measurement changes |
+| `execution` (future package) | Compose adapters, enforce grants, dispatch actions and separately keyed postprocessing | Let an agent session own simulator execution |
 | `monitoring` | Timestamped observations and evidence-based failure classification | Treating stale observations as proof of failure |
 | `validation` | Input consistency, data completeness, measurement preconditions, specification checks | Silently changing the acceptance criteria |
 | `recovery` | Allowed actions, limits, decision records, recovery attempts | Executing arbitrary agent-generated shell commands |
@@ -38,7 +45,11 @@ collect(receipt, artifact_selection) -> artifact_references
 
 These are interface sketches, not existing APIs. Each adapter must document which operations it supports. An adapter that can only observe an existing job must not advertise submission, cancellation, or checkpoint recovery.
 
+`collect` inventories/references/copies existing bytes within a configured scope; OCEAN computation is a separate service-owned postprocessing task. `ExecutionReceipt`, `ActionReceipt`, `PostprocessReceipt`, and their tagged `OperationResult` handoff are defined in [shared boundaries](contracts/interface-boundaries.md#shared-handoff-records). Imported native executions may have a null submission key and explicitly unknown historical fingerprints; this never permits an unkeyed submission.
+
 For a direct-process backend, a PID alone is insufficient identity: record the host, process start identity, owner, and attempt association. For a scheduler, keep the cluster identity, scheduler Job ID, and submission key. For an ADE-managed job, preserve the authoritative native run mapping rather than inferring the newest run.
+
+Each solver restart generation is a new attempt, including native scheduler restarts. Preserve the original submission reference without inventing a new SpiceOwl submit. Automatic native requeue recovery is disabled initially; unsupported identity mapping stays unresolved.
 
 ## Submission uncertainty and controller restarts
 

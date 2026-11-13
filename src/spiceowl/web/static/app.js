@@ -1,7 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const title = (value) => String(value ?? 'unknown').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
-let state = {connections: [], runs: [], sessions: [], hosts: []};
+let state = {connections: [], runs: [], sessions: [], hosts: [], native_agents: [], questions: []};
 let csrf = '';
 let selectedSession = null;
 let sessionView = null;
@@ -11,6 +11,11 @@ let polling = false;
 let submitting = false;
 let toastTimer;
 let routeEpoch = 0;
+let placement = null, executionPlan = null, poolScanning = false;
+let requestedCpus = 4, requestedMemory = 8, requestedSimulator = 'spectre';
+let plannedKind = 'standalone', plannedReference = '', plannedHost = '';
+let nativeAgentId = '', nativeQuestion = 'SSH 断开是否一定意味着 Spectre 仿真失败？请用一句话回答。';
+let selectedQa = null, qaView = null, qaPolling = false, qaSubmitting = false;
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -37,6 +42,7 @@ async function refresh() {
   $('#version').textContent = state.version;
   $('#connection-count').textContent = state.connections.length;
   $('#host-count').textContent = state.hosts.length;
+  $('#native-count').textContent = state.native_agents.length;
   $('#recent-runs').innerHTML = state.runs.slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
 }
 
@@ -91,14 +97,15 @@ function connections() {
     const fields = [['Transport', status.transport || 'unchecked'], ['Authentication', status.authentication || 'unchecked'], ['Model catalog', status.catalog || 'unchecked'], ['Inference access', status.inference_access || 'unverified']];
     return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">${c.kind === 'agent' ? '✧' : '⌁'}</div><div class="connection-name"><h3>${escape(c.label)} ${chip(c.enabled ? 'enabled' : 'disabled', c.enabled ? 'green' : '')}</h3><p>${c.kind === 'agent' ? 'Agent runtime' : 'Model API'} · Offline fixture · ${escape(title(c.scenario))}</p></div><div class="connection-actions"><button class="button secondary small" data-action="probe" data-id="${escape(c.connection_id)}" ${c.enabled ? '' : 'disabled'}>Probe metadata</button><button class="button secondary small" data-action="toggle" data-id="${escape(c.connection_id)}">${c.enabled ? 'Disable' : 'Enable'}</button><button class="button secondary small" data-action="remove" data-id="${escape(c.connection_id)}" aria-label="Remove ${escape(c.label)}">Remove</button></div></div><div class="connection-readiness">${fields.map(([name, value]) => `<div class="readiness-field"><span>${name}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="connection-bottom"><span>All statuses describe a simulated backend.</span><span>Revision ${c.revision} · No credentials</span></div></article>`;
   }).join('')}</div>`;
-  return html + `<div class="planned-note"><strong>Use your existing agent through MCP</strong><p>SpiceOwl can expose stored runs and host observations as read-only tools to an MCP client such as Codex. Install the optional MCP extra, then configure the client to run <code>spiceowl --data-dir ABSOLUTE_STATE_DIR mcp</code>. Registration and a successful client tool call are separate checks.</p><p>These demo connections still use fixture responses. The web console does not send prompts to Codex or a model API.</p></div>`;
+  return html + `<div class="planned-note"><strong>Native agent and MCP</strong><p>These connection cards use fixture responses. Open <a href="#agents">Agent chat</a> for a real question through a registered native runtime.</p><p>MCP exposes stored runs and host observations to existing clients: install the optional extra and configure <code>spiceowl --data-dir ABSOLUTE_STATE_DIR mcp</code>. Its tools only query records.</p></div>`;
 }
 
 function hosts() {
-  let html = heading('SIMULATION HOSTS', 'Check the connection before the run.', 'Explicit SSH identity and tool-version checks. Results below are saved observations.');
+  let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Compare saved resource observations and plan where a new exported-netlist job could run.', `<button class="button primary" data-action="pool-scan" ${poolScanning || !state.hosts.length ? 'disabled' : ''}>${poolScanning ? 'Checking pool…' : 'Check server pool'}</button>`);
+  html += poolOverview();
   html += `<div class="watch-banner"><img src="/owl.svg" alt=""><div><h3>Your existing SSH route.</h3><p>Import a private host profile with <code>spiceowl hosts add --file PROFILE.json</code>. SSH keys and jump hosts remain in your SSH configuration.</p></div></div>`;
   if (!state.hosts.length) html += `<div class="empty"><h2>No simulation hosts registered.</h2><p>Add a profile through the CLI, then refresh this page. Adding or listing hosts makes no remote request.</p></div>`;
-  html += `<div class="connections-list">${state.hosts.map(host => {
+  html += `<details class="host-details" ${state.hosts.length <= 1 ? 'open' : ''}><summary>Host identity and tool versions</summary><div class="connections-list">${state.hosts.map(host => {
     const probe = host.last_probe;
     const matched = probe?.identity?.verified === true;
     const when = probe ? new Date(probe.observed_at).toLocaleString() : 'Never checked';
@@ -109,8 +116,65 @@ function hosts() {
       return `<div class="host-tool"><strong>${escape(title(tool.kind))}</strong>${chip(result?.status || 'unchecked', result?.status === 'available' ? 'green' : result ? 'amber' : '')}<span class="host-version">${escape(result?.version || 'Version unverified')}</span>${result?.error ? `<p class="error-text">${escape(result.error.message)}</p>` : ''}</div>`;
     }).join('');
     return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">▤</div><div class="connection-name"><h3>${escape(host.label)} ${chip(status, matched && !probe.error ? 'green' : probe ? 'amber' : '')}</h3><p>Real connection · ${escape(host.host_id)}</p></div><div class="connection-actions"><button class="button primary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></div></div><div class="connection-readiness">${fields.map(([label, value]) => `<div class="readiness-field"><span>${label}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="host-tools">${toolRows}</div>${probe?.error ? `<div class="host-error">${escape(probe.error.message)}</div>` : ''}<div class="connection-bottom"><span>Last check: ${escape(when)}</span><span>Saved result · no automatic polling</span></div></article>`;
-  }).join('')}</div>`;
-  return html + `<div class="planned-note"><strong>Connection evidence has a limited scope.</strong><p>A matched identity and readable version banner do not verify licenses, circuit inputs or a running job. Checks use bounded remote queries; a timeout leaves connectivity unknown and never changes a simulation record. Simulation submission and monitoring follow in a later slice.</p></div>`;
+  }).join('')}</div></details>`;
+  return html + `<div class="planned-note"><strong>Plans preserve simulation ownership.</strong><p>A new standalone job can receive a proposed host. An existing Virtuoso-managed run retains its original host and native run reference. These plans do not reserve resources or launch a simulation; input, environment and license checks still belong to submission.</p></div>`;
+}
+
+function metric(value, suffix = '', digits = 1) {
+  return Number.isFinite(value) ? `${escape(value.toFixed(digits))}${suffix}` : 'Unknown';
+}
+
+function poolOverview() {
+  const rows = state.hosts.map(host => {
+    const sample = host.last_resources, r = sample?.resources || {};
+    const age = sample?.observed_at ? (Date.now() - Date.parse(sample.observed_at)) / 1000 : NaN;
+    const known = sample?.identity?.verified && !sample.error && age >= 0 && age <= 120;
+    const issue = host.last_probe?.error || sample?.error;
+    return `<tr><th scope="row">${escape(host.label)}<small>${escape(host.host_id)}</small></th><td>${metric(r.cpu_busy_percent, '%')}<small>${metric(r.cpu_count, ' CPUs', 0)}</small></td><td>${metric(r.load_1m)} / ${metric(r.load_5m)}</td><td>${metric(Number.isFinite(r.memory_available_bytes) ? r.memory_available_bytes / 2**30 : null, ' GiB')}<small>of ${metric(Number.isFinite(r.memory_total_bytes) ? r.memory_total_bytes / 2**30 : null, ' GiB')}</small></td><td>${chip(known ? 'recent observation' : sample ? 'unknown or stale' : 'not checked', known ? 'green' : 'amber')}<small>${sample?.observed_at ? escape(new Date(sample.observed_at).toLocaleTimeString()) : 'No resource sample'}</small>${issue ? `<small>${escape(issue.message)}</small>` : ''}</td></tr>`;
+  }).join('');
+  let html = `<section class="panel"><div class="panel-head"><h2>Resource observations</h2><span class="section-note">Two hosts checked at a time · manual refresh</span></div><div class="pool-table-wrap"><table class="pool-table"><thead><tr><th>Host</th><th>CPU busy</th><th>Load 1m / 5m</th><th>Memory available</th><th>Observation</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No registered hosts.</td></tr>'}</tbody></table></div></section>`;
+  html += `<section class="panel pool-placement"><div class="panel-head"><h2>Plan a new execution</h2><span class="chip">NO RESERVATION</span></div><div class="panel-body"><form id="placement-form" class="placement-form"><div><label for="pool-cpus">Requested CPUs</label><input id="pool-cpus" name="cpus" type="number" min="1" max="4096" value="${requestedCpus}" required></div><div><label for="pool-memory">Memory (GiB)</label><input id="pool-memory" name="memory" type="number" min="0.001" step="any" max="1048576" value="${requestedMemory}" required></div><div><label for="pool-simulator">Simulator</label><select id="pool-simulator" name="simulator"><option value="spectre" ${requestedSimulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${requestedSimulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></div><button class="button secondary" type="submit">Evaluate saved data</button></form><div class="placement-result">${placement ? `<strong>${placement.recommended_host_id ? 'Proposed host: ' + escape(placement.recommended_host_id) : 'No eligible host in this snapshot'}</strong><p class="subtle-note">Evaluation: ${escape(new Date(placement.evaluated_at).toLocaleString())} · ${placement.candidates.length} candidate(s). Resource observations expire; this does not reserve the host.</p><ul>${placement.excluded.map(h => `<li>${escape(h.label || h.host_id)}: ${escape(h.reasons.join('; '))}</li>`).join('')}</ul>` : '<p class="subtle-note">Set requirements, then evaluate recent saved observations. Unknown nodes are excluded.</p>'}</div><form id="execution-plan-form" class="execution-plan-form"><label for="execution-kind">Simulation origin</label><select id="execution-kind" name="kind"><option value="standalone">New standalone exported netlist</option><option value="virtuoso_managed">Existing Virtuoso-managed run</option></select><label for="execution-ref">Experiment input reference / native run reference</label><input id="execution-ref" name="reference" maxlength="96" placeholder="experiment-rc-check" required><label for="execution-host">Existing native host (Virtuoso only)</label><select id="execution-host" name="host">${state.hosts.map(h => `<option value="${escape(h.host_id)}">${escape(h.label)}</option>`).join('')}</select><button class="button secondary" type="submit">Prepare reviewable plan</button></form>${executionPlan ? planSummary(executionPlan) : ''}</div></section>`;
+  return html;
+}
+
+function nativeChat() {
+  const agents = state.native_agents;
+  if (!agents.some(a => a.agent_id === nativeAgentId)) nativeAgentId = agents[0]?.agent_id || '';
+  const agent = agents.find(a => a.agent_id === nativeAgentId);
+  const history = state.questions.filter(q => q.agent_id === nativeAgentId);
+  if (!selectedQa || !history.some(q => q.qa_id === selectedQa)) selectedQa = history[0]?.qa_id || null;
+  qaView = history.find(q => q.qa_id === selectedQa) || qaView;
+  let html = heading('NATIVE AGENT', 'Ask your connected agent.', 'A real question through the installed Codex runtime and its configured model provider.');
+  if (!agents.length) return html + '<div class="empty"><h2>No native agent registered.</h2><p>Import a private profile using <code>spiceowl agents add --file PROFILE.json</code>, then refresh. Authentication stays with your native runtime.</p></div>';
+  html += `<div class="native-grid"><section class="panel"><div class="panel-head"><h2>Question</h2>${chip('native', 'green')}</div><div class="panel-body"><form id="native-question-form"><label for="native-agent">Agent connection</label><select id="native-agent">${agents.map(a => `<option value="${escape(a.agent_id)}" ${a.agent_id === nativeAgentId ? 'selected' : ''}>${escape(a.label)}</option>`).join('')}</select><p class="subtle-note">Model: ${escape(agent.model || 'Configured native default')} · Credentials remain in the native runtime.</p><label for="native-question">Your question</label><textarea id="native-question" maxlength="2000" required>${escape(nativeQuestion)}</textarea><button class="button primary full" type="submit" ${qaSubmitting ? 'disabled' : ''}>Send real question</button></form><button class="button secondary small" data-action="native-probe" data-id="${escape(nativeAgentId)}">Check runtime readiness</button><p class="subtle-note">Readiness: ${escape(agent.last_probe?.transport || 'unchecked')} · Inference is verified only by a completed answer. No automatic provider fallback or simulation tools.</p></div></section><section class="panel"><div class="panel-head"><h2>Saved response</h2></div><div id="native-response" class="panel-body"></div></section></div><section class="panel native-history"><div class="panel-head"><h2>Question history</h2></div><div class="panel-body">${history.map(q => `<button class="question-history-row" data-action="native-select" data-id="${escape(q.qa_id)}"><span>${escape(q.question)}</span>${chip(q.status, q.status === 'completed' ? 'green' : 'amber')}</button>`).join('') || '<p class="subtle-note">No saved questions yet.</p>'}</div></section>`;
+  return html;
+}
+
+function planSummary(plan) {
+  return `<div class="plan-summary"><strong>${escape(title(plan.status))} · ${escape(plan.host_id || 'No host selected')}</strong><p>${escape(plan.reason)}</p><p>Origin: ${escape(title(plan.source_kind))}<br>Reference: ${escape(plan.origin?.input_ref || plan.native_run_ref || 'Unknown')}<br>Resources are not reserved. No simulation has been launched.</p><details><summary>View plan record</summary><pre class="plan-json">${escape(JSON.stringify(plan, null, 2))}</pre></details></div>`;
+}
+
+function renderNativeResponse() {
+  const target = $('#native-response');
+  if (!target) return;
+  const q = qaView;
+  target.innerHTML = q ? `${chip(q.status, q.status === 'completed' ? 'green' : 'amber')}<p class="response-question">${escape(q.question)}</p><p class="response-text">${escape(q.answer || (['queued', 'running'].includes(q.status) ? 'Waiting for the native runtime…' : 'No confirmed answer.'))}</p>${q.error ? `<p class="error-text">${escape(q.error.message)}</p>` : ''}<p class="subtle-note">Model: ${escape(q.model || 'Unknown')} · Provider: ${escape(q.provider || 'Unknown')}<br>${escape(q.updated_at || q.created_at)} · Real inference request</p>${q.status === 'outcome_unknown' ? '<p class="denial">The request outcome is unknown. It will not be automatically retried.</p>' : ''}` : '<p class="subtle-note">A confirmed answer will appear here.</p>';
+}
+
+async function pollNative() {
+  if (qaPolling || !selectedQa || location.hash !== '#agents') return;
+  qaPolling = true;
+  const id = selectedQa;
+  try {
+    const q = await api(`/api/agent-questions/${encodeURIComponent(id)}`);
+    if (selectedQa === id) {
+      const completedNow = qaView?.status !== q.status && !['queued', 'running'].includes(q.status);
+      qaView = q; renderNativeResponse();
+      if (completedNow) { await refresh(); if (location.hash === '#agents') render(); }
+    }
+  }
+  catch (error) { toast(error.message); }
+  finally { qaPolling = false; }
 }
 
 function memoryChart(run) {
@@ -145,10 +209,16 @@ function render() {
   sessionView = null;
   const page = location.hash.slice(1) || 'overview';
   const run = currentRun();
-  $('#location').textContent = page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : run ? run.label : 'Overview';
+  $('#location').textContent = page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent chat' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
-  $('#main').innerHTML = page === 'connections' ? connections() : page === 'hosts' ? hosts() : page.startsWith('run/') ? runDetail(run) : overview();
+  $('#main').innerHTML = page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (run && selectedSession) pollSession();
+  if (page === 'hosts') {
+    $('#execution-kind').value = plannedKind;
+    $('#execution-ref').value = plannedReference;
+    if (plannedHost) $('#execution-host').value = plannedHost;
+  }
+  if (page === 'agents') { renderNativeResponse(); if (selectedQa) pollNative(); }
 }
 
 function renderSession() {
@@ -191,6 +261,7 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
+  if (action === 'native-select') { selectedQa = id; qaView = state.questions.find(q => q.qa_id === id) || null; renderNativeResponse(); await pollNative(); return; }
   if (action === 'add-connection') {
     $('#connection-form').reset(); $('#form-error').textContent = ''; $('#connection-dialog').showModal(); return;
   }
@@ -198,6 +269,19 @@ document.addEventListener('click', async event => {
   button.disabled = true;
   const originalText = button.textContent;
   try {
+    if (action === 'pool-scan') {
+      poolScanning = true; button.textContent = 'Checking pool…';
+      try {
+        const result = await api('/api/hosts/scan', {method: 'POST'});
+        placement = null; executionPlan = null;
+        toast(`Pool check saved. ${result.results.filter(r => r.error).length} host(s) remain unknown or incomplete.`);
+      } finally { poolScanning = false; }
+    }
+    if (action === 'native-probe') {
+      button.textContent = 'Checking runtime…';
+      await api(`/api/native-agents/${encodeURIComponent(id)}/probe`, {method: 'POST'});
+      toast('Readiness check saved. A completed answer is needed to verify inference.');
+    }
     if (action === 'host-probe') {
       button.textContent = 'Checking…';
       const probe = await api(`/api/hosts/${encodeURIComponent(id)}/probe`, {method: 'POST'});
@@ -230,10 +314,64 @@ $('#connection-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 
-document.addEventListener('input', event => { if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value; });
+document.addEventListener('input', event => {
+  if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
+  if (event.target.id === 'native-question') nativeQuestion = event.target.value;
+});
 document.addEventListener('change', event => {
   if (event.target.id === 'diagnostic-connection') selectedConnection = event.target.value;
+  if (event.target.id === 'native-agent') { nativeAgentId = event.target.value; selectedQa = null; qaView = null; render(); }
   if (event.target.id === 'session-picker') { selectedSession = event.target.value; sessionView = null; routeEpoch++; pollSession(); }
+});
+
+function placementRequirements() {
+  requestedCpus = Number($('#pool-cpus').value);
+  requestedMemory = Number($('#pool-memory').value);
+  requestedSimulator = $('#pool-simulator').value;
+  if (!Number.isInteger(requestedCpus) || requestedCpus < 1 || !Number.isFinite(requestedMemory) || requestedMemory <= 0) throw new Error('Enter positive CPU and memory requirements.');
+  return {cpu_count: requestedCpus, memory_bytes: Math.ceil(requestedMemory * 2**30), simulator: requestedSimulator};
+}
+
+document.addEventListener('submit', async event => {
+  const id = event.target.id;
+  if (!['placement-form', 'execution-plan-form', 'native-question-form'].includes(id)) return;
+  event.preventDefault();
+  const button = event.target.querySelector('[type=submit]');
+  button.disabled = true;
+  try {
+    if (id === 'placement-form') {
+      placement = await api('/api/placement/recommend', {method: 'POST', body: placementRequirements()});
+      executionPlan = null; render();
+    } else if (id === 'execution-plan-form') {
+      const form = new FormData(event.target), kind = form.get('kind'), reference = form.get('reference');
+      plannedKind = kind; plannedReference = reference; plannedHost = form.get('host');
+      const origin = kind === 'standalone' ? {kind, simulator: requestedSimulator, input_ref: reference} : {kind, simulator: 'spectre', host_id: form.get('host'), native_run_ref: reference};
+      const requirements = placementRequirements();
+      if (kind === 'standalone') origin.simulator = requirements.simulator;
+      executionPlan = await api('/api/execution/plan', {method: 'POST', body: {origin, requirements}});
+      render();
+    } else {
+      if (qaSubmitting) return;
+      qaSubmitting = true;
+      const input = {agent_id: nativeAgentId, question: nativeQuestion};
+      const pending = sessionStorage.getItem('spiceowl.native-pending');
+      let request;
+      if (pending) {
+        request = JSON.parse(pending);
+        if (request.agent_id !== input.agent_id || request.question !== input.question) throw new Error('Retry the original question first: its delivery outcome is unknown.');
+      } else {
+        request = {...input, request_key: `question-${crypto.randomUUID()}`};
+        sessionStorage.setItem('spiceowl.native-pending', JSON.stringify(request));
+      }
+      const receipt = await api('/api/agent-questions', {method: 'POST', body: request});
+      sessionStorage.removeItem('spiceowl.native-pending');
+      selectedQa = receipt.qa_id;
+      await refresh(); render();
+    }
+  } catch (error) {
+    if (id === 'native-question-form' && error.definitive) sessionStorage.removeItem('spiceowl.native-pending');
+    toast(error.message);
+  } finally { qaSubmitting = false; if (button.isConnected) button.disabled = false; const send = $('#native-question-form [type=submit]'); if (send) send.disabled = false; }
 });
 
 document.addEventListener('submit', async event => {
@@ -270,5 +408,6 @@ window.addEventListener('hashchange', async () => {
   try { await refresh(); render(); } catch (error) { toast(error.message); }
 });
 setInterval(() => { if (currentRun() && selectedSession && !document.hidden) pollSession(); }, 900);
+setInterval(() => { if (location.hash === '#agents' && selectedQa && !document.hidden && (!qaView || ['queued', 'running'].includes(qaView.status))) pollNative(); }, 1000);
 try { await refresh(); render(); }
 catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>Could not open the local workspace.</h2><p>${escape(error.message)} Refresh this page after the service is available.</p></div>`; }

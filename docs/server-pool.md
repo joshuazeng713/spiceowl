@@ -1,6 +1,6 @@
 # Server pools and reviewable placement plans
 
-P0.3 adds resource-based recommendations and two explicit simulation origins to the existing [connectivity layer](real-connections.md). The pure scheduling functions described here are implemented with offline tests. CLI, pool scanning, resource cards, and native agent Q&A are integrated by the coordinating workstream under the [P0.3 contract](contracts/p03-pool-agent.md). This guide is not evidence that any real host was tested or a simulation was submitted.
+SpiceOwl 0.3.0a1 adds resource-based recommendations and two explicit simulation origins to the existing [connectivity layer](real-connections.md). The CLI, pool scanning, resource cards and pure scheduling functions implement the [P0.3 contract](contracts/p03-pool-agent.md). Native questions have a separate [Q&A guide](native-agent.md). Qualify each real host independently; an execution plan does not submit a simulation.
 
 A recommendation is a calculation over stored observations. It performs **no network request, reservation, allocation, or dispatch**. An execution plan is a reviewable description of a possible route. Every returned plan has `reservation: false` and `dispatch_enabled: false`.
 

@@ -1,6 +1,6 @@
 # Repository guidance
 
-SpiceOwl implements a local CLI/web console, fake AI backends and synthetic run replay, plus a P0.2 slice for explicit read-only SSH identity/version probes and optional stdio MCP queries. Read README.md, docs/architecture.md, docs/run-contract.md, docs/roadmap.md, docs/local-console.md and docs/contracts/p02-connectivity.md before implementation.
+SpiceOwl implements a local CLI/web console, fake AI backends and synthetic run replay, SSH identity/version/resource probes, pool placement/origin plans, native Codex text Q&A and optional read-only MCP queries. Simulation execution remains unimplemented. Read README.md, docs/architecture.md, docs/run-contract.md, docs/roadmap.md, docs/local-console.md and the P0.2/P0.3 contracts before implementation.
 
 - Preserve the existing MIT license and copyright attribution.
 - Clearly distinguish implemented capabilities, interface sketches, synthetic data, and roadmap items.

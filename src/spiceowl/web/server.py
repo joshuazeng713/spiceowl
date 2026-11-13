@@ -103,9 +103,25 @@ def make_server(controller, port=0):
                 return self.reply(controller.add_connection(self.body()), 201)
             if self.command == "POST" and path == "/api/diagnose":
                 return self.reply(controller.diagnose(self.body()), 202)
+            if self.command == "POST" and path == "/api/agent-questions":
+                return self.reply(controller.ask(self.body()), 202)
+            if self.command == "POST" and path == "/api/hosts/scan":
+                if self.body():
+                    raise DomainError("Pool scan takes an empty object and uses registered hosts.")
+                return self.reply(controller.hosts.scan())
+            if self.command == "POST" and path == "/api/placement/recommend":
+                return self.reply(controller.hosts.recommend(self.body()))
+            if self.command == "POST" and path == "/api/execution/plan":
+                return self.reply(controller.plan_execution(self.body()))
             parts = path.strip("/").split("/")
             if len(parts) >= 3 and parts[0] == "api":
                 identifier = require_id(parts[2])
+                if parts[1] == "agent-questions" and len(parts) == 3 and self.command == "GET":
+                    return self.reply(controller.questions.get(identifier))
+                if parts[1] == "native-agents" and len(parts) == 4 and parts[3] == "probe" and self.command == "POST":
+                    if self.body():
+                        raise DomainError("Agent readiness check takes an empty object.")
+                    return self.reply(controller.native_agents.probe(identifier))
                 if parts[1] == "hosts" and len(parts) == 4 and parts[3] == "probe" and self.command == "POST":
                     if self.body():
                         raise DomainError("A host probe takes an empty object; configure profiles through the CLI.")

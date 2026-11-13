@@ -8,7 +8,11 @@
 <p align="center">An open-source agent console for long-running circuit simulations.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-> **Early development — documentation and directory scaffold.** There is no runnable monitoring service, simulator integration, or CLI yet. Capabilities below describe the intended product; implementation will follow the [milestones](docs/roadmap.md).
+> **Early alpha — runnable offline console.** The browser UI and CLI now manage fake agent/API connections, replay synthetic runs, and retain diagnostic sessions in SQLite. Real provider authentication, Cadence integration and unattended simulation monitoring are not implemented. See the [local console guide](docs/local-console.md).
+
+![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
+
+*Actual prototype interface with authored synthetic observations.*
 
 ## Why SpiceOwl
 
@@ -22,13 +26,13 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
-| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Design drafted |
-| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Planned |
-| Reconnect | Reconcile an existing job after a client or controller interruption | Planned |
-| Validate | Check inputs, required signals, measurement windows, and result completeness | Planned |
-| Recover | Apply bounded, recorded recovery policies for supported failures | Planned |
-| Diagnose | Use an optional agent to explain evidence and propose actions | Planned |
-| Report | Separate execution outcome, measurement validity, and circuit performance | Planned |
+| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Fake agent/API management implemented |
+| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Finite synthetic replay implemented |
+| Reconnect | Reconcile an existing job after a client or controller interruption | Local record recovery implemented; real jobs planned |
+| Validate | Check inputs, required signals, measurement windows, and result completeness | Acceptance reducer implemented; waveform validators planned |
+| Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; dispatch disabled |
+| Diagnose | Use an optional agent to explain evidence and propose actions | Offline fixture diagnosis implemented |
+| Report | Separate execution outcome, measurement validity, and circuit performance | Synthetic four-dimensional reports implemented |
 
 ### A morning report should answer three different questions
 
@@ -81,7 +85,7 @@ spiceowl/
 ├── docs/                      # Architecture, run contract, roadmap, decisions
 ├── assets/brand/              # Editable project icon and exported avatar
 ├── examples/                  # Draft experiment, connection and policy examples
-├── src/spiceowl/               # Reserved Python implementation boundaries
+├── src/spiceowl/              # Installable Python package
 │   ├── domain/                # Experiment, attempt, receipt, and event models
 │   ├── adapters/              # Execution and simulator integrations
 │   ├── monitoring/            # Observation and failure classification
@@ -89,28 +93,28 @@ spiceowl/
 │   ├── recovery/              # Policy evaluation and action proposals
 │   ├── storage/               # Durable records and artifact references
 │   ├── agent/                 # Connections, sessions and optional diagnosis
-│   └── cli/                   # Future local command interface
-└── tests/                     # Validation plan and synthetic fixtures
+│   ├── cli/                   # Local command interface
+│   └── web/                   # Loopback API and bundled browser assets
+└── tests/                     # Offline tests and synthetic fixtures
 ```
 
-The source directories are placeholders, not implemented modules. The [foundation decision](docs/decisions/0001-project-foundation.md) explains which technology choices are provisional.
+The package now includes the offline connection layer, SQLite controller, synthetic replay, acceptance/policy helpers, CLI and bundled web assets. The [local console guide](docs/local-console.md) distinguishes these implementations from later real integrations. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
 
-There is no package to install yet. To explore the design:
+With Python 3.11+ on macOS or Linux:
 
 ```bash
 git clone https://github.com/joshuazeng713/spiceowl.git
 cd spiceowl
-python3 -m json.tool examples/run-manifest.example.json
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/spiceowl serve --demo
 ```
 
-1. Read the [first milestone and acceptance criteria](docs/roadmap.md).
-2. Inspect the [illustrative manifest](examples/run-manifest.example.json) and its [field definitions](docs/run-contract.md).
-3. Review the [synthetic failure scenario](tests/fixtures/synthetic/disconnected-running.json).
-4. Contribute a reproducible failure case or an implementation scoped to a milestone.
+Open the printed loopback URL. Explore Connections, inspect a synthetic run, advance its observations and request a demo diagnosis. No model, simulator, Node.js or credentials are needed. Repeating `--demo` preserves stored history. The [guide](docs/local-console.md) covers CLI commands, persistence, limitations and tests.
 
-The first implementation milestone is **connection management with fake-backed contracts**, followed by individually verified agent/API integrations. The first simulation milestone remains a **read-only monitor with a mock executor**. Real Spectre support will require an explicitly tested version and execution profile.
+The first runnable slice is **connection management with fake backends and a small web console**. Individually verified agent/API integrations and a continuous read-only simulation monitor follow. Real Spectre support will require an explicitly tested version and execution profile.
 
 ## Contributing
 

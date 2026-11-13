@@ -1,6 +1,6 @@
 # Source layout
 
-These directories reserve implementation boundaries. They contain no Python modules yet and are not an installable package. Introduce packaging, dependencies, and executable entry points with P0, the connection-management milestone.
+The P0.1 alpha package implements fake connections, synthetic execution replay, acceptance and policy functions, local persistence, CLI and a bundled web console. Some directories still reserve future boundaries; real provider and simulator integrations are not implemented. See the [local guide](../../docs/local-console.md).
 
 | Directory | Planned responsibility |
 | --- | --- |
@@ -13,7 +13,9 @@ These directories reserve implementation boundaries. They contain no Python modu
 | `storage/` | Durable records, event history, and artifact references |
 | `agent/` | Planned agent/model-API connections, sessions, and optional evidence-backed diagnosis |
 | `cli/` | Local control and structured reports over the domain interfaces |
+| `web/` | Loopback HTTP interface and packaged browser assets |
+| `service.py` | Single-owner offline controller shared by CLI and web |
 
 Dependency direction: adapters and interfaces depend on domain contracts; domain code must not depend on an orchestration framework, a model SDK, or a GUI. See [architecture](../../docs/architecture.md).
 
-The [integrated implementation plan](../../docs/design/integration-plan.md) assigns future `agent/connections/` modules to P0. A service composition package `execution/` is planned for later simulator dispatch and postprocessing; it is not created by this design round.
+The [integrated implementation plan](../../docs/design/integration-plan.md) places real provider adapters after the fake-backed connection slice. An `execution/` package remains planned for later real simulator dispatch and postprocessing; the current `service.py` performs neither.

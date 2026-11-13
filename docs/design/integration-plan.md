@@ -1,6 +1,6 @@
 # Integrated implementation plan
 
-Status: coordinated design, 2026-11-13. No runtime implementation or real integration is delivered by this plan. The three specialist designs are [AI connections](ai-connections.md), [simulator connections](simulator-connections.md), and [simulation debugging](simulation-debug.md); [shared boundaries](../contracts/interface-boundaries.md) resolve their interface recommendations.
+Status: coordinated design, 2026-11-13. P0.1 now has a bounded implementation described in the [local console guide](../local-console.md), including an early small web console accepted by the maintainer. No real integration is certified. The three specialist designs are [AI connections](ai-connections.md), [simulator connections](simulator-connections.md), and [simulation debugging](simulation-debug.md); [shared boundaries](../contracts/interface-boundaries.md) resolve their interface recommendations.
 
 ## Selected route
 

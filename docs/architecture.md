@@ -1,8 +1,8 @@
 # Architecture
 
-Status: architecture target with a P0.1 console and bounded P0.2 connectivity slice. The [local console guide](local-console.md) and [real connection guide](real-connections.md) record shipped components and limits. SSH identity/version checks and read-only stdio MCP queries are implemented; real provider inference and simulator execution remain planned.
+Status: architecture target with a local console, SSH/MCP connectivity and a P0.3 server-pool/native-Q&A slice. The [local console guide](local-console.md), [server pool guide](server-pool.md) and [native agent guide](native-agent.md) record shipped components and limits. Aggregate resource checks, placement/origin plans, read-only MCP queries and native text inference are implemented; simulator execution remains planned.
 
-The current connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific version probes. Private profiles are imported explicitly through the CLI; listing never probes a server. MCP clients query existing SQLite records through an independent read-only connection, without starting a controller or recovering its active turns. This is the existing-agent-to-SpiceOwl direction. A web-console-to-agent runtime adapter is separate future work. See the [P0.2 contract](contracts/p02-connectivity.md).
+The connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific version probes. Private profiles and explicit pool members are imported through the CLI; listing never probes a server. MCP clients query existing SQLite records through an independent read-only connection, without starting a controller or recovering its active turns. The separate native Q&A adapter sends text to an ephemeral Codex thread with restricted tools and preserves uncertain request outcomes. See the [P0.2 contract](contracts/p02-connectivity.md) and [P0.3 contract](contracts/p03-pool-agent.md).
 
 ## Connection-layer priority
 

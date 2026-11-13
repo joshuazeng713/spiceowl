@@ -1,8 +1,8 @@
 # Local console
 
-SpiceOwl 0.2.0a1 is a single-user alpha for macOS and Linux with Python 3.11 or newer. It provides a browser console and CLI backed by the same SQLite records. The core uses Python's standard library; browser assets ship in the package and do not require Node.js. Optional MCP support uses the pinned official Python SDK.
+SpiceOwl 0.3.0a1 is a single-user alpha for macOS and Linux with Python 3.11 or newer. It provides a browser console and CLI backed by the same SQLite records. The core uses Python's standard library; browser assets ship in the package and do not require Node.js. Optional MCP support uses the pinned official Python SDK; native Q&A requires a separately installed, compatible Codex runtime.
 
-All simulation runs and web diagnoses still use **synthetic data**. The Simulation hosts page can make explicit SSH identity/version checks against operator-configured hosts, and MCP clients can query saved local records. See the [real connection guide](real-connections.md). This build does not call models, submit jobs, or resume a real solver. Its local HTTP server is intended for alpha use on loopback, not public or shared production hosting.
+All simulation runs and run diagnoses still use **synthetic data**. Simulation hosts can make explicit SSH identity/version/resource checks and evaluate placement. Agent chat sends real text questions through a registered native runtime. MCP clients query saved local records. See the [server pool guide](server-pool.md), [native agent guide](native-agent.md), and [SSH/MCP guide](real-connections.md). This build does not submit jobs or resume a real solver. Its local HTTP server is intended for alpha use on loopback, not public or shared production hosting.
 
 ![Actual offline prototype with synthetic observations](images/local-console.png)
 
@@ -35,7 +35,8 @@ PYTHONPATH=src python3 -m spiceowl --data-dir .spiceowl serve --demo
 3. Open a run. Select Next observation to advance its finite scenario. Disconnect preserves the same execution identity; OOM records failure; target miss ends with valid measurement and failed specification.
 4. Ask the demo diagnostic assistant about the current snapshot. Its response is deterministic fixture output, not an LLM. Inspect stored events, evidence citations and an advisory policy decision.
 5. Refresh the page or restart the service to inspect the same run and session history. Display reconnection does not start another diagnosis. An interrupted accepted turn is marked `outcome_unknown` and is never automatically replayed.
-6. Import a private host profile through the CLI, then use Simulation hosts to make an explicit connection check. The page labels saved timestamps and untested simulation readiness; it does not poll automatically.
+6. Import a private host profile or explicit pool through the CLI, then use Simulation hosts to check resources and evaluate requested CPU/memory. Results are timestamped; there is no automatic remote polling. Execution plans preserve standalone versus Virtuoso-native ownership and do not launch jobs.
+7. Import a native agent profile, open Agent chat and submit a short real question. The saved result records its actual provider/model and completion state. This is separate from per-run fixture diagnosis.
 
 Read-only suggestions can receive an allow decision, but **dispatch remains disabled**. There is no Execute fix button. Cancelling a diagnosis only stops that local fake turn; it does not change the run.
 

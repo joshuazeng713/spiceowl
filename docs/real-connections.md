@@ -2,6 +2,8 @@
 
 SpiceOwl 0.2.0a1 implements the **P0.2 connectivity slice** described in the [P0.2 contract](contracts/p02-connectivity.md). The [console](local-console.md) continues to use synthetic runs and fake agent/model backends. Qualify each installation and host using the verification stages below.
 
+The current 0.3.0a1 build also provides a [server pool](server-pool.md) and [native text Q&A](native-agent.md). This page describes the narrower SSH/MCP interfaces; its fake-backend statements refer to the original connection and per-run diagnosis demo.
+
 P0.2 adds two separate paths:
 
 | Path | What it does | What it does not establish |

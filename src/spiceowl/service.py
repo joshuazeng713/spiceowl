@@ -29,6 +29,10 @@ class Controller:
         self.store.recover_interrupted()
         from spiceowl.hosts import HostRegistry
         self.hosts = HostRegistry(directory)
+        from spiceowl.agent.qa import NativeRegistry, Questions
+        self.native_agents = NativeRegistry(directory)
+        self.questions = Questions(self.store)
+        self.questions.recover()
 
     def close(self):
         self._closing.set()
@@ -44,7 +48,35 @@ class Controller:
 
     def state(self):
         from spiceowl.adapters.executors.mock import list_scenarios
-        return {"version": __version__, "mode": "read_only_connectivity", "connections": [c for c in self.store.list("connection") if not c.get("deleted")], "hosts": self.hosts.list(), "runs": self.store.list("run"), "sessions": self.store.list("session"), "scenarios": list_scenarios(), "capabilities": {"real_inference": False, "real_simulation": False, "dispatch": False, "synthetic_replay": True, "ssh_connectivity_probe": True, "mcp_local_queries": True}}
+        return {"version": __version__, "mode": "server_pool_and_native_qa", "connections": [c for c in self.store.list("connection") if not c.get("deleted")], "hosts": self.hosts.list(), "native_agents": self.native_agents.list(), "questions": self.questions.list(), "runs": self.store.list("run"), "sessions": self.store.list("session"), "scenarios": list_scenarios(), "capabilities": {"real_inference": True, "real_simulation": False, "dispatch": False, "synthetic_replay": True, "ssh_connectivity_probe": True, "host_resources": True, "placement_plans": True, "mcp_local_queries": True}}
+
+    def ask(self, data):
+        if not self._slots.acquire(blocking=False):
+            raise DomainError("The local question queue is full.", "busy")
+        try:
+            record, created = self.questions.claim(data)
+            if created:
+                self._workers.submit(self._question_worker, record)
+            else:
+                self._slots.release()
+            return {"qa_id": record["qa_id"], "status": record["status"], "created": created}
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def _question_worker(self, record):
+        try:
+            self.questions.run(record)
+        finally:
+            self._slots.release()
+
+    def plan_execution(self, data):
+        from spiceowl.scheduling.origins import plan_execution, validate_origin
+        if not isinstance(data, dict) or set(data) != {"origin", "requirements"}:
+            raise DomainError("An execution plan needs origin and requirements.")
+        origin = validate_origin(data["origin"])
+        placement = self.hosts.recommend(data["requirements"])
+        return plan_execution(origin, placement)
 
     def add_connection(self, data):
         from spiceowl.agent.connections.config import validate_connection

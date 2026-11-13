@@ -7,6 +7,7 @@ import re
 from spiceowl import __version__
 from spiceowl.domain.common import DomainError, require_id, utcnow
 from spiceowl.storage.readonly import MAX_RECORDS
+from spiceowl.domain.connectivity import resource_summary
 
 
 MAX_EVENTS = 32
@@ -232,6 +233,7 @@ class ReadViews:
                             and item.get("kind") in _TOOL_KINDS})
             result.append({"host_id": _id(record.get("host_id")), "label": _text(record.get("label"), 80),
                            "synthetic": record["synthetic"],
-                           "tools": [{"kind": kind} for kind in kinds], "last_probe": _probe(record.get("last_probe"))})
+                           "tools": [{"kind": kind} for kind in kinds], "last_probe": _probe(record.get("last_probe")),
+                           "last_resources": resource_summary(record.get("last_resources"))})
         return _envelope(hosts=result, limit=MAX_RECORDS, truncated=page["truncated"],
                          scope="stored_connectivity_metadata_only")

@@ -75,7 +75,7 @@ class ReadViewTests(unittest.TestCase):
         add_host(self.app)
         result = self.views.list_hosts()
         host = result["hosts"][0]
-        self.assertEqual(set(host), {"host_id", "label", "synthetic", "tools", "last_probe"})
+        self.assertEqual(set(host), {"host_id", "label", "synthetic", "tools", "last_probe", "last_resources"})
         self.assertIs(host["synthetic"], False)
         self.assertEqual(host["tools"], [{"kind": "spectre"}])
         probe = host["last_probe"]

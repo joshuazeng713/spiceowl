@@ -8,7 +8,7 @@
 <p align="center">面向长时间电路仿真的开源 Agent 控制台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-> **早期 Alpha：本地控制台已加入只读连接能力。** CLI 与网页管理合成任务和诊断记录；显式 SSH 检查可以确认主机身份与仿真器版本，可选的 stdio MCP 服务让现有 Agent 查询本地记录。真实模型推理、仿真提交和无人值守监控仍待实现。见[控制台指南](docs/local-console.md)与[真实连接指南](docs/real-connections.md)。
+> **早期 Alpha：服务器池与原生 Agent 问答。** 可以比较有范围限制的 SSH 资源观测、生成独立网表或 Virtuoso 来源的执行计划，并向真实安装的 Codex runtime 发送简短问题。仿真任务及任务诊断仍使用合成数据；仿真提交和无人值守监控待实现。可选 MCP 工具读取已保存的记录。见[控制台指南](docs/local-console.md)、[服务器池指南](docs/server-pool.md)和[原生问答指南](docs/native-agent.md)。
 
 ![SpiceOwl 本地控制台，所有任务均为明确标注的合成数据](docs/images/local-console.png)
 
@@ -26,8 +26,8 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 
 | 能力 | 目标行为 | 当前状态 |
 | --- | --- | --- |
-| 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已实现模拟 Agent/API 管理、只读 MCP 查询与 SSH 身份/版本检查 |
-| 观察 | 跟踪任务身份、仿真进度、日志、内存和磁盘使用 | 已实现有限合成场景回放 |
+| 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已实现原生 Codex 问答、模拟 Agent/API 管理、MCP 查询及 SSH 主机/资源检查 |
+| 观察 | 跟踪任务身份、仿真进度、日志、内存和磁盘使用 | 已有真实主机资源快照；仿真观测仍是合成场景 |
 | 重连 | 在客户端或控制器中断后核对并找回原任务 | 已实现本地记录恢复；真实任务待接入 |
 | 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 已实现验收汇总；波形验证器待实现 |
 | 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 仅提供建议性策略；不执行操作 |
@@ -73,6 +73,7 @@ spiceowl/
 │   ├── storage/               # 持久化记录与产物引用
 │   ├── agent/                 # 连接、会话与可选诊断
 │   ├── mcp/                   # 供现有 Agent 使用的可选只读工具
+│   ├── scheduling/            # 资源选址与仿真来源计划
 │   ├── cli/                   # 本地命令入口
 │   └── web/                   # 本地 API 与随包网页资源
 └── tests/                     # 离线测试与合成案例
@@ -80,7 +81,7 @@ spiceowl/
 
 软件包目前包含模拟 AI 连接、SQLite 控制器、合成回放、验收与策略函数、私有主机配置、有限 SSH 检查、可选 MCP 查询、CLI 和网页资源。[本地控制台指南](docs/local-console.md)区分已实现能力与后续任务监控；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
 
-当前接入切片是 **SSH 连接检查＋供现有 Agent 使用的 MCP 查询**，接口见 [P0.2 连接约定](docs/contracts/p02-connectivity.md)。更广的[整合实施方案](docs/design/integration-plan.md)还计划加入原生 Agent runtime、独立 API-key 路线与 ACP；这些仍是后续工作。[三个专题设计](docs/design/README.md)覆盖 AI 接入、仿真器接入和仿真诊断，并通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
+当前切片加入 **服务器池、仿真来源计划和原生问答**，接口见 [P0.3 约定](docs/contracts/p03-pool-agent.md)；[P0.2 约定](docs/contracts/p02-connectivity.md)记录 SSH/MCP 基础。更广的[整合实施方案](docs/design/integration-plan.md)还计划加入独立 API-key 路线与 ACP。[三个专题设计](docs/design/README.md)通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
 
 ## 从哪里开始
 
@@ -99,6 +100,10 @@ python3 -m venv .venv
 真实连接可使用 `spiceowl hosts add --file PROFILE.json` 导入操作者编写的私有主机配置，再执行 `spiceowl hosts probe HOST_ID`，或在网页 **Simulation hosts → Check connection** 中显式检查。OpenSSH 复用已有别名和跳板配置。版本查询不代表许可证可用、任务正在运行或仿真结果有效。
 
 若要让 Codex 等 MCP 客户端读取记录，安装 `.[mcp]`，并将客户端配置为运行 `spiceowl --data-dir ABSOLUTE_STATE_DIR mcp`。服务使用官方 Python MCP SDK，读取同一本地数据库，但不接管控制器，也不能启动仿真或读取任意路径。配置格式、命令和验证边界见[真实连接指南](docs/real-connections.md)。
+
+多节点场景使用 `hosts import-pool` 注册明确的主机名列表，执行 `hosts scan`，再在 **Simulation hosts** 中填写所需 CPU 和内存。未知或过期节点不参加选址；算法保留资源余量，但推荐不代表预留。独立网表计划为新任务选择候选节点，Virtuoso 管理的任务计划保留原主机和 native run 映射。
+
+真实问答使用 `agents add --file PROFILE.json` 注册私有 runtime 配置，再打开 **Agent chat**。它复用 runtime 现有的服务提供商和认证配置，可能是订阅，也可能是另外配置的 API 路由。请求有持久化标识，不自动切换提供商，也不提供仿真操作工具。见[原生问答指南](docs/native-agent.md)。
 
 ## 参与贡献
 

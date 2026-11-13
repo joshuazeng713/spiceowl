@@ -8,7 +8,7 @@
 <p align="center">An open-source agent console for long-running circuit simulations.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-> **Early alpha — local console with read-only connectivity.** The CLI and browser manage synthetic runs and saved diagnoses. Explicit SSH probes check host identity and simulator versions; an optional stdio MCP server lets an existing agent query local records. Real model inference, simulation submission and unattended monitoring remain planned. See the [console guide](docs/local-console.md) and [real connection guide](docs/real-connections.md).
+> **Early alpha — server pool and native agent Q&A.** Compare bounded SSH resource observations, prepare standalone or Virtuoso-origin execution plans, and ask a real installed Codex runtime a short question. Simulation runs and run diagnoses are still synthetic; job submission and unattended monitoring remain planned. Optional MCP tools read saved records. See the [console guide](docs/local-console.md), [server pool guide](docs/server-pool.md), and [native Q&A guide](docs/native-agent.md).
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
@@ -26,8 +26,8 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
-| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Fake agent/API management; read-only MCP queries and SSH identity/version probes implemented |
-| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Finite synthetic replay implemented |
+| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Native Codex Q&A, fake agent/API management, MCP queries and SSH host/resource checks implemented |
+| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Real aggregate host snapshots; simulation observations remain synthetic |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Local record recovery implemented; real jobs planned |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Acceptance reducer implemented; waveform validators planned |
 | Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; dispatch disabled |
@@ -74,7 +74,7 @@ flowchart TD
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
-The current integration slice is **SSH connectivity plus MCP queries for an existing agent**. It follows the [P0.2 connectivity contract](docs/contracts/p02-connectivity.md). The broader [implementation plan](docs/design/integration-plan.md) also proposes native agent-runtime and API-key routes, then ACP expansion; these remain future work. The [three design workstreams](docs/design/README.md) cover AI connections, simulator connections, and simulation debugging under shared [interface boundaries](docs/contracts/interface-boundaries.md).
+The current slice adds **a server pool, execution-origin planning and native Q&A**, following the [P0.3 contract](docs/contracts/p03-pool-agent.md). The earlier [P0.2 contract](docs/contracts/p02-connectivity.md) covers SSH/MCP fundamentals. The broader [implementation plan](docs/design/integration-plan.md) also proposes API-key and ACP routes; these remain future work. The [three design workstreams](docs/design/README.md) share the [interface boundaries](docs/contracts/interface-boundaries.md).
 
 ## Repository map
 
@@ -94,6 +94,7 @@ spiceowl/
 │   ├── storage/               # Durable records and artifact references
 │   ├── agent/                 # Connections, sessions and optional diagnosis
 │   ├── mcp/                   # Optional read-only tools for existing agents
+│   ├── scheduling/            # Resource placement and simulation-origin plans
 │   ├── cli/                   # Local command interface
 │   └── web/                   # Loopback API and bundled browser assets
 └── tests/                     # Offline tests and synthetic fixtures
@@ -118,6 +119,10 @@ Open the printed loopback URL. Explore Connections, inspect a synthetic run, adv
 To add a real connection, import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`, then explicitly run `spiceowl hosts probe HOST_ID` or use **Simulation hosts → Check connection**. OpenSSH uses your existing alias and jump-host configuration. Version queries do not establish license availability, job state, or simulation validity.
 
 To expose stored observations to Codex or another MCP client, install `.[mcp]` and configure the client to run `spiceowl --data-dir ABSOLUTE_STATE_DIR mcp`. This optional server uses the official Python MCP SDK and reads the same local database without owning the controller. It cannot launch simulations or query arbitrary paths. Follow the [real connection guide](docs/real-connections.md) for the profile schema, commands and verification boundaries.
+
+For multiple nodes, register an explicit hostname list with `hosts import-pool`, run `hosts scan`, then evaluate requested CPUs and memory in **Simulation hosts**. Unknown or stale nodes are excluded. Placement retains a resource margin and is a proposal, not a reservation. Standalone plans select a candidate for a new exported netlist; Virtuoso-managed plans preserve the original host/native run mapping.
+
+For real text answers, register a private native runtime profile using `agents add --file PROFILE.json`, then open **Agent chat**. This uses the runtime's existing provider/auth configuration, which may be a subscription or a separately configured API route. Requests have durable keys, no automatic provider fallback, and no simulator tools. See the [native Q&A guide](docs/native-agent.md).
 
 ## Contributing
 

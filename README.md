@@ -22,6 +22,7 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
+| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Design drafted |
 | Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Planned |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Planned |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Planned |
@@ -38,6 +39,8 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Did the circuit meet its specification? | No — settling time exceeded the target |
 
 A valid result that misses a design target is still a result worth preserving. Recovery must not change the experiment simply to turn a failure into a pass.
+
+The report also shows observation freshness separately, so an old running status is not mistaken for a current observation.
 
 ## Design principles
 
@@ -67,6 +70,8 @@ flowchart TD
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
+The immediate implementation priority is **agent and API connection management**. The [integrated implementation plan](docs/design/integration-plan.md) starts with an offline fake-backed connection demo, followed by native local Codex and an API-key route, then ACP expansion. The [three design workstreams](docs/design/README.md) cover AI connections, simulator connections, and simulation debugging under shared [interface boundaries](docs/contracts/interface-boundaries.md).
+
 ## Repository map
 
 ```text
@@ -75,7 +80,7 @@ spiceowl/
 ├── README.zh-CN.md            # Chinese introduction
 ├── docs/                      # Architecture, run contract, roadmap, decisions
 ├── assets/brand/              # Editable project icon and exported avatar
-├── examples/                  # Illustrative experiment manifest
+├── examples/                  # Draft experiment, connection and policy examples
 ├── src/spiceowl/               # Reserved Python implementation boundaries
 │   ├── domain/                # Experiment, attempt, receipt, and event models
 │   ├── adapters/              # Execution and simulator integrations
@@ -83,7 +88,7 @@ spiceowl/
 │   ├── validation/            # Input and measurement acceptance checks
 │   ├── recovery/              # Policy evaluation and action proposals
 │   ├── storage/               # Durable records and artifact references
-│   ├── agent/                 # Optional evidence-to-proposal integration
+│   ├── agent/                 # Connections, sessions and optional diagnosis
 │   └── cli/                   # Future local command interface
 └── tests/                     # Validation plan and synthetic fixtures
 ```
@@ -105,7 +110,7 @@ python3 -m json.tool examples/run-manifest.example.json
 3. Review the [synthetic failure scenario](tests/fixtures/synthetic/disconnected-running.json).
 4. Contribute a reproducible failure case or an implementation scoped to a milestone.
 
-The first executable milestone is a **read-only monitor with a mock executor**, not unattended parameter modification. Real Spectre support will require an explicitly tested version and execution profile.
+The first implementation milestone is **connection management with fake-backed contracts**, followed by individually verified agent/API integrations. The first simulation milestone remains a **read-only monitor with a mock executor**. Real Spectre support will require an explicitly tested version and execution profile.
 
 ## Contributing
 

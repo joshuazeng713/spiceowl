@@ -1,8 +1,8 @@
-# Local console: first runnable prototype
+# Local console
 
-SpiceOwl 0.1.0a1 is an offline, single-user prototype for macOS and Linux with Python 3.11 or newer. It provides a browser console and CLI backed by the same SQLite records. Runtime dependencies are Python's standard library; the package contains its browser assets and does not require Node.js.
+SpiceOwl 0.2.0a1 is a single-user alpha for macOS and Linux with Python 3.11 or newer. It provides a browser console and CLI backed by the same SQLite records. The core uses Python's standard library; browser assets ship in the package and do not require Node.js. Optional MCP support uses the pinned official Python SDK.
 
-This build uses **synthetic data only**. It does not authenticate to providers, call models, connect to Cadence, submit jobs, or resume a real solver. Its local HTTP server is intended for prototype use on loopback, not public or shared production hosting.
+All simulation runs and web diagnoses still use **synthetic data**. The Simulation hosts page can make explicit SSH identity/version checks against operator-configured hosts, and MCP clients can query saved local records. See the [real connection guide](real-connections.md). This build does not call models, submit jobs, or resume a real solver. Its local HTTP server is intended for alpha use on loopback, not public or shared production hosting.
 
 ![Actual offline prototype with synthetic observations](images/local-console.png)
 
@@ -30,11 +30,12 @@ PYTHONPATH=src python3 -m spiceowl --data-dir .spiceowl serve --demo
 
 ## Browser workflow
 
-1. Load the demo workspace. Every card and chart represents authored synthetic observations.
+1. Load the demo workspace. Every run card and chart represents authored synthetic observations; real host checks live in a separate Simulation hosts view.
 2. Open Connections. Add a fake agent or model API and choose success, denied inference, interrupted response, or denied tool request. Probe metadata to see transport/auth/catalog separately from inference verification.
 3. Open a run. Select Next observation to advance its finite scenario. Disconnect preserves the same execution identity; OOM records failure; target miss ends with valid measurement and failed specification.
 4. Ask the demo diagnostic assistant about the current snapshot. Its response is deterministic fixture output, not an LLM. Inspect stored events, evidence citations and an advisory policy decision.
 5. Refresh the page or restart the service to inspect the same run and session history. Display reconnection does not start another diagnosis. An interrupted accepted turn is marked `outcome_unknown` and is never automatically replayed.
+6. Import a private host profile through the CLI, then use Simulation hosts to make an explicit connection check. The page labels saved timestamps and untested simulation readiness; it does not poll automatically.
 
 Read-only suggestions can receive an allow decision, but **dispatch remains disabled**. There is no Execute fix button. Cancelling a diagnosis only stops that local fake turn; it does not change the run.
 
@@ -52,7 +53,7 @@ spiceowl runs list
 spiceowl session SESSION_ID --after 0
 ```
 
-For the standalone CLI workflow, stop the web controller first. Only one controller can own a state directory; this prevents one process from declaring another process's active turn interrupted.
+Host registration/probes and read-only MCP queries also work alongside the web controller. For the standalone synthetic mutation workflow below, stop the web controller first. Only one controller can own a state directory; this prevents one process from declaring another process's active turn interrupted.
 
 ```bash
 spiceowl demo
@@ -66,7 +67,7 @@ The final command prints the persisted session. Repeating the same request key a
 
 ## What is durable
 
-SQLite stores connection metadata, synthetic run snapshots, frozen diagnostic evidence, requests, turns, ordered events, proposals and policy decisions. A transaction claims a unique request key before starting work. One active or unresolved turn per connection/run prevents competing diagnosis. Event display uses a persistent cursor; identical text is not used as a deduplication key. Source credentials and provider secrets are not accepted by this build.
+SQLite stores connection metadata, private host profiles and their last probes, synthetic run snapshots, frozen diagnostic evidence, requests, turns, ordered events, proposals and policy decisions. A transaction claims a unique request key before starting work. One active or unresolved turn per connection/run prevents competing diagnosis. Event display uses a persistent cursor; identical text is not used as a deduplication key. Credentials and provider secrets are not accepted by this build; SSH authentication stays in OpenSSH configuration.
 
 Shutting down the HTTP interface does not erase data. This prototype does not implement a real background simulation monitor: run advancement is explicit replay. Future deployment of real monitoring/execution on an always-on host remains required for unattended simulations.
 

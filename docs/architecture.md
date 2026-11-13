@@ -1,6 +1,8 @@
 # Architecture
 
-Status: architecture target with a bounded P0.1 implementation. The [local console guide](local-console.md) records the shipped offline components and their limits; real provider/simulator execution remains planned.
+Status: architecture target with a P0.1 console and bounded P0.2 connectivity slice. The [local console guide](local-console.md) and [real connection guide](real-connections.md) record shipped components and limits. SSH identity/version checks and read-only stdio MCP queries are implemented; real provider inference and simulator execution remain planned.
+
+The current connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific version probes. Private profiles are imported explicitly through the CLI; listing never probes a server. MCP clients query existing SQLite records through an independent read-only connection, without starting a controller or recovering its active turns. This is the existing-agent-to-SpiceOwl direction. A web-console-to-agent runtime adapter is separate future work. See the [P0.2 contract](contracts/p02-connectivity.md).
 
 ## Connection-layer priority
 

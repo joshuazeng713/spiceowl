@@ -1,4 +1,4 @@
-"""Single-owner offline controller, shared by the CLI and local web console."""
+"""Single-owner simulation controller, shared by the CLI and local web console."""
 
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
@@ -27,6 +27,8 @@ class Controller:
         self._slots = threading.BoundedSemaphore(4)
         self._closing = threading.Event()
         self.store.recover_interrupted()
+        from spiceowl.hosts import HostRegistry
+        self.hosts = HostRegistry(directory)
 
     def close(self):
         self._closing.set()
@@ -42,7 +44,7 @@ class Controller:
 
     def state(self):
         from spiceowl.adapters.executors.mock import list_scenarios
-        return {"version": __version__, "mode": "offline_prototype", "connections": [c for c in self.store.list("connection") if not c.get("deleted")], "runs": self.store.list("run"), "sessions": self.store.list("session"), "scenarios": list_scenarios(), "capabilities": {"real_inference": False, "real_simulation": False, "dispatch": False, "synthetic_replay": True}}
+        return {"version": __version__, "mode": "read_only_connectivity", "connections": [c for c in self.store.list("connection") if not c.get("deleted")], "hosts": self.hosts.list(), "runs": self.store.list("run"), "sessions": self.store.list("session"), "scenarios": list_scenarios(), "capabilities": {"real_inference": False, "real_simulation": False, "dispatch": False, "synthetic_replay": True, "ssh_connectivity_probe": True, "mcp_local_queries": True}}
 
     def add_connection(self, data):
         from spiceowl.agent.connections.config import validate_connection

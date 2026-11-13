@@ -234,6 +234,7 @@ __marimo__/
 *.local.toml
 *.local.yaml
 *.local.yml
+*.local.json
 .DS_Store
 
 # Future console build products

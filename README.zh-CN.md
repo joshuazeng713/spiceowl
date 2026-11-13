@@ -8,7 +8,7 @@
 <p align="center">面向长时间电路仿真的开源 Agent 控制台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-> **早期 Alpha：已有可运行的离线控制台。** 网页与 CLI 可以管理模拟 Agent/API、回放合成任务，并将诊断会话保存在 SQLite 中。真实提供商登录、Cadence 接入和无人值守仿真监控尚未实现。操作说明见[本地控制台指南](docs/local-console.md)。
+> **早期 Alpha：本地控制台已加入只读连接能力。** CLI 与网页管理合成任务和诊断记录；显式 SSH 检查可以确认主机身份与仿真器版本，可选的 stdio MCP 服务让现有 Agent 查询本地记录。真实模型推理、仿真提交和无人值守监控仍待实现。见[控制台指南](docs/local-console.md)与[真实连接指南](docs/real-connections.md)。
 
 ![SpiceOwl 本地控制台，所有任务均为明确标注的合成数据](docs/images/local-console.png)
 
@@ -26,7 +26,7 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 
 | 能力 | 目标行为 | 当前状态 |
 | --- | --- | --- |
-| 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已实现模拟 Agent/API 管理 |
+| 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已实现模拟 Agent/API 管理、只读 MCP 查询与 SSH 身份/版本检查 |
 | 观察 | 跟踪任务身份、仿真进度、日志、内存和磁盘使用 | 已实现有限合成场景回放 |
 | 重连 | 在客户端或控制器中断后核对并找回原任务 | 已实现本地记录恢复；真实任务待接入 |
 | 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 已实现验收汇总；波形验证器待实现 |
@@ -72,14 +72,15 @@ spiceowl/
 │   ├── recovery/              # 恢复策略与动作提案
 │   ├── storage/               # 持久化记录与产物引用
 │   ├── agent/                 # 连接、会话与可选诊断
+│   ├── mcp/                   # 供现有 Agent 使用的可选只读工具
 │   ├── cli/                   # 本地命令入口
 │   └── web/                   # 本地 API 与随包网页资源
 └── tests/                     # 离线测试与合成案例
 ```
 
-软件包目前包含离线连接层、SQLite 控制器、合成回放、验收与策略函数、CLI 和网页资源。[本地控制台指南](docs/local-console.md)区分已实现能力与后续真实接入；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
+软件包目前包含模拟 AI 连接、SQLite 控制器、合成回放、验收与策略函数、私有主机配置、有限 SSH 检查、可选 MCP 查询、CLI 和网页资源。[本地控制台指南](docs/local-console.md)区分已实现能力与后续任务监控；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
 
-当前优先实现 **Agent 与 API 连接管理**。[整合实施方案](docs/design/integration-plan.md)从离线模拟连接演示开始，再接本地 Codex 与独立 API-key 路线，随后扩展 ACP。[三个专题设计](docs/design/README.md)覆盖 AI 接入、仿真器接入和仿真诊断，并通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
+当前接入切片是 **SSH 连接检查＋供现有 Agent 使用的 MCP 查询**，接口见 [P0.2 连接约定](docs/contracts/p02-connectivity.md)。更广的[整合实施方案](docs/design/integration-plan.md)还计划加入原生 Agent runtime、独立 API-key 路线与 ACP；这些仍是后续工作。[三个专题设计](docs/design/README.md)覆盖 AI 接入、仿真器接入和仿真诊断，并通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
 
 ## 从哪里开始
 
@@ -95,13 +96,15 @@ python3 -m venv .venv
 
 打开命令打印的本地网址，即可管理模拟连接、查看合成任务、推进观测并请求演示诊断。不需要模型、仿真器、Node.js 或凭据。重复使用 `--demo` 会保留已有历史；CLI、持久化和测试方式见[指南](docs/local-console.md)。
 
-首个可运行切片是 **模拟连接管理＋小型网页控制台**。后续逐一验证真实 Agent／API 接入，并实现持续只读监控。真实 Spectre 接入需要明确测试过的工具版本和运行环境，再逐步增加自动恢复。
+真实连接可使用 `spiceowl hosts add --file PROFILE.json` 导入操作者编写的私有主机配置，再执行 `spiceowl hosts probe HOST_ID`，或在网页 **Simulation hosts → Check connection** 中显式检查。OpenSSH 复用已有别名和跳板配置。版本查询不代表许可证可用、任务正在运行或仿真结果有效。
+
+若要让 Codex 等 MCP 客户端读取记录，安装 `.[mcp]`，并将客户端配置为运行 `spiceowl --data-dir ABSOLUTE_STATE_DIR mcp`。服务使用官方 Python MCP SDK，读取同一本地数据库，但不接管控制器，也不能启动仿真或读取任意路径。配置格式、命令和验证边界见[真实连接指南](docs/real-connections.md)。
 
 ## 参与贡献
 
 欢迎模拟设计、CAD 和科学计算方向的贡献者。脱敏故障案例、测量验证器以及带故障注入测试的小功能，都是有价值的起点。
 
-共享数据前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。漏洞报告和敏感材料处理见 [SECURITY.md](SECURITY.md)。[参考资料](docs/references.md)列出候选组件和相关原始文档，目前尚未集成第三方框架。
+共享数据前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。漏洞报告和敏感材料处理见 [SECURITY.md](SECURITY.md)。[参考资料](docs/references.md)列出候选组件和相关原始文档。核心运行时仅依赖 Python 标准库；可选 MCP 扩展固定了测试过的官方 SDK 版本。
 
 ## 许可证
 

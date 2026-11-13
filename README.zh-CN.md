@@ -8,7 +8,11 @@
 <p align="center">面向长时间电路仿真的开源 Agent 控制台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-> **早期开发：目前只有文档与目录骨架。** 尚未实现可运行的监控服务、仿真器接入或 CLI。下文介绍目标能力，进度以[开发里程碑](docs/roadmap.md)为准。
+> **早期 Alpha：已有可运行的离线控制台。** 网页与 CLI 可以管理模拟 Agent/API、回放合成任务，并将诊断会话保存在 SQLite 中。真实提供商登录、Cadence 接入和无人值守仿真监控尚未实现。操作说明见[本地控制台指南](docs/local-console.md)。
+
+![SpiceOwl 本地控制台，所有任务均为明确标注的合成数据](docs/images/local-console.png)
+
+*实际原型界面，使用项目编写的合成观测数据。*
 
 ## 为什么做 SpiceOwl
 
@@ -22,13 +26,13 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 
 | 能力 | 目标行为 | 当前状态 |
 | --- | --- | --- |
-| 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已有设计草案 |
-| 观察 | 跟踪任务身份、仿真进度、日志、内存和磁盘使用 | 计划中 |
-| 重连 | 在客户端或控制器中断后核对并找回原任务 | 计划中 |
-| 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 计划中 |
-| 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 计划中 |
-| 诊断 | 由可选 Agent 解释证据并提出处理建议 | 计划中 |
-| 报告 | 分别呈现执行结果、测量有效性和电路性能 | 计划中 |
+| 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已实现模拟 Agent/API 管理 |
+| 观察 | 跟踪任务身份、仿真进度、日志、内存和磁盘使用 | 已实现有限合成场景回放 |
+| 重连 | 在客户端或控制器中断后核对并找回原任务 | 已实现本地记录恢复；真实任务待接入 |
+| 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 已实现验收汇总；波形验证器待实现 |
+| 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 仅提供建议性策略；不执行操作 |
+| 诊断 | 由可选 Agent 解释证据并提出处理建议 | 已实现离线模拟诊断 |
+| 报告 | 分别呈现执行结果、测量有效性和电路性能 | 已实现四维合成报告 |
 
 ### 一份报告需要区分三个问题
 
@@ -60,7 +64,7 @@ spiceowl/
 ├── docs/                      # 架构、实验约定、路线和设计决策
 ├── assets/brand/              # 可编辑图标与头像导出文件
 ├── examples/                  # 实验、连接和策略的非执行性示例
-├── src/spiceowl/               # 预留的 Python 实现边界
+├── src/spiceowl/              # 可安装的 Python 软件包
 │   ├── domain/                # 实验、尝试、回执与事件模型
 │   ├── adapters/              # 执行环境与仿真器适配
 │   ├── monitoring/            # 状态观察与故障分类
@@ -68,30 +72,30 @@ spiceowl/
 │   ├── recovery/              # 恢复策略与动作提案
 │   ├── storage/               # 持久化记录与产物引用
 │   ├── agent/                 # 连接、会话与可选诊断
-│   └── cli/                   # 后续本地命令入口
-└── tests/                     # 测试方案与合成案例
+│   ├── cli/                   # 本地命令入口
+│   └── web/                   # 本地 API 与随包网页资源
+└── tests/                     # 离线测试与合成案例
 ```
 
-源码目录目前只是占位。[架构文档](docs/architecture.md)说明模块职责与故障处理，[实验约定](docs/run-contract.md)说明可信实验必须记录的信息，[初始设计决策](docs/decisions/0001-project-foundation.md)标明仍需验证的选型。
+软件包目前包含离线连接层、SQLite 控制器、合成回放、验收与策略函数、CLI 和网页资源。[本地控制台指南](docs/local-console.md)区分已实现能力与后续真实接入；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
 
 当前优先实现 **Agent 与 API 连接管理**。[整合实施方案](docs/design/integration-plan.md)从离线模拟连接演示开始，再接本地 Codex 与独立 API-key 路线，随后扩展 ACP。[三个专题设计](docs/design/README.md)覆盖 AI 接入、仿真器接入和仿真诊断，并通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
 
 ## 从哪里开始
 
-目前没有可安装的软件包，可以先查看设计材料：
+在 macOS 或 Linux 上使用 Python 3.11 及以上版本：
 
 ```bash
 git clone https://github.com/joshuazeng713/spiceowl.git
 cd spiceowl
-python3 -m json.tool examples/run-manifest.example.json
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/spiceowl serve --demo
 ```
 
-1. 阅读[首个里程碑及验收条件](docs/roadmap.md)。
-2. 查看[实验清单示例](examples/run-manifest.example.json)及[字段解释](docs/run-contract.md)。
-3. 查看[断线但任务仍在运行的合成案例](tests/fixtures/synthetic/disconnected-running.json)。
-4. 提交可复现的故障案例，或围绕一个里程碑实现小功能。
+打开命令打印的本地网址，即可管理模拟连接、查看合成任务、推进观测并请求演示诊断。不需要模型、仿真器、Node.js 或凭据。重复使用 `--demo` 会保留已有历史；CLI、持久化和测试方式见[指南](docs/local-console.md)。
 
-首个实现里程碑是 **连接管理与模拟后端接口验证**，然后逐一验证真实 Agent／API 接入。首个仿真里程碑仍是 **模拟执行器＋只读监控**。真实 Spectre 接入需要明确测试过的工具版本和运行环境，再逐步增加自动恢复。
+首个可运行切片是 **模拟连接管理＋小型网页控制台**。后续逐一验证真实 Agent／API 接入，并实现持续只读监控。真实 Spectre 接入需要明确测试过的工具版本和运行环境，再逐步增加自动恢复。
 
 ## 参与贡献
 

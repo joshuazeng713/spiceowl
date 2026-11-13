@@ -1,0 +1,64 @@
+{
+  "schema_version": "0.1-draft",
+  "example_only": true,
+  "experiment": {
+    "id": "example-rc-settling",
+    "objective": "Measure settling after a step in a synthetic RC testbench.",
+    "input_reference": "synthetic:rc-step-design-placeholder",
+    "parameters": {
+      "resistance": {"value": 1000, "unit": "ohm"},
+      "capacitance": {"value": 1, "unit": "nF"},
+      "step_time": {"value": 1, "unit": "us"},
+      "step_final_voltage": {"value": 1, "unit": "V"}
+    },
+    "corner": "not_applicable",
+    "temperature": {"value": 27, "unit": "degC"},
+    "random_seed": null,
+    "monte_carlo_sample_id": null
+  },
+  "analysis": {
+    "kind": "transient",
+    "stop_time": {"value": 10, "unit": "us"},
+    "measurement_window": {
+      "start": {"value": 1, "unit": "us"},
+      "end": {"value": 10, "unit": "us"}
+    }
+  },
+  "outputs": {
+    "required_signals": ["vin", "vout"],
+    "required_artifacts": ["simulator_log", "transient_waveforms"]
+  },
+  "acceptance": {
+    "input_constraints": ["resolved_inputs_match_manifest"],
+    "measurement_preconditions": [
+      "analysis_completed",
+      "required_signals_present",
+      "measurement_window_covered",
+      "waveform_values_finite"
+    ],
+    "measurements": [{
+      "name": "settling_time",
+      "recipe": "proposed:settling-within-band",
+      "signal": "vout",
+      "reference_voltage": {"value": 1, "unit": "V"},
+      "absolute_band": {"value": 0.01, "unit": "V"},
+      "time_origin": "step_time",
+      "require_remains_in_band_until_window_end": true,
+      "specification": {"operator": "<=", "value": 5, "unit": "us"}
+    }]
+  },
+  "execution": {
+    "executor_profile": "mock-proposed",
+    "simulator_profile": "synthetic-proposed",
+    "resources": {"cpu_limit": 1, "memory_limit_mib": 256},
+    "attempt_timeout_seconds": 60,
+    "native_checkpoint": {"requested": false}
+  },
+  "recovery": {
+    "mode": "observe_only",
+    "allowed_actions": ["observe", "reconcile", "report"],
+    "max_retries": 0,
+    "experiment_wall_time_budget_seconds": 120,
+    "automatic_input_changes": false
+  }
+}

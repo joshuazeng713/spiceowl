@@ -1,0 +1,22 @@
+{
+  "fixture_version": "0.1-draft",
+  "synthetic": true,
+  "scenario": "connection_lost_while_execution_continues",
+  "experiment_id": "synthetic-disconnect",
+  "attempt_id": "synthetic-disconnect-attempt-1",
+  "submission_key": "synthetic-disconnect-submit-1",
+  "events": [
+    {"event_id": "event-1", "at_offset_seconds": 0, "type": "execution_observed", "job_id": "mock-job-1", "execution_state": "running", "observation_state": "current"},
+    {"event_id": "event-2", "at_offset_seconds": 10, "type": "transport_unavailable", "observation_state": "unknown"},
+    {"event_id": "event-3", "at_offset_seconds": 20, "type": "execution_reconciled", "job_id": "mock-job-1", "execution_state": "running", "observation_state": "current"},
+    {"event_id": "event-4", "at_offset_seconds": 30, "type": "execution_observed", "job_id": "mock-job-1", "execution_state": "completed", "observation_state": "current"}
+  ],
+  "expected": {
+    "additional_submissions": 0,
+    "cancellation_requests": 0,
+    "execution_identity_preserved": true,
+    "final_execution_state": "completed",
+    "final_measurement_validity": "pending",
+    "final_specification_result": "not_evaluated"
+  }
+}

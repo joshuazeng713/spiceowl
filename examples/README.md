@@ -1,6 +1,6 @@
 # Examples
 
-All examples are design artifacts, not executable configurations. The three connection/supervision examples are explicitly disabled and contain no working credentials or environment grants.
+The connection/supervision and experiment examples below are design artifacts, explicitly disabled and not executable configurations. The [SSH host example](hosts/ssh.example.json) is an importable P0.2 profile with fictional values: copy it to an ignored private file, select your own alias/identity/tool paths, then follow the [real connection guide](../docs/real-connections.md). Importing it performs no network operation.
 
 | Example | Purpose | Design |
 | --- | --- | --- |

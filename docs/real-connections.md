@@ -1,6 +1,6 @@
 # Real connectivity: bounded SSH probes and local MCP
 
-This guide targets the **P0.2 connectivity slice**, under integration on 2026-11-13. It describes the [P0.2 contract](contracts/p02-connectivity.md); it is not a claim that a particular remote host, optional SDK environment, or current Codex chat has been verified. The [P0.1 console](local-console.md) continues to use synthetic runs and fake agent/model backends. Use a build containing P0.2 before following the new commands below.
+SpiceOwl 0.2.0a1 implements the **P0.2 connectivity slice** described in the [P0.2 contract](contracts/p02-connectivity.md). The [console](local-console.md) continues to use synthetic runs and fake agent/model backends. Qualify each installation and host using the verification stages below.
 
 P0.2 adds two separate paths:
 
@@ -23,7 +23,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install '.[mcp]'
 ```
 
-The base CLI/web installation does not need the optional SDK. The MCP extra belongs to the integrated P0.2 package; installing the P0.1 build alone does not add an MCP server. Dependency installation is an operator action, not part of the probes. Record the installed SpiceOwl and MCP SDK versions when qualifying an environment.
+The base CLI/web installation does not need the optional SDK. The MCP extra pins official `mcp==1.30.0`, the tested FastMCP maintenance release. Installing a P0.1 build alone does not add this server. Record the installed SpiceOwl and SDK versions when qualifying an environment.
 
 This guide uses these example locations consistently:
 
@@ -42,6 +42,8 @@ The MCP reader requires an existing supported database. It does not initialize, 
 Use an existing, operator-reviewed OpenSSH alias. SSH authentication and jump routing remain in the user's SSH configuration. SpiceOwl does not accept password/key contents, arbitrary SSH options, environment scripts, or shell snippets in this profile.
 
 An example `/home/example/private/spiceowl-host.json`:
+
+An equivalent importable template is [hosts/ssh.example.json](../examples/hosts/ssh.example.json). Keep your edited copy in an ignored private directory or a `*.local.json` file.
 
 ```json
 {
@@ -67,6 +69,8 @@ An example `/home/example/private/spiceowl-host.json`:
 Set `expected_host` and `expected_user` to the identities the operator expects the probe to observe. Do not accept a different identity simply because transport succeeded. An alias, DNS name, short hostname, and fully qualified hostname need not be identical; follow the adapter's identity comparison rather than guessing a replacement after a mismatch.
 
 Tool entries select a supported tool kind and an absolute site-managed executable. The adapter chooses the version arguments; the profile cannot provide a command line. A path is not an execution sandbox: the operator must trust the remote binary selected by the profile. A functioning GUI bridge, open schematic, or PDK path is not required for these version-only checks.
+
+Supported mappings are Spectre `-W`, Virtuoso `-W`, and ngspice `--version`. Paths must end in the declared executable name. An empty tool list requests only identity. Each command has a 10-second limit inside a 30-second overall budget; combined stdout/stderr is limited to 64 KiB per command. Unknown banner formats remain unknown.
 
 The existing SSH configuration is also a trust boundary: routing helpers or authentication behavior configured there are outside the JSON profile's controls. Do not add secrets to the profile or weaken host-key checks to make a probe appear successful. Resolve SSH trust/authentication configuration using the site's normal process, then explicitly probe again if authorized.
 
@@ -217,4 +221,4 @@ The following checks are acceptance recommendations, not claims that a live envi
 
 Source review should also distinguish ordinary `Store` startup, which initializes local state, from `ReadStore`, which must be read-only. A capability flag in a state summary is a declaration of the build's interface, not proof the optional SDK was installed or a host was tested. Preserve original `observed_at` timestamps and explicit `synthetic` values at every projection.
 
-The coordinator owns implementation integration and any separately authorized live verification. Record the tested code/SDK versions, observation time, and which verification stage actually completed before changing an unverified status. No simulation-capability claim can be inferred from these connectivity checks.
+Record the tested code/SDK versions, observation time, and which verification stage actually completed. Connectivity verification alone does not qualify a simulator execution profile.

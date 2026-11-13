@@ -1,4 +1,4 @@
-name: Offline prototype tests
+name: Connectivity and offline tests
 
 on:
   push:
@@ -31,3 +31,18 @@ jobs:
           spiceowl --version
           python -c "from importlib.resources import files; root=files('spiceowl.web').joinpath('static'); assert all(root.joinpath(n).is_file() for n in ('index.html','app.js','app.css','owl.svg'))"
           git diff --check
+
+  mcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install optional MCP SDK and local package
+        run: python -m pip install '.[mcp]'
+      - name: Test real stdio MCP protocol against local fixtures
+        run: python -m unittest discover -s tests

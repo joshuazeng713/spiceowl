@@ -8,7 +8,7 @@
 <p align="center">An open-source agent console for long-running circuit simulations.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-> **Early alpha — runnable offline console.** The browser UI and CLI now manage fake agent/API connections, replay synthetic runs, and retain diagnostic sessions in SQLite. Real provider authentication, Cadence integration and unattended simulation monitoring are not implemented. See the [local console guide](docs/local-console.md).
+> **Early alpha — local console with read-only connectivity.** The CLI and browser manage synthetic runs and saved diagnoses. Explicit SSH probes check host identity and simulator versions; an optional stdio MCP server lets an existing agent query local records. Real model inference, simulation submission and unattended monitoring remain planned. See the [console guide](docs/local-console.md) and [real connection guide](docs/real-connections.md).
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
@@ -26,7 +26,7 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
-| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Fake agent/API management implemented |
+| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Fake agent/API management; read-only MCP queries and SSH identity/version probes implemented |
 | Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Finite synthetic replay implemented |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Local record recovery implemented; real jobs planned |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Acceptance reducer implemented; waveform validators planned |
@@ -74,7 +74,7 @@ flowchart TD
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
-The immediate implementation priority is **agent and API connection management**. The [integrated implementation plan](docs/design/integration-plan.md) starts with an offline fake-backed connection demo, followed by native local Codex and an API-key route, then ACP expansion. The [three design workstreams](docs/design/README.md) cover AI connections, simulator connections, and simulation debugging under shared [interface boundaries](docs/contracts/interface-boundaries.md).
+The current integration slice is **SSH connectivity plus MCP queries for an existing agent**. It follows the [P0.2 connectivity contract](docs/contracts/p02-connectivity.md). The broader [implementation plan](docs/design/integration-plan.md) also proposes native agent-runtime and API-key routes, then ACP expansion; these remain future work. The [three design workstreams](docs/design/README.md) cover AI connections, simulator connections, and simulation debugging under shared [interface boundaries](docs/contracts/interface-boundaries.md).
 
 ## Repository map
 
@@ -93,12 +93,13 @@ spiceowl/
 │   ├── recovery/              # Policy evaluation and action proposals
 │   ├── storage/               # Durable records and artifact references
 │   ├── agent/                 # Connections, sessions and optional diagnosis
+│   ├── mcp/                   # Optional read-only tools for existing agents
 │   ├── cli/                   # Local command interface
 │   └── web/                   # Loopback API and bundled browser assets
 └── tests/                     # Offline tests and synthetic fixtures
 ```
 
-The package now includes the offline connection layer, SQLite controller, synthetic replay, acceptance/policy helpers, CLI and bundled web assets. The [local console guide](docs/local-console.md) distinguishes these implementations from later real integrations. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
+The package includes fake AI connections, a SQLite controller, synthetic replay, acceptance/policy helpers, private host profiles, bounded SSH probes, optional MCP queries, CLI and bundled web assets. The [local console guide](docs/local-console.md) distinguishes these implementations from later job monitoring. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
 
@@ -114,13 +115,15 @@ python3 -m venv .venv
 
 Open the printed loopback URL. Explore Connections, inspect a synthetic run, advance its observations and request a demo diagnosis. No model, simulator, Node.js or credentials are needed. Repeating `--demo` preserves stored history. The [guide](docs/local-console.md) covers CLI commands, persistence, limitations and tests.
 
-The first runnable slice is **connection management with fake backends and a small web console**. Individually verified agent/API integrations and a continuous read-only simulation monitor follow. Real Spectre support will require an explicitly tested version and execution profile.
+To add a real connection, import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`, then explicitly run `spiceowl hosts probe HOST_ID` or use **Simulation hosts → Check connection**. OpenSSH uses your existing alias and jump-host configuration. Version queries do not establish license availability, job state, or simulation validity.
+
+To expose stored observations to Codex or another MCP client, install `.[mcp]` and configure the client to run `spiceowl --data-dir ABSOLUTE_STATE_DIR mcp`. This optional server uses the official Python MCP SDK and reads the same local database without owning the controller. It cannot launch simulations or query arbitrary paths. Follow the [real connection guide](docs/real-connections.md) for the profile schema, commands and verification boundaries.
 
 ## Contributing
 
 We welcome analog designers, CAD engineers, and developers working on reliable scientific computing. Useful first contributions include sanitized failure cases, measurement validators, and small implementations with failure-injection tests.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before sharing data. Use [SECURITY.md](SECURITY.md) for reporting vulnerabilities and handling sensitive materials. Background references and candidate dependencies are listed in [docs/references.md](docs/references.md); no third-party framework is integrated yet.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before sharing data. Use [SECURITY.md](SECURITY.md) for reporting vulnerabilities and handling sensitive materials. Background references and candidate dependencies are listed in [docs/references.md](docs/references.md). The core uses Python's standard library; the optional MCP extra pins the tested official SDK version.
 
 ## License
 

@@ -1,0 +1,18 @@
+{
+  "schema": "spiceowl.host.v1",
+  "host_id": "example-lab",
+  "label": "Example laboratory host",
+  "ssh_target": "example-simulation-host",
+  "expected_host": "example-simulation-host",
+  "expected_user": "researcher",
+  "tools": [
+    {
+      "kind": "spectre",
+      "executable": "/opt/example/spectre/bin/spectre"
+    },
+    {
+      "kind": "virtuoso",
+      "executable": "/opt/example/virtuoso/bin/virtuoso"
+    }
+  ]
+}

@@ -1054,11 +1054,12 @@ dialog .muted {
   }
   .sidebar>nav {
     display:flex;
+    flex-wrap:wrap;
     margin-top:14px;
     gap:8px
   }
   .sidebar>nav a {
-    flex:1;
+    flex:1 1 140px;
     margin:0;
     justify-content:center;
     padding:9px;
@@ -1157,6 +1158,35 @@ dialog .muted {
     transition:none!important;
     scroll-behavior:auto!important
   }
+}
+.host-tools {
+  padding:12px 24px;
+}
+.host-tool {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+  padding:10px 0;
+}
+.host-tool strong {
+  min-width:80px;
+}
+.host-version, code {
+  overflow-wrap:anywhere;
+}
+.host-version {
+  font-family:ui-monospace, monospace;
+  font-size:12px;
+}
+.host-tool .error-text {
+  flex-basis:100%;
+  margin:0;
+}
+.host-error {
+  padding:10px 24px;
+  color:#9a572d;
+  overflow-wrap:anywhere;
 }
 @media(max-width:730px) {
   .sidebar>nav.recent-runs {

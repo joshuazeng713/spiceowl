@@ -71,6 +71,30 @@ class FakeSSH:
 
 
 class HostProfileTests(unittest.TestCase):
+    def test_v2_preserves_v1_route_and_adds_exactly_hostname(self):
+        original = profile()
+        self.assertEqual(validate_host_profile(original), original)
+        data = {**original, "schema": "spiceowl.host.v2", "ssh_hostname": "compute-02.example.test"}
+        normalized = validate_host_profile(data)
+        self.assertEqual(normalized, data)
+        self.assertEqual(set(normalized), set(original) | {"ssh_hostname"})
+        self.assertEqual(normalized["ssh_target"], original["ssh_target"])
+        invalid = {**original, "ssh_hostname": "compute-02.example.test"}
+        with self.assertRaises(DomainError):
+            validate_host_profile(invalid)
+
+    def test_v2_hostname_injection_and_invalid_dns_are_rejected(self):
+        bad_names = (None, "", True, [], "a" * 254, "a" * 64 + ".test", ".host", "host.",
+                     "a..b", "-host", "host-", "host.-test", "host_2", "host:22", "[::1]",
+                     "user@host", "ssh://host", "host -oProxyCommand=evil", "host;id", "a\nb",
+                     "host$(id)", "host`id`", "host'", 'host"', "host!", "host/other", "*", "主机")
+        with patch.object(ssh.subprocess, "Popen") as popen:
+            for hostname in bad_names:
+                data = {**profile(), "schema": "spiceowl.host.v2", "ssh_hostname": hostname}
+                with self.subTest(hostname=hostname), self.assertRaises(DomainError):
+                    probe_host(data)
+            popen.assert_not_called()
+
     def test_validation_is_strict_pure_and_json_compatible(self):
         data = profile()
         before = deepcopy(data)
@@ -205,6 +229,19 @@ class SSHProbeTests(unittest.TestCase):
             self.assertIn("/bin/hostname", words[-1])
             self.assertIn("/usr/bin/id -un", words[-1])
         self.assertIn("/opt/example/spectre/bin/spectre -W", shlex.split(peer.calls[1][0][-1])[-1])
+
+    def test_v2_version_probes_override_only_hostname_on_every_request(self):
+        data = {**profile(), "schema": "spiceowl.host.v2", "ssh_hostname": "compute-02.example.test"}
+        result, peer = self.run_peer([{}, {"banner": "sub-version 99.1.0.123"},
+                                     {"banner": "sub-version IC99.1-64b.500.7"}], data)
+        self.assertIsNone(result["error"])
+        self.assertEqual(len(peer.calls), 3)
+        for argv, _ in peer.calls:
+            self.assertEqual(argv[-3:-1], ["--", "example-route"])
+            self.assertEqual(argv.count("Hostname=compute-02.example.test"), 1)
+            self.assertNotIn("-F", argv)
+            self.assertNotIn("-i", argv)
+            self.assertFalse(any(value.startswith(("UserKnownHostsFile=", "HostKeyAlias=")) for value in argv))
 
     def test_identity_mismatch_prevents_all_tool_calls(self):
         for reply in ({"host": "wrong-host"}, {"user": "wrong-user"}):

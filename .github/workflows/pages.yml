@@ -1,0 +1,66 @@
+name: Publish interactive demo
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == (vars.PAGES_SOURCE_BRANCH || 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the published source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || vars.PAGES_SOURCE_BRANCH || 'main' }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install the package without optional providers
+        run: python -m pip install --no-deps .
+      - name: Verify the offline package and static adapter
+        run: |
+          python -m unittest discover -s tests
+          node tests/ui-host-onboarding.mjs
+      - name: Build only the public synthetic demo
+        env:
+          SOURCE_BRANCH: ${{ vars.PAGES_SOURCE_BRANCH || 'main' }}
+        run: |
+          python scripts/build_pages.py --output dist/pages --commit "$(git rev-parse HEAD)" --source-branch "$SOURCE_BRANCH"
+          touch dist/pages/.nojekyll
+      - name: Verify the built browser demo
+        run: node tests/pages-demo.mjs dist/pages
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload the public assets
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

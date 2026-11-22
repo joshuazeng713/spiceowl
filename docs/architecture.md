@@ -1,6 +1,6 @@
 # Architecture
 
-Status: proposed design. No runtime components are implemented yet.
+Status: architecture target with a bounded P0.1 implementation. The [local console guide](local-console.md) records the shipped offline components and their limits; real provider/simulator execution remains planned.
 
 ## Connection-layer priority
 
@@ -27,7 +27,7 @@ Keep these responsibilities separate:
 | `agent` | Evidence summaries and typed diagnostic/action proposals | Direct lifecycle authority over a job |
 | `cli` | User commands and structured presentation | Keeping a simulation alive through a terminal connection |
 
-The web console will be added after the run API is useful. Do not scaffold a second application or choose a frontend framework until that milestone.
+The maintainer brought a small local web console forward into P0.1. It shares the controller and SQLite records with the CLI and ships static assets in the Python package. A full real-execution console remains a later milestone; the prototype has no external frontend service or runtime dependency.
 
 ## Execution ownership
 

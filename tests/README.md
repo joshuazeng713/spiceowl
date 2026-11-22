@@ -1,8 +1,10 @@
-# Validation plan
+# Tests and validation plan
 
-There are no executable tests yet. This directory reserves the test boundary and contains a synthetic scenario for the first implementation milestone.
+Run `PYTHONPATH=src python3 -m unittest discover -s tests` with Python 3.11+. Current tests cover fake connections, strict evidence/proposals, acceptance, synthetic replay, SQLite service recovery and loopback HTTP. Temporary local data is isolated per test. No credentials, provider requests or real simulations are used.
 
-## Public tests to implement
+Browser verification covers connection creation/probing, manual run replay, diagnostic events, persisted-session reload, escaped content and narrow layouts. The [local guide](../docs/local-console.md) records the implemented scope.
+
+## Additional public tests for later milestones
 
 - Domain model validation, including explicit units and immutable attempt identity.
 - Duplicate/out-of-order observations and log rotation.

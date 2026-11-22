@@ -1,6 +1,6 @@
 # Project workstreams
 
-Updated: 2026-11-13. Status: three design drafts delivered; interfaces coordinated for an integrated draft pull request. Runtime implementation has not started.
+Updated: 2026-11-13. Status: design round delivered; P0.1 implementation integrated from three isolated worktrees. The [local console](local-console.md) now provides offline connections, synthetic replay, advisory diagnosis, SQLite history, CLI and a browser UI. Real-provider and simulator integrations remain planned.
 
 ## Current objective
 

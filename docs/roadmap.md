@@ -1,6 +1,6 @@
 # Roadmap
 
-This is a milestone plan, not a release or delivery-date promise. Only M0 exists today. A milestone closes when its observable acceptance criteria pass.
+This is a milestone plan, not a release or delivery-date promise. M0 and the bounded P0.1 offline prototype are implemented. A milestone closes when its observable acceptance criteria pass.
 
 ## M0 — Project foundation (current)
 
@@ -11,13 +11,27 @@ This is a milestone plan, not a release or delivery-date promise. Only M0 exists
 - [x] Illustrative manifest and synthetic failure scenario.
 - [ ] Maintainer records the first supported Cadence/version/execution profile.
 
-The repository is documentation and scaffold only. There is no executable CLI, running service, tested simulator integration, or released package.
+The repository now includes an installable alpha package, local CLI/web console and synthetic replay. No real provider or simulator integration is certified. See the [local console guide](local-console.md).
 
-## P0 — Agent and model-API connections (next implementation priority)
+## P0.1 — Offline local console (implemented)
+
+- [x] Separate fake AgentBackend/ModelBackend contracts and strict configuration.
+- [x] Connection registry, metadata probes and explicit readiness dimensions.
+- [x] SQLite turns/events, duplicate-request handling and interrupted-turn recovery.
+- [x] Bounded synthetic evidence, validated proposals and advisory-only policy.
+- [x] CLI and packaged browser UI: overview, connections and run details.
+- [x] Four finite synthetic run scenarios with explicit manual replay.
+- [x] Public tests for domain contracts, service restart/deduplication and loopback API boundaries.
+
+The small web console was brought forward at the maintainer's request. Synthetic replay does not close M1's continuous-monitor requirements. Provider credentials, real inference, durable external execution and automatic recovery remain absent.
+
+## P0 — Agent and model-API connections (partially implemented)
 
 Added at the maintainer's request on 2026-11-13. See [workstreams](workstreams.md) and the [connection-layer decision](decisions/0002-connection-layer.md). This milestone precedes M1; the simulation reliability and scientific acceptance boundaries remain unchanged.
 
 Deliver connection configuration/registry, separate agent-runtime and model-API contracts, capability-aware auth/session state, secret references, usage/budget records, and an initial management interface. Begin with deterministic fake backends, then verify one official local Codex path and an API-key route through the official OpenAI Python SDK before broadening ACP support. The [integrated implementation plan](design/integration-plan.md) defines P0.1–P0.3 and their observable demos. LiteLLM remains a later optional adapter.
+
+Next is P0.2: real adapter implementations with fake protocol-peer tests, then explicitly authorized real smoke tests. Full persistent credential entry, provider permissions and account-scoped usage limits are not implemented by the offline prototype.
 
 Acceptance:
 

@@ -1,6 +1,6 @@
 # Contributing to SpiceOwl
 
-SpiceOwl is currently a documentation and directory scaffold. Read the [roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) before starting implementation.
+SpiceOwl has an offline alpha CLI/web console and synthetic backend tests. Read the [local console guide](docs/local-console.md), [roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) before starting implementation.
 
 ## Useful first contributions
 
@@ -40,15 +40,16 @@ Do not submit proprietary PDK/model files, private circuit sources, license file
 
 ## Checks available today
 
-There is no package install or test runner yet. For documentation/scaffold changes:
+Use Python 3.11+ on macOS or Linux. Public tests use temporary SQLite data and loopback HTTP:
 
 ```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
 python3 -m json.tool examples/run-manifest.example.json
 python3 -m json.tool tests/fixtures/synthetic/disconnected-running.json
 git diff --check
 ```
 
-Also check relative links, the rendered icon, and that `.gitignore` permits intentional public fixtures while excluding runtime directories. Add executable project tooling with the first implementation milestone rather than documenting commands that do not exist.
+Also check relative links, the rendered icon, and that `.gitignore` permits intentional public fixtures while excluding runtime directories. For frontend changes, check actual browser behavior, keyboard access, narrow viewports and packaged static assets. Do not claim real-provider or simulator verification from the offline tests.
 
 ## Pull requests
 

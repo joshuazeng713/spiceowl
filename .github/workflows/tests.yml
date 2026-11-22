@@ -1,0 +1,33 @@
+name: Offline prototype tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the local package
+        run: python -m pip install --no-deps .
+      - name: Test the installed distribution
+        run: python -m unittest discover -s tests
+      - name: Check CLI and bundled browser assets
+        run: |
+          spiceowl --version
+          python -c "from importlib.resources import files; root=files('spiceowl.web').joinpath('static'); assert all(root.joinpath(n).is_file() for n in ('index.html','app.js','app.css','owl.svg'))"
+          git diff --check

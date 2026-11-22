@@ -8,9 +8,9 @@
 <p align="center">An open-source agent console for long-running circuit simulations.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/feat/server-pool-agent-qa">Current alpha source</a></p>
+<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/main">Current alpha source</a></p>
 
-> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `feat/server-pool-agent-qa`; the [publishing guide](https://github.com/joshuazeng713/spiceowl/blob/feat/server-pool-agent-qa/docs/github-pages.md) explains automatic updates.
+> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `main`; the [publishing guide](https://github.com/joshuazeng713/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
 > **Early alpha — server pool, native agent Q&A and a developer inverter smoke test.** Compare bounded SSH resource observations, prepare standalone or Virtuoso-origin execution plans, and ask an installed Codex runtime a short question. Web-console runs and run diagnoses remain synthetic. A separate, opt-in [developer script](examples/inverter/README.md) can execute the original MOS1 inverter on a licensed Spectre installation; general web/CLI job submission and unattended monitoring remain planned. Optional MCP tools read saved records. See the [console guide](docs/local-console.md), [server pool guide](docs/server-pool.md), and [native Q&A guide](docs/native-agent.md).
 

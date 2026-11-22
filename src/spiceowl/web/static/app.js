@@ -23,7 +23,7 @@ const isPublicDemo = () => window.SpiceOwlDemo !== undefined || document.documen
 const demoRepository = 'https://github.com/joshuazeng713/spiceowl';
 function demoSource() {
   const metadata = window.SpiceOwlDemo?.metadata || {};
-  const branch = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/.test(metadata.source_branch || '') ? metadata.source_branch : 'feat/server-pool-agent-qa';
+  const branch = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/.test(metadata.source_branch || '') ? metadata.source_branch : 'main';
   return {branch, ref: /^[a-f0-9]{40}$/i.test(metadata.commit || '') ? metadata.commit : branch};
 }
 const demoDocument = path => demoRepository + '/blob/' + demoSource().ref + '/' + path;

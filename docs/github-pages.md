@@ -10,13 +10,13 @@ SSH host configuration, native agent questions, real simulation execution and pr
 
 ## Automatic publication
 
-The repository's **Publish interactive demo** workflow builds and publishes using GitHub Actions. `PAGES_SOURCE_BRANCH` is a repository Actions variable selecting the source branch. It is currently `feat/server-pool-agent-qa`, where the runnable alpha lives. Each push to that branch rebuilds the site. A push to an unrelated branch does not publish it.
+The repository's **Publish interactive demo** workflow builds and publishes using GitHub Actions. `PAGES_SOURCE_BRANCH` is a repository Actions variable selecting the source branch. It is set to `main`, which contains the runnable alpha. Each push to `main` rebuilds the site. A push to an unrelated branch does not publish it.
 
-The workflow is also present on `main` so **Actions → Publish interactive demo → Run workflow** can explicitly republish the selected source branch. Both paths build the exact checked-out commit, expose that commit and build time in the demo, and upload only `dist/pages`. No personal token is stored in the workflow; deployment uses GitHub's scoped Pages and OIDC permissions.
+Use **Actions → Publish interactive demo → Run workflow** to explicitly republish `main`. Both paths build the exact checked-out commit, expose that commit and build time in the demo, and upload only `dist/pages`. No personal token is stored in the workflow; deployment uses GitHub's scoped Pages and OIDC permissions.
 
-When the implementation is merged into `main`, set `PAGES_SOURCE_BRANCH` to `main` in **Settings → Secrets and variables → Actions → Variables**, then run the workflow once. Subsequent `main` pushes publish automatically. Keep the README's source-branch note aligned with that change. The `github-pages` environment permits the current source branch and `main`; changing to another branch also requires adding that branch to its deployment rules.
+`PAGES_SOURCE_BRANCH` is configured as `main` in **Settings → Secrets and variables → Actions → Variables**. The `github-pages` environment must permit `main`. To publish another source branch later, update the variable, allow that branch in the environment's deployment rules, and keep the README's source-branch note aligned.
 
-The README entry appears on both the implementation branch and the repository's default branch. The repository homepage points to the same public URL. Publishing does not merge the existing stacked implementation PRs.
+The README entry and repository homepage point to the same public URL. Implementation changes are merged into `main` through pull requests; the resulting `main` push triggers publication.
 
 ## Build and verify locally
 

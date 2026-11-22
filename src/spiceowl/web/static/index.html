@@ -17,15 +17,16 @@
     <nav aria-label="Main navigation">
       <a href="#overview" data-nav="overview"><span aria-hidden="true">▦</span> Overview</a>
       <a href="#connections" data-nav="connections"><span aria-hidden="true">⌁</span> AI connections <span id="connection-count" class="nav-count">0</span></a>
+      <a href="#hosts" data-nav="hosts"><span aria-hidden="true">▤</span> Simulation hosts <span id="host-count" class="nav-count">0</span></a>
     </nav>
     <div class="sidebar-caption">RECENT RUNS</div>
     <nav id="recent-runs" class="recent-runs" aria-label="Recent runs"></nav>
-    <div class="sidebar-bottom"><div class="moon" aria-hidden="true">☾</div><p>You sleep.<br>SpiceOwl keeps watch.</p><div class="build"><span class="dot"></span> Offline prototype <span id="version">0.1</span></div></div>
+    <div class="sidebar-bottom"><div class="moon" aria-hidden="true">☾</div><p>You sleep.<br>SpiceOwl keeps watch.</p><div class="build"><span class="dot"></span> Connectivity alpha <span id="version">0.2</span></div></div>
   </aside>
   <div class="shell">
-    <header class="topbar"><div><span class="breadcrumb">Workspace</span><span class="slash">/</span><span id="location">Overview</span></div><span class="prototype-badge">Synthetic data only</span></header>
+    <header class="topbar"><div><span class="breadcrumb">Workspace</span><span class="slash">/</span><span id="location">Overview</span></div><span class="prototype-badge">Read-only connections · Demo runs</span></header>
     <main id="main" tabindex="-1"><div class="empty"><h1>Opening your workspace…</h1><p>Reading local records.</p></div></main>
-    <footer class="page-footer"><span>Private to this machine · No external requests</span><span>Execution · Observation · Validity · Specification</span></footer>
+    <footer class="page-footer"><span>Local state · Explicit SSH checks</span><span>Execution · Observation · Validity · Specification</span></footer>
   </div>
   <div id="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="connection-dialog" aria-labelledby="dialog-title">

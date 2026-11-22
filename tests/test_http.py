@@ -79,6 +79,21 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/sessions/unknown?after=-1")[0], 400)
         self.assertEqual(self.mutate("DELETE", f"/api/connections/{cid}")[0], 200)
 
+    def test_host_probes_require_explicit_empty_post_and_preserve_runs(self):
+        from unittest.mock import patch
+        self.app.seed_demo()
+        before = self.app.state()["runs"]
+        with patch.object(self.app.hosts, "probe", return_value={"scope": "connectivity_only"}) as probe:
+            self.assertEqual(self.request("GET", "/api/state")[0], 200)
+            self.assertEqual(self.request("GET", "/api/hosts/example/probe")[0], 404)
+            self.assertEqual(self.request("POST", "/api/hosts/example/probe", {})[0], 403)
+            self.assertEqual(self.mutate("POST", "/api/hosts/example/probe", {"command": "arbitrary"})[0], 400)
+            self.assertEqual(self.mutate("POST", "/api/hosts/example", {"ssh_target": "untrusted"})[0], 404)
+            probe.assert_not_called()
+            self.assertEqual(self.mutate("POST", "/api/hosts/example/probe")[0], 200)
+            probe.assert_called_once_with("example")
+        self.assertEqual(self.app.state()["runs"], before)
+
 
 if __name__ == "__main__":
     unittest.main()

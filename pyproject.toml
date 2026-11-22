@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spiceowl"
-version = "0.1.0a1"
+version = "0.2.0a1"
 description = "A local console for circuit simulation supervision"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,6 +16,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp==1.30.0"]
 
 [project.scripts]
 spiceowl = "spiceowl.cli.main:main"

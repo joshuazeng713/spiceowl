@@ -1,6 +1,6 @@
 # Source layout
 
-The P0.1 alpha package implements fake connections, synthetic execution replay, acceptance and policy functions, local persistence, CLI and a bundled web console. Some directories still reserve future boundaries; real provider and simulator integrations are not implemented. See the [local guide](../../docs/local-console.md).
+The alpha package implements fake connections, synthetic execution replay, acceptance and policy functions, local persistence, CLI and a bundled web console. The P0.2 slice adds explicit SSH identity/version probes and optional read-only stdio MCP queries. Real inference and simulation execution remain planned. See the [local guide](../../docs/local-console.md) and [connection guide](../../docs/real-connections.md).
 
 | Directory | Planned responsibility |
 | --- | --- |
@@ -12,6 +12,8 @@ The P0.1 alpha package implements fake connections, synthetic execution replay, 
 | `recovery/` | Policy evaluation, bounded actions, and recovery lineage |
 | `storage/` | Durable records, event history, and artifact references |
 | `agent/` | Planned agent/model-API connections, sessions, and optional evidence-backed diagnosis |
+| `mcp/` | Optional read-only tools backed by independent SQLite read transactions |
+| `hosts.py` | Private profile import, per-host probe locks and observation persistence |
 | `cli/` | Local control and structured reports over the domain interfaces |
 | `web/` | Loopback HTTP interface and packaged browser assets |
 | `service.py` | Single-owner offline controller shared by CLI and web |

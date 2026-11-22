@@ -1,8 +1,8 @@
 # Tests and validation plan
 
-Run `PYTHONPATH=src python3 -m unittest discover -s tests` with Python 3.11+. Current tests cover fake connections, strict evidence/proposals, acceptance, synthetic replay, SQLite service recovery and loopback HTTP. Temporary local data is isolated per test. No credentials, provider requests or real simulations are used.
+Run `PYTHONPATH=src python3 -m unittest discover -s tests` with Python 3.11+. Tests cover fake connections, strict evidence/proposals, acceptance, synthetic replay, SQLite service recovery, loopback HTTP, bounded SSH peer failures, private profile import and read-only storage. Install `.[mcp]` to include actual stdio SDK handshake/tool-call tests. Temporary local data is isolated per test. No credentials, provider inference requests, real SSH hosts or real simulations are used.
 
-Browser verification covers connection creation/probing, manual run replay, diagnostic events, persisted-session reload, escaped content and narrow layouts. The [local guide](../docs/local-console.md) records the implemented scope.
+Browser verification covers connection creation/probing, the host page and explicit probe controls, manual run replay, diagnostic events, persisted-session reload, escaped content and narrow layouts. The [local guide](../docs/local-console.md) records the implemented scope.
 
 ## Additional public tests for later milestones
 

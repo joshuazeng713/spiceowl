@@ -1,4 +1,4 @@
-"""CLI entry point; never starts a real provider or simulator."""
+"""CLI entry point for local records and explicit read-only connectivity probes."""
 
 import argparse
 import json
@@ -14,7 +14,7 @@ from spiceowl.storage.sqlite import Store
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="spiceowl", description="Local offline simulation console (synthetic data only).")
+    result = argparse.ArgumentParser(prog="spiceowl", description="Local simulation console: synthetic runs and read-only real connectivity.")
     result.add_argument("--version", action="version", version=f"SpiceOwl {__version__}")
     default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "spiceowl"
     result.add_argument("--data-dir", default=str(default), help="Local persistent state directory (put before the command).")
@@ -24,6 +24,14 @@ def parser():
     serve.add_argument("--demo", action="store_true", help="Idempotently add synthetic demo data.")
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
     commands.add_parser("status", help="Print locally stored connection/run/session records as JSON.")
+    commands.add_parser("mcp", help="Serve read-only local queries over stdio (requires the mcp extra).")
+    hosts = commands.add_parser("hosts", help="Register private SSH profiles and explicitly probe connectivity.").add_subparsers(dest="action", required=True)
+    hosts.add_parser("list", help="List stored metadata; no network requests.")
+    host_add = hosts.add_parser("add", help="Import a private JSON profile; no network requests.")
+    host_add.add_argument("--file", required=True)
+    for name in ("inspect", "probe"):
+        command = hosts.add_parser(name, help="Read stored profile." if name == "inspect" else "Check SSH identity and tool versions. Does not start a simulation.")
+        command.add_argument("host_id")
     connections = commands.add_parser("connections").add_subparsers(dest="action", required=True)
     connections.add_parser("list")
     add = connections.add_parser("add")
@@ -57,10 +65,34 @@ def output(value):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "mcp":
+            try:
+                from spiceowl.mcp.server import serve
+            except ModuleNotFoundError as exc:
+                if exc.name == "mcp" or (exc.name or "").startswith("mcp."):
+                    raise DomainError("Install the optional MCP dependency: python -m pip install 'spiceowl[mcp]' (or '.[mcp]' from source).", "missing_dependency") from None
+                raise
+            serve(args.data_dir)
+            return 0
+        if args.command == "hosts":
+            from spiceowl.hosts import HostRegistry, load_profile
+            registry = HostRegistry(args.data_dir)
+            if args.action == "add":
+                output(registry.add(load_profile(args.file)))
+            elif args.action == "list":
+                output(registry.list())
+            elif args.action == "inspect":
+                output(registry.inspect(args.host_id))
+            else:
+                result = registry.probe(args.host_id)
+                output(result)
+                return 0 if result["identity"]["verified"] and not result.get("error") and all(t["status"] == "available" for t in result["tools"]) else 1
+            return 0
         if args.command in ("status", "session") or (args.command in ("connections", "runs") and args.action in ("list", "inspect")):
             store = Store(args.data_dir)
             if args.command == "status":
-                output({"mode": "offline_prototype", "connections": [c for c in store.list("connection") if not c.get("deleted")], "runs": store.list("run"), "sessions": store.list("session")})
+                from spiceowl.hosts import host_summary
+                output({"mode": "read_only_connectivity", "connections": [c for c in store.list("connection") if not c.get("deleted")], "hosts": [host_summary(h) for h in store.list("host")], "runs": store.list("run"), "sessions": store.list("session")})
             elif args.command == "session":
                 if args.after < 0:
                     raise DomainError("Event cursor must be nonnegative.")
@@ -77,7 +109,7 @@ def main(argv=None):
                 if args.demo:
                     app.seed_demo()
                 with make_server(app, args.port) as server:
-                    print(f"SpiceOwl {__version__} · offline prototype · synthetic data only", flush=True)
+                    print(f"SpiceOwl {__version__} · synthetic runs + read-only real connectivity", flush=True)
                     print(f"http://127.0.0.1:{server.server_address[1]}", flush=True)
                     try:
                         server.serve_forever()

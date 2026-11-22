@@ -1,7 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const title = (value) => String(value ?? 'unknown').replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
-let state = {connections: [], runs: [], sessions: []};
+let state = {connections: [], runs: [], sessions: [], hosts: []};
 let csrf = '';
 let selectedSession = null;
 let sessionView = null;
@@ -36,6 +36,7 @@ async function refresh() {
   csrf = state.csrf_token;
   $('#version').textContent = state.version;
   $('#connection-count').textContent = state.connections.length;
+  $('#host-count').textContent = state.hosts.length;
   $('#recent-runs').innerHTML = state.runs.slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
 }
 
@@ -90,7 +91,26 @@ function connections() {
     const fields = [['Transport', status.transport || 'unchecked'], ['Authentication', status.authentication || 'unchecked'], ['Model catalog', status.catalog || 'unchecked'], ['Inference access', status.inference_access || 'unverified']];
     return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">${c.kind === 'agent' ? '✧' : '⌁'}</div><div class="connection-name"><h3>${escape(c.label)} ${chip(c.enabled ? 'enabled' : 'disabled', c.enabled ? 'green' : '')}</h3><p>${c.kind === 'agent' ? 'Agent runtime' : 'Model API'} · Offline fixture · ${escape(title(c.scenario))}</p></div><div class="connection-actions"><button class="button secondary small" data-action="probe" data-id="${escape(c.connection_id)}" ${c.enabled ? '' : 'disabled'}>Probe metadata</button><button class="button secondary small" data-action="toggle" data-id="${escape(c.connection_id)}">${c.enabled ? 'Disable' : 'Enable'}</button><button class="button secondary small" data-action="remove" data-id="${escape(c.connection_id)}" aria-label="Remove ${escape(c.label)}">Remove</button></div></div><div class="connection-readiness">${fields.map(([name, value]) => `<div class="readiness-field"><span>${name}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="connection-bottom"><span>All statuses describe a simulated backend.</span><span>Revision ${c.revision} · No credentials</span></div></article>`;
   }).join('')}</div>`;
-  return html + `<div class="planned-note"><strong>Next: real providers</strong><p>Official local Codex and API-key connections are planned for P0.2; ACP follows. This build accepts only offline demo backends and never starts a login or a model request.</p></div>`;
+  return html + `<div class="planned-note"><strong>Use your existing agent through MCP</strong><p>SpiceOwl can expose stored runs and host observations as read-only tools to an MCP client such as Codex. Install the optional MCP extra, then configure the client to run <code>spiceowl --data-dir ABSOLUTE_STATE_DIR mcp</code>. Registration and a successful client tool call are separate checks.</p><p>These demo connections still use fixture responses. The web console does not send prompts to Codex or a model API.</p></div>`;
+}
+
+function hosts() {
+  let html = heading('SIMULATION HOSTS', 'Check the connection before the run.', 'Explicit SSH identity and tool-version checks. Results below are saved observations.');
+  html += `<div class="watch-banner"><img src="/owl.svg" alt=""><div><h3>Your existing SSH route.</h3><p>Import a private host profile with <code>spiceowl hosts add --file PROFILE.json</code>. SSH keys and jump hosts remain in your SSH configuration.</p></div></div>`;
+  if (!state.hosts.length) html += `<div class="empty"><h2>No simulation hosts registered.</h2><p>Add a profile through the CLI, then refresh this page. Adding or listing hosts makes no remote request.</p></div>`;
+  html += `<div class="connections-list">${state.hosts.map(host => {
+    const probe = host.last_probe;
+    const matched = probe?.identity?.verified === true;
+    const when = probe ? new Date(probe.observed_at).toLocaleString() : 'Never checked';
+    const status = !probe ? 'not checked' : probe.error ? 'check incomplete' : matched ? 'identity matched' : 'identity unverified';
+    const fields = [['SSH transport', probe?.transport || 'unchecked'], ['Host identity', matched ? 'matched at last check' : 'unverified'], ['Scope', 'connectivity only'], ['Simulation readiness', 'not tested']];
+    const toolRows = host.tools.map(tool => {
+      const result = probe?.tools?.find(item => item.kind === tool.kind);
+      return `<div class="host-tool"><strong>${escape(title(tool.kind))}</strong>${chip(result?.status || 'unchecked', result?.status === 'available' ? 'green' : result ? 'amber' : '')}<span class="host-version">${escape(result?.version || 'Version unverified')}</span>${result?.error ? `<p class="error-text">${escape(result.error.message)}</p>` : ''}</div>`;
+    }).join('');
+    return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">▤</div><div class="connection-name"><h3>${escape(host.label)} ${chip(status, matched && !probe.error ? 'green' : probe ? 'amber' : '')}</h3><p>Real connection · ${escape(host.host_id)}</p></div><div class="connection-actions"><button class="button primary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></div></div><div class="connection-readiness">${fields.map(([label, value]) => `<div class="readiness-field"><span>${label}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="host-tools">${toolRows}</div>${probe?.error ? `<div class="host-error">${escape(probe.error.message)}</div>` : ''}<div class="connection-bottom"><span>Last check: ${escape(when)}</span><span>Saved result · no automatic polling</span></div></article>`;
+  }).join('')}</div>`;
+  return html + `<div class="planned-note"><strong>Connection evidence has a limited scope.</strong><p>A matched identity and readable version banner do not verify licenses, circuit inputs or a running job. Checks use bounded remote queries; a timeout leaves connectivity unknown and never changes a simulation record. Simulation submission and monitoring follow in a later slice.</p></div>`;
 }
 
 function memoryChart(run) {
@@ -125,9 +145,9 @@ function render() {
   sessionView = null;
   const page = location.hash.slice(1) || 'overview';
   const run = currentRun();
-  $('#location').textContent = page === 'connections' ? 'AI connections' : run ? run.label : 'Overview';
+  $('#location').textContent = page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
-  $('#main').innerHTML = page === 'connections' ? connections() : page.startsWith('run/') ? runDetail(run) : overview();
+  $('#main').innerHTML = page === 'connections' ? connections() : page === 'hosts' ? hosts() : page.startsWith('run/') ? runDetail(run) : overview();
   if (run && selectedSession) pollSession();
 }
 
@@ -176,7 +196,13 @@ document.addEventListener('click', async event => {
   }
   if (action === 'close-dialog') { $('#connection-dialog').close(); return; }
   button.disabled = true;
+  const originalText = button.textContent;
   try {
+    if (action === 'host-probe') {
+      button.textContent = 'Checking…';
+      const probe = await api(`/api/hosts/${encodeURIComponent(id)}/probe`, {method: 'POST'});
+      toast(probe.error ? probe.error.message : 'Connection check saved. Simulation readiness remains untested.');
+    }
     if (action === 'seed') { await api('/api/demo', {method: 'POST'}); toast('Demo workspace loaded. All data is synthetic.'); }
     if (action === 'advance') { await api(`/api/runs/${encodeURIComponent(id)}/advance`, {method: 'POST'}); }
     if (action === 'probe') { await api(`/api/connections/${encodeURIComponent(id)}/probe`, {method: 'POST', body: {level: 'models'}}); toast('Metadata probe complete. Inference access is still unverified.'); }
@@ -188,7 +214,7 @@ document.addEventListener('click', async event => {
     if (action === 'cancel') { await api(`/api/turns/${encodeURIComponent(id)}/cancel`, {method: 'POST'}); await pollSession(); return; }
     await refresh(); render();
   } catch (error) { toast(error.message); }
-  finally { if (button.isConnected) button.disabled = false; }
+  finally { if (button.isConnected) { button.disabled = false; button.textContent = originalText; } }
 });
 
 $('#connection-form').addEventListener('submit', async event => {

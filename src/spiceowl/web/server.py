@@ -1,4 +1,4 @@
-"""Bounded HTTP interface for the single-user offline prototype."""
+"""Bounded loopback HTTP interface for synthetic runs and host connectivity."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -106,6 +106,10 @@ def make_server(controller, port=0):
             parts = path.strip("/").split("/")
             if len(parts) >= 3 and parts[0] == "api":
                 identifier = require_id(parts[2])
+                if parts[1] == "hosts" and len(parts) == 4 and parts[3] == "probe" and self.command == "POST":
+                    if self.body():
+                        raise DomainError("A host probe takes an empty object; configure profiles through the CLI.")
+                    return self.reply(controller.hosts.probe(identifier))
                 if parts[1] == "connections":
                     if len(parts) == 3 and self.command == "PATCH":
                         return self.reply(controller.change_connection(identifier, self.body()))

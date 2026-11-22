@@ -31,7 +31,7 @@ Added at the maintainer's request on 2026-11-13. See [workstreams](workstreams.m
 
 Deliver connection configuration/registry, separate agent-runtime and model-API contracts, capability-aware auth/session state, secret references, usage/budget records, and an initial management interface. Begin with deterministic fake backends, then verify one official local Codex path and an API-key route through the official OpenAI Python SDK before broadening ACP support. The [integrated implementation plan](design/integration-plan.md) defines P0.1–P0.3 and their observable demos. LiteLLM remains a later optional adapter.
 
-Next is P0.2: real adapter implementations with fake protocol-peer tests, then explicitly authorized real smoke tests. Full persistent credential entry, provider permissions and account-scoped usage limits are not implemented by the offline prototype.
+P0.2 now has a bounded connectivity slice: private SSH profiles, explicit identity/tool-version probes, a browser host view, and optional read-only stdio MCP tools. Public tests use a fake SSH peer and an actual local MCP handshake. These checks do not close M1 or M2. Native agent-runtime adapters, real API inference, persistent credential entry and account-scoped usage limits remain planned. See the [connectivity contract](contracts/p02-connectivity.md).
 
 Acceptance:
 

@@ -8,6 +8,10 @@
 <p align="center">An open-source agent console for long-running circuit simulations.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
+<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/feat/server-pool-agent-qa">Current alpha source</a></p>
+
+> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `feat/server-pool-agent-qa`; the [publishing guide](https://github.com/joshuazeng713/spiceowl/blob/feat/server-pool-agent-qa/docs/github-pages.md) explains automatic updates.
+
 > **Early alpha — local console with read-only connectivity.** The CLI and browser manage synthetic runs and saved diagnoses. Explicit SSH probes check host identity and simulator versions; an optional stdio MCP server lets an existing agent query local records. Real model inference, simulation submission and unattended monitoring remain planned. See the [console guide](docs/local-console.md) and [real connection guide](docs/real-connections.md).
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)

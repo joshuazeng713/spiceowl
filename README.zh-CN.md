@@ -8,6 +8,10 @@
 <p align="center">面向长时间电路仿真的开源 Agent 控制台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
+<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>直接体验在线交互演示</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/feat/server-pool-agent-qa">当前 Alpha 源码</a></p>
+
+> **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH、真实 Agent 和仿真执行需要本地安装。公开演示目前跟随 `feat/server-pool-agent-qa` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/joshuazeng713/spiceowl/blob/feat/server-pool-agent-qa/docs/github-pages.md)。
+
 > **早期 Alpha：服务器池、原生 Agent 问答与开发者反相器 smoke 测试。** 可以比较有范围限制的 SSH 资源观测、生成独立网表或 Virtuoso 来源的执行计划，并向已安装的 Codex runtime 发送简短问题。网页中的仿真任务和任务诊断仍使用合成数据。独立、显式调用的[开发者脚本](examples/inverter/README.md)可在具有许可证的 Spectre 环境执行原创 MOS1 反相器；网页/CLI 通用仿真提交和无人值守监控待实现。可选 MCP 工具读取已保存的记录。见[控制台指南](docs/local-console.md)、[服务器池指南](docs/server-pool.md)和[原生问答指南](docs/native-agent.md)。
 
 ![SpiceOwl 本地控制台，所有任务均为明确标注的合成数据](docs/images/local-console.png)

@@ -19,6 +19,58 @@ let selectedQa = null, qaView = null, qaPolling = false, qaSubmitting = false;
 let poolImportPreview = null;
 let selectedHostIds = null;
 let hostSelectionRevision = 0, planningBusy = false;
+const isPublicDemo = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
+const demoRepository = 'https://github.com/joshuazeng713/spiceowl';
+function demoSource() {
+  const metadata = window.SpiceOwlDemo?.metadata || {};
+  const branch = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/.test(metadata.source_branch || '') ? metadata.source_branch : 'feat/server-pool-agent-qa';
+  return {branch, ref: /^[a-f0-9]{40}$/i.test(metadata.commit || '') ? metadata.commit : branch};
+}
+const demoDocument = path => demoRepository + '/blob/' + demoSource().ref + '/' + path;
+const demoPendingRequests = new Map();
+const pendingGet = key => isPublicDemo() ? demoPendingRequests.get(key) || null : sessionStorage.getItem(key);
+const pendingSet = (key, value) => isPublicDemo() ? demoPendingRequests.set(key, value) : sessionStorage.setItem(key, value);
+const pendingRemove = key => isPublicDemo() ? demoPendingRequests.delete(key) : sessionStorage.removeItem(key);
+
+function publicDemoChrome() {
+  if (!isPublicDemo()) return;
+  document.body.classList.add('public-demo');
+  document.title = 'SpiceOwl · Public interactive demo';
+  $('#public-demo-banner').hidden = false;
+  $('#workspace-scope').textContent = 'Interactive preview';
+  $('.local-tag').textContent = 'DEMO';
+  $('.breadcrumb').textContent = 'Public demo';
+  $('.prototype-badge').textContent = 'Synthetic · Scripted';
+  $('.page-footer span').textContent = 'Browser demo · No live connections';
+  const metadata = window.SpiceOwlDemo?.metadata || {};
+  const commit = /^[a-f0-9]{7,40}$/i.test(metadata.commit || '') ? metadata.commit.slice(0, 8) : 'unversioned';
+  const date = typeof metadata.build_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(metadata.build_date) ? metadata.build_date.slice(0, 10) : 'date unavailable';
+  $('#demo-build').textContent = `Build ${commit} · ${date}`;
+  if (typeof window.SpiceOwlDemo?.request !== 'function') $('[data-action="demo-reset"]').disabled = true;
+  $('#demo-storage-notice').textContent = (state.demo_storage || window.SpiceOwlDemo?.storage_mode) === 'memory'
+    ? 'Storage unavailable: changes reset on refresh.'
+    : 'Changes stay in this browser tab; a new build or Reset clears them.';
+  // Public pages offer local setup instructions, never connection or credential forms.
+  $('#host-dialog')?.remove(); $('#pool-dialog')?.remove();
+  $('#connection-dialog .muted').textContent = 'Try a scripted agent or model API. No provider is contacted and no credentials are needed.';
+}
+
+function publicLocalPage() {
+  return heading('RUN LOCALLY', 'Bring the console to your workspace.', 'Use your own local installation for private host profiles, saved observations and native text Q&A.') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><h2>Start with the synthetic workspace</h2><p>Requires Python 3.11+ on macOS or Linux. Use the branch that supplies this demo, then run these commands in a terminal on your own computer:</p><pre class="public-command">git clone --branch ${escape(demoSource().branch)} https://github.com/joshuazeng713/spiceowl.git
+cd spiceowl
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/spiceowl serve --demo</pre><p>Open the loopback address printed by that command. This public page never connects to that address or to your computer.</p><h3>Connect only when you choose</h3><p>The local console can register an existing SSH route, make explicit host checks and send text through a registered native agent. General simulation submission, unattended monitoring and automatic recovery remain planned.</p><div class="public-info-links"><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">Local setup guide</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">Host connection guide</a><a class="button secondary" href="#overview">Back to the demo</a></div></div></section>`;
+}
+
+function publicHostPage() {
+  return heading('LOCAL FEATURE PREVIEW', 'Connect servers in your local console.', 'This public demo has no SSH access and does not scan, register or contact hosts.') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">ILLUSTRATIVE WORKFLOW</span><h2>Your SSH configuration stays with you</h2><div class="public-feature-grid"><article><h3>Register a route</h3><p>Choose an existing SSH alias and record the expected remote identity in a private local profile.</p></article><article><h3>Check explicitly</h3><p>Verify host trust, account identity and configured simulator versions. A saved profile alone proves no connection.</p></article><article><h3>Compare observations</h3><p>Inspect CPU and memory snapshots with their observation times. Missing data never means an idle machine.</p></article></div><p>No hostnames, login details, SSH keys or credentials are requested on this page.</p><a class="button primary" href="#local">Run locally to configure hosts</a></div></section>`;
+}
+
+function publicAgentPage() {
+  const firstRun = state.runs[0];
+  return heading('LOCAL FEATURE PREVIEW', 'Use your own agent locally.', 'No real model or agent runtime is connected to this public demo.') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><h2>Explore the diagnosis workflow first</h2><p>Open a synthetic run and choose <strong>Diagnose snapshot</strong> to see a scripted explanation based on its saved evidence. Text stays in this browser tab; the response is not generated by a model.</p><blockquote class="public-example"><span class="chip">SCRIPTED EXAMPLE</span><p>A lost connection leaves the current execution state unknown. Keep the original run identity and inspect its saved evidence before considering another submission.</p></blockquote><p>In a local installation, Agent chat can send a real text question through a registered native Codex runtime. Authentication stays with that runtime. A chat response does not authorize a simulation action.</p><div class="public-info-links">${firstRun ? `<a class="button primary" href="#run/${escape(firstRun.run_id)}">Try a scripted diagnosis</a>` : '<a class="button primary" href="#overview">Explore synthetic runs</a>'}<a class="button secondary" href="#local">Run locally</a><a class="button secondary" href="${demoDocument('docs/native-agent.md')}" target="_blank" rel="noopener noreferrer">Native agent guide</a></div></div></section>`;
+}
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -28,6 +80,11 @@ function toast(message) {
 }
 
 async function api(path, options = {}) {
+  if (isPublicDemo()) {
+    if (typeof window.SpiceOwlDemo?.request !== 'function') throw new Error('The public demo could not load. Reload this page to try again.');
+    // This explicit adapter owns demo requests; errors never fall back to a live API.
+    return window.SpiceOwlDemo.request(path, options);
+  }
   const method = options.method || 'GET';
   const response = await fetch(path, {method, headers: {'Content-Type': 'application/json', ...(method !== 'GET' ? {'X-SpiceOwl-Token': csrf} : {})}, ...(method !== 'GET' ? {body: JSON.stringify(options.body || {})} : {})});
   const data = await response.json();
@@ -40,7 +97,9 @@ async function api(path, options = {}) {
 }
 
 async function refresh() {
+  publicDemoChrome();
   state = await api('/api/state');
+  publicDemoChrome();
   csrf = state.csrf_token;
   $('#version').textContent = state.version;
   $('#connection-count').textContent = state.connections.length;
@@ -76,12 +135,15 @@ function overview() {
   const attention = state.runs.filter(r => r.observation !== 'current' || r.execution === 'failed' || r.specification_result === 'fail').length;
   const done = state.runs.filter(r => r.execution === 'completed').length;
   const stats = [['Total runs', total, 'Stored synthetic experiments', '▦'], ['Last observed active', running, 'Check observation freshness', '◷'], ['Needs attention', attention, 'Evidence to inspect', '◇'], ['Execution completed', done, 'Validity is reported separately', '✓']];
-  let html = heading('YOUR WORKSPACE', 'A clear view of every run.', 'Follow the evidence. Keep the experiment intact.', `<button class="button primary" data-action="seed"><span aria-hidden="true">＋</span> Load demo workspace</button>`);
+  const overviewAction = isPublicDemo()
+    ? state.runs[0] ? `<a class="button primary" href="#run/${escape(state.runs[0].run_id)}">Explore a scenario</a>` : '<button class="button primary" data-action="demo-reset">Reset demo</button>'
+    : '<button class="button primary" data-action="seed"><span aria-hidden="true">＋</span> Load demo workspace</button>';
+  let html = heading('YOUR WORKSPACE', 'A clear view of every run.', 'Follow the evidence. Keep the experiment intact.', overviewAction);
   if (!total) {
-    return html + `<div class="empty"><img src="/owl.svg" alt=""><h1>Your first night watch starts here.</h1><p>Explore connections, interrupted runs and diagnostic proposals with an offline demo. No accounts, API keys or simulator needed.</p><button class="button primary" data-action="seed">Load the synthetic demo <span aria-hidden="true">→</span></button></div>`;
+    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>Your first night watch starts here.</h1><p>Explore connections, interrupted runs and diagnostic proposals with an offline demo. No accounts, API keys or simulator needed.</p><button class="button primary" data-action="seed">Load the synthetic demo <span aria-hidden="true">→</span></button></div>`;
   }
   html += `<div class="stat-grid">${stats.map(([label, value, note, glyph]) => `<div class="stat-card"><div class="stat-label">${label}<span class="stat-glyph" aria-hidden="true">${glyph}</span></div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`).join('')}</div>`;
-  html += `<div class="watch-banner"><img src="/owl.svg" alt=""><div><h3>Explore the overnight workflow.</h3><p>Advance a synthetic run, inspect its evidence, then ask a demo agent for a read-only recommendation.</p></div><a class="button secondary small" href="#connections">Manage connections <span aria-hidden="true">→</span></a></div>`;
+  html += `<div class="watch-banner"><img src="./owl.svg" alt=""><div><h3>Explore the overnight workflow.</h3><p>Advance a synthetic run, inspect its evidence, then ask a demo agent for a read-only recommendation.</p></div><a class="button secondary small" href="#connections">Manage connections <span aria-hidden="true">→</span></a></div>`;
   html += `<div class="section-title"><h2>Simulation runs <span class="muted">/ ${total}</span></h2><span class="section-note">Manual replay · saved locally</span></div><div class="run-grid">`;
   html += state.runs.map(run => {
     const pct = Number.isFinite(run.progress) ? Math.round(run.progress * 100) : null;
@@ -91,7 +153,7 @@ function overview() {
 }
 
 function connections() {
-  let html = heading('AI CONNECTIONS', 'Bring your own intelligence.', 'Keep agent runtimes and model APIs in one workspace.', `<button class="button primary" data-action="add-connection"><span aria-hidden="true">＋</span> Add demo connection</button>`);
+  let html = heading('AI CONNECTIONS', isPublicDemo() ? 'Try simulated connections.' : 'Bring your own intelligence.', isPublicDemo() ? 'Explore scripted readiness, access-denied and interrupted-response states. No provider is contacted.' : 'Keep agent runtimes and model APIs in one workspace.', `<button class="button primary" data-action="add-connection"><span aria-hidden="true">＋</span> Add demo connection</button>`);
   if (!state.connections.length) {
     html += `<div class="empty"><h2>No connections yet.</h2><p>Create a simulated agent or API connection to explore authentication states, streaming and failure handling.</p><button class="button primary" data-action="add-connection">Create demo connection</button></div>`;
   }
@@ -100,10 +162,12 @@ function connections() {
     const fields = [['Transport', status.transport || 'unchecked'], ['Authentication', status.authentication || 'unchecked'], ['Model catalog', status.catalog || 'unchecked'], ['Inference access', status.inference_access || 'unverified']];
     return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">${c.kind === 'agent' ? '✧' : '⌁'}</div><div class="connection-name"><h3>${escape(c.label)} ${chip(c.enabled ? 'enabled' : 'disabled', c.enabled ? 'green' : '')}</h3><p>${c.kind === 'agent' ? 'Agent runtime' : 'Model API'} · Offline fixture · ${escape(title(c.scenario))}</p></div><div class="connection-actions"><button class="button secondary small" data-action="probe" data-id="${escape(c.connection_id)}" ${c.enabled ? '' : 'disabled'}>Probe metadata</button><button class="button secondary small" data-action="toggle" data-id="${escape(c.connection_id)}">${c.enabled ? 'Disable' : 'Enable'}</button><button class="button secondary small" data-action="remove" data-id="${escape(c.connection_id)}" aria-label="Remove ${escape(c.label)}">Remove</button></div></div><div class="connection-readiness">${fields.map(([name, value]) => `<div class="readiness-field"><span>${name}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="connection-bottom"><span>All statuses describe a simulated backend.</span><span>Revision ${c.revision} · No credentials</span></div></article>`;
   }).join('')}</div>`;
+  if (isPublicDemo()) return html + `<div class="planned-note"><strong>Ready to use your own runtime?</strong><p>This page only simulates connections. <a href="#local">Run SpiceOwl locally</a> to configure native text Q&A and optional read-only MCP access to your saved records.</p></div>`;
   return html + `<div class="planned-note"><strong>Native agent and MCP</strong><p>These connection cards use fixture responses. Open <a href="#agents">Agent chat</a> for a real question through a registered native runtime.</p><p>MCP exposes stored runs and host observations to existing clients: install the optional extra and configure <code>spiceowl --data-dir ABSOLUTE_STATE_DIR mcp</code>. Its tools only query records.</p></div>`;
 }
 
 function hosts() {
+  if (isPublicDemo()) return publicHostPage();
   syncHostSelection();
   const count = selectedHostIds?.size || 0;
   let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Register your servers, verify each connection, then compare saved resource observations.', `<div class="host-page-actions"><button class="button secondary" data-action="add-host">＋ Add host</button><button class="button secondary" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button primary" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>`);
@@ -243,6 +307,7 @@ function poolOverview() {
 }
 
 function nativeChat() {
+  if (isPublicDemo()) return publicAgentPage();
   const agents = state.native_agents;
   if (!agents.some(a => a.agent_id === nativeAgentId)) nativeAgentId = agents[0]?.agent_id || '';
   const agent = agents.find(a => a.agent_id === nativeAgentId);
@@ -267,6 +332,7 @@ function renderNativeResponse() {
 }
 
 async function pollNative() {
+  if (isPublicDemo()) return;
   if (qaPolling || !selectedQa || location.hash !== '#agents') return;
   qaPolling = true;
   const id = selectedQa;
@@ -305,7 +371,7 @@ function runDetail(run) {
   if (!history.some(s => s.session_id === selectedSession)) selectedSession = history[0]?.session_id || null;
   let html = `<a class="back-link" href="#overview">← All runs</a>` + heading('SYNTHETIC EXPERIMENT', escape(run.label), 'Manual replay · no simulator or remote process is running.', `<div class="split-actions">${runStatus(run)}<button class="button primary" data-action="advance" data-id="${escape(run.run_id)}" ${run.finished ? 'disabled' : ''}>${run.finished ? 'Replay complete' : 'Next observation →'}</button></div>`);
   html += `<div class="state-grid">${states.map(([label, value]) => `<div class="state-tile"><label>${label}</label><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="detail-grid"><div class="detail-stack"><section class="panel"><div class="panel-head"><h2>Memory observations</h2><span class="section-note">Finite scenario replay</span></div><div class="panel-body">${memoryChart(run)}</div></section><section class="panel"><div class="panel-head"><h2>Evidence timeline</h2><span class="section-note">${run.events.length} recorded events</span></div><div class="panel-body"><ol class="timeline">${[...run.events].reverse().map(event => `<li><div class="timeline-time">#${event.sequence} · ${escape(title(event.kind))}</div><p>${escape(event.message)}</p></li>`).join('')}</ol></div></section><section class="panel"><div class="panel-head"><h2>Execution identity</h2><span class="chip">PRESERVED</span></div><div class="panel-body identity">Attempt: ${escape(run.attempt_id)}<br>Submission: ${escape(run.submission_key)}<br>Owner: ${escape(JSON.stringify(run.execution_identity))}</div></section></div>`;
-  html += `<section class="panel diagnosis"><div class="panel-head"><div class="diagnose-head"><img src="/owl.svg" alt=""><h2>Diagnostic assistant</h2></div><span class="chip">DEMO</span></div><div class="panel-body"><form id="diagnose-form"><label for="diagnostic-connection">Connection</label><select id="diagnostic-connection" ${available.length ? '' : 'disabled'}>${available.length ? available.map(c => `<option value="${escape(c.connection_id)}" ${selectedConnection === c.connection_id ? 'selected' : ''}>${escape(c.label)} · ${escape(title(c.kind))}</option>`).join('') : '<option>Add a connection first</option>'}</select><label for="diagnostic-question">Ask about this run</label><textarea id="diagnostic-question" maxlength="2000" required>${escape(draftQuestion)}</textarea><button class="button primary full" type="submit" ${available.length && !submitting ? '' : 'disabled'}>✧ Diagnose snapshot</button></form><p class="subtle-note">Offline fixture response. Evidence is frozen when you ask. Proposals are advisory; this build cannot change or restart simulations.</p></div><div id="diagnosis-result" class="diagnosis-result"><div class="history-empty">${selectedSession ? 'Loading saved diagnosis…' : 'Your diagnosis and evidence citations will appear here.'}</div></div><div class="session-picker"><label for="session-picker">Saved sessions</label><select id="session-picker" ${history.length ? '' : 'disabled'}>${history.length ? history.map(s => `<option value="${escape(s.session_id)}" ${selectedSession === s.session_id ? 'selected' : ''}>${escape(s.connection_label)} · ${escape(new Date(s.created_at).toLocaleString())}</option>`).join('') : '<option>No sessions yet</option>'}</select></div></section></div>`;
+  html += `<section class="panel diagnosis"><div class="panel-head"><div class="diagnose-head"><img src="./owl.svg" alt=""><h2>Diagnostic assistant</h2></div><span class="chip">DEMO</span></div><div class="panel-body"><form id="diagnose-form"><label for="diagnostic-connection">Connection</label><select id="diagnostic-connection" ${available.length ? '' : 'disabled'}>${available.length ? available.map(c => `<option value="${escape(c.connection_id)}" ${selectedConnection === c.connection_id ? 'selected' : ''}>${escape(c.label)} · ${escape(title(c.kind))}</option>`).join('') : '<option>Add a connection first</option>'}</select><label for="diagnostic-question">Ask about this run</label><textarea id="diagnostic-question" maxlength="2000" required>${escape(draftQuestion)}</textarea><button class="button primary full" type="submit" ${available.length && !submitting ? '' : 'disabled'}>✧ Diagnose snapshot</button></form><p class="subtle-note">Offline fixture response. Evidence is frozen when you ask. Proposals are advisory; this build cannot change or restart simulations.</p></div><div id="diagnosis-result" class="diagnosis-result"><div class="history-empty">${selectedSession ? 'Loading saved diagnosis…' : 'Your diagnosis and evidence citations will appear here.'}</div></div><div class="session-picker"><label for="session-picker">Saved sessions</label><select id="session-picker" ${history.length ? '' : 'disabled'}>${history.length ? history.map(s => `<option value="${escape(s.session_id)}" ${selectedSession === s.session_id ? 'selected' : ''}>${escape(s.connection_label)} · ${escape(new Date(s.created_at).toLocaleString())}</option>`).join('') : '<option>No sessions yet</option>'}</select></div></section></div>`;
   return html;
 }
 
@@ -314,17 +380,17 @@ function render() {
   sessionView = null;
   const page = location.hash.slice(1) || 'overview';
   const run = currentRun();
-  $('#location').textContent = page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent chat' : run ? run.label : 'Overview';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent chat' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
-  $('#main').innerHTML = page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (run && selectedSession) pollSession();
-  if (page === 'hosts') {
+  if (page === 'hosts' && !isPublicDemo()) {
     $('#execution-kind').value = plannedKind;
     $('#execution-ref').value = plannedReference;
     if (plannedHost) $('#execution-host').value = plannedHost;
     updateHostSelectionUI();
   }
-  if (page === 'agents') { renderNativeResponse(); if (selectedQa) pollNative(); }
+  if (page === 'agents' && !isPublicDemo()) { renderNativeResponse(); if (selectedQa) pollNative(); }
 }
 
 function renderSession() {
@@ -343,7 +409,7 @@ function renderSession() {
     html += `<div class="proposal">${chip(turn.decision?.result === 'allow' ? 'advisory only' : 'action denied', turn.decision?.result === 'allow' ? 'green' : 'amber')}<h3>${escape(title(turn.proposal.kind))}</h3><p>${escape(turn.proposal.summary)}</p><p class="identity">Evidence: ${escape((turn.proposal.evidence_event_ids || []).join(', '))}</p><p class="subtle-note">${escape(turn.decision?.reason)} No dispatch available.</p></div>`;
   }
   if (['dispatching', 'running'].includes(turn.status)) html += `<button class="button secondary small" data-action="cancel" data-id="${escape(turn.turn_id)}">Cancel diagnosis</button>`;
-  html += `<div class="session-code">${escape(turn.session_id)}<br>Cost: unknown · ${events.length} stored events</div>`;
+  html += `<div class="session-code">${escape(turn.session_id)}<br>${isPublicDemo() ? 'No model calls · ' + events.length + ' scripted events' : 'Cost: unknown · ' + events.length + ' stored events'}</div>`;
   target.innerHTML = html;
 }
 
@@ -367,6 +433,9 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
+  if (isPublicDemo() && ['add-host', 'import-pool', 'host-probe', 'pool-scan', 'native-probe', 'native-select'].includes(action)) {
+    location.hash = '#local'; return;
+  }
   if (action === 'native-select') { selectedQa = id; qaView = state.questions.find(q => q.qa_id === id) || null; renderNativeResponse(); await pollNative(); return; }
   if (action === 'add-connection') {
     $('#connection-form').reset(); $('#form-error').textContent = ''; $('#connection-dialog').showModal(); return;
@@ -394,6 +463,18 @@ document.addEventListener('click', async event => {
   button.disabled = true;
   const originalText = button.textContent;
   try {
+    if (action === 'demo-reset') {
+      if (!isPublicDemo()) return;
+      await api('/api/demo/reset', {method: 'POST'});
+      routeEpoch++; selectedSession = null; sessionView = null; selectedConnection = '';
+      selectedQa = null; qaView = null; selectedHostIds = null; placement = null; executionPlan = null;
+      draftQuestion = 'Explain this run and suggest the next read-only check.';
+      demoPendingRequests.clear();
+      $('#connection-dialog').close();
+      await refresh();
+      if (location.hash !== '#overview') location.hash = '#overview';
+      render(); toast('Demo reset. The four synthetic scenarios are ready to explore.'); return;
+    }
     if (action === 'pool-scan') {
       const host_ids = selectedPoolIds();
       poolScanning = true; button.textContent = 'Checking selected hosts…'; updateHostSelectionUI();
@@ -453,6 +534,7 @@ function setHostFormBusy(form, busy) {
 
 $('#host-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if (isPublicDemo()) { location.hash = '#local'; return; }
   const form = event.currentTarget, fields = new FormData(form);
   const profile = {schema: 'spiceowl.host.v1', tools: []};
   for (const key of ['host_id', 'label', 'ssh_target', 'expected_host', 'expected_user']) profile[key] = fields.get(key).trim();
@@ -478,6 +560,7 @@ $('#host-form').addEventListener('submit', async event => {
 
 $('#pool-import-form').addEventListener('submit', async event => {
   event.preventDefault();
+  if (isPublicDemo()) { location.hash = '#local'; return; }
   const form = event.currentTarget, fields = new FormData(form);
   $('#pool-form-error').textContent = '';
   try {
@@ -540,6 +623,7 @@ document.addEventListener('submit', async event => {
   const id = event.target.id;
   if (!['placement-form', 'execution-plan-form', 'native-question-form'].includes(id)) return;
   event.preventDefault();
+  if (isPublicDemo()) { location.hash = '#local'; return; }
   if (id !== 'native-question-form' && planningBusy) return;
   const button = event.target.querySelector('[type=submit]');
   button.disabled = true;
@@ -567,22 +651,22 @@ document.addEventListener('submit', async event => {
       if (qaSubmitting) return;
       qaSubmitting = true;
       const input = {agent_id: nativeAgentId, question: nativeQuestion};
-      const pending = sessionStorage.getItem('spiceowl.native-pending');
+      const pending = pendingGet('spiceowl.native-pending');
       let request;
       if (pending) {
         request = JSON.parse(pending);
         if (request.agent_id !== input.agent_id || request.question !== input.question) throw new Error('Retry the original question first: its delivery outcome is unknown.');
       } else {
         request = {...input, request_key: `question-${crypto.randomUUID()}`};
-        sessionStorage.setItem('spiceowl.native-pending', JSON.stringify(request));
+        pendingSet('spiceowl.native-pending', JSON.stringify(request));
       }
       const receipt = await api('/api/agent-questions', {method: 'POST', body: request});
-      sessionStorage.removeItem('spiceowl.native-pending');
+      pendingRemove('spiceowl.native-pending');
       selectedQa = receipt.qa_id;
       await refresh(); render();
     }
   } catch (error) {
-    if (id === 'native-question-form' && error.definitive) sessionStorage.removeItem('spiceowl.native-pending');
+    if (id === 'native-question-form' && error.definitive) pendingRemove('spiceowl.native-pending');
     toast(error.message);
   } finally { qaSubmitting = false; if (button.isConnected) button.disabled = false; const send = $('#native-question-form [type=submit]'); if (send) send.disabled = false; if (id !== 'native-question-form') { planningBusy = false; updateHostSelectionUI(); } }
 });
@@ -597,21 +681,21 @@ document.addEventListener('submit', async event => {
   try {
     const run = currentRun();
     const input = {connection_id: selectedConnection, run_id: run.run_id, question: draftQuestion};
-    const pending = sessionStorage.getItem('spiceowl.pending-request');
+    const pending = pendingGet('spiceowl.pending-request');
     if (pending) {
       request = JSON.parse(pending);
       if (request.connection_id !== input.connection_id || request.run_id !== input.run_id || request.question !== input.question) throw new Error('A previous request has an unknown delivery outcome. Retry its original connection, run and question first.');
     } else {
       request = {...input, request_key: `request-${crypto.randomUUID()}`};
-      sessionStorage.setItem('spiceowl.pending-request', JSON.stringify(request));
+      pendingSet('spiceowl.pending-request', JSON.stringify(request));
     }
     const result = await api('/api/diagnose', {method: 'POST', body: request});
-    sessionStorage.removeItem('spiceowl.pending-request');
+    pendingRemove('spiceowl.pending-request');
     selectedSession = result.session_id;
     await refresh();
     render();
   } catch (error) {
-    if (error.definitive) sessionStorage.removeItem('spiceowl.pending-request');
+    if (error.definitive) pendingRemove('spiceowl.pending-request');
     toast(error.message);
   } finally { submitting = false; const current = $('#diagnose-form [type=submit]'); if (current) current.disabled = !selectedConnection; }
 });
@@ -624,7 +708,7 @@ setInterval(() => { if (currentRun() && selectedSession && !document.hidden) pol
 setInterval(() => { if (location.hash === '#agents' && selectedQa && !document.hidden && (!qaView || ['queued', 'running'].includes(qaView.status))) pollNative(); }, 1000);
 // Update the age label locally; this does not request another remote sample.
 setInterval(() => {
-  if (location.hash !== '#hosts' || document.hidden) return;
+  if (isPublicDemo() || location.hash !== '#hosts' || document.hidden) return;
   document.querySelectorAll('[data-resource-status]').forEach(cell => {
     const host = state.hosts.find(item => item.host_id === cell.dataset.resourceStatus);
     const status = resourceStatus(host?.last_resources), badge = cell.querySelector('.chip');
@@ -632,4 +716,4 @@ setInterval(() => {
   });
 }, 10000);
 try { await refresh(); render(); }
-catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>Could not open the local workspace.</h2><p>${escape(error.message)} Refresh this page after the service is available.</p></div>`; }
+catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>${isPublicDemo() ? 'Could not open the public demo.' : 'Could not open the local workspace.'}</h2><p>${escape(error.message)} ${isPublicDemo() ? 'Reload this page to try again.' : 'Refresh this page after the service is available.'}</p></div>`; }

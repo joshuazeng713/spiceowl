@@ -37,6 +37,7 @@ function publicDemoChrome() {
   document.body.classList.add('public-demo');
   document.title = 'SpiceOwl · Public interactive demo';
   $('#public-demo-banner').hidden = false;
+  $('#public-github-link').hidden = false;
   $('#workspace-scope').textContent = 'Interactive preview';
   $('.local-tag').textContent = 'DEMO';
   $('.breadcrumb').textContent = 'Public demo';

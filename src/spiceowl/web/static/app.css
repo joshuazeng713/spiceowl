@@ -1272,7 +1272,11 @@ dialog .muted {
 }
 
 /* Public preview shares the product UI; these rules apply only to its notice and info pages. */
-.public-demo-banner[hidden] { display:none; }
+.public-demo-banner[hidden],.public-github-link[hidden] { display:none; }
+.public-demo .topbar { position:sticky; top:0; z-index:8; gap:10px; background:#fff; }
+.public-demo .topbar>div { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.public-demo .topbar .prototype-badge { flex:none; margin-left:0; white-space:nowrap; }
+.public-github-link { flex:none; white-space:nowrap; }
 .public-demo-banner {
   display:grid;
   grid-template-columns:minmax(0,1fr) auto;

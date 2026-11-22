@@ -2,6 +2,8 @@
 
 SpiceOwl 0.2.0a1 implements the **P0.2 connectivity slice** described in the [P0.2 contract](contracts/p02-connectivity.md). The [console](local-console.md) continues to use synthetic runs and fake agent/model backends. Qualify each installation and host using the verification stages below.
 
+The current 0.3.0a1 build also provides a [server pool](server-pool.md) and [native text Q&A](native-agent.md). This page describes the narrower SSH/MCP interfaces; its fake-backend statements refer to the original connection and per-run diagnosis demo.
+
 P0.2 adds two separate paths:
 
 | Path | What it does | What it does not establish |
@@ -38,6 +40,8 @@ This guide uses these example locations consistently:
 The MCP reader requires an existing supported database. It does not initialize, migrate, repair, or recover a workspace. Importing a host through the ordinary CLI initializes ordinary application state if needed. Alternatively, the existing `demo` command initializes synthetic fixtures; those fixtures remain synthetic even when stored beside a real host observation.
 
 ## 2. Prepare a private host profile
+
+The [browser onboarding forms](host-onboarding.md) can register these profiles and explicit server pools. The JSON/CLI workflow below remains available. Registration does not initiate SSH or establish trust automatically.
 
 Use an existing, operator-reviewed OpenSSH alias. SSH authentication and jump routing remain in the user's SSH configuration. SpiceOwl does not accept password/key contents, arbitrary SSH options, environment scripts, or shell snippets in this profile.
 

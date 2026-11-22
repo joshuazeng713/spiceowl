@@ -94,6 +94,17 @@ class HttpTests(unittest.TestCase):
             probe.assert_called_once_with("example")
         self.assertEqual(self.app.state()["runs"], before)
 
+    def test_native_questions_require_same_origin_csrf_before_inference(self):
+        from unittest.mock import patch
+        question = {"agent_id": "fixture", "question": "Hello", "request_key": "fixture-question"}
+        with patch.object(self.app, "ask", return_value={"qa_id": "fixture-question", "status": "queued"}) as ask:
+            self.assertEqual(self.request("POST", "/api/agent-questions", question)[0], 403)
+            self.assertEqual(self.mutate("POST", "/api/agent-questions", question, {"Origin": "https://evil.example"})[0], 403)
+            self.assertEqual(self.request("GET", "/api/agent-questions")[0], 404)
+            ask.assert_not_called()
+            self.assertEqual(self.mutate("POST", "/api/agent-questions", question)[0], 202)
+            ask.assert_called_once_with(question)
+
 
 if __name__ == "__main__":
     unittest.main()

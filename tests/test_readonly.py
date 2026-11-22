@@ -181,6 +181,69 @@ class ReadStoreTests(unittest.TestCase):
         )], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def seed_ic(self, gateway_id="fixture-ic", run_id="native-run"):
+        self.app.store.create("ic_gateway", gateway_id, {"id": gateway_id, "backend": "ic-workbench", "project_id": "fixture"})
+        self.app.store.create("ic_run:" + gateway_id, run_id,
+                              {"schema": "spiceowl.ic-run.v1", "backend": "ic-workbench", "source": "stored_observations",
+                               "gateway_id": gateway_id, "project_id": "fixture", "run_id": run_id})
+
+    def test_ic_reads_use_readonly_namespaces_without_side_effects(self):
+        native_id = "_" + "n" * 179
+        self.seed_ic(run_id=native_id)
+        before = self.app.store.path.read_bytes()
+        entries = sorted(p.name for p in self.directory.iterdir())
+        with patch("spiceowl.storage.sqlite.Store.__init__", side_effect=AssertionError("Store")), \
+                patch("fcntl.flock", side_effect=AssertionError("Lock")), \
+                patch("os.chmod", side_effect=AssertionError("chmod")), \
+                patch("pathlib.Path.mkdir", side_effect=AssertionError("mkdir")), \
+                patch("socket.create_connection", side_effect=AssertionError("Network")):
+            store = ReadStore(self.directory)
+            self.assertEqual(store.list_ic_gateways()["records"][0]["id"], "fixture-ic")
+            self.assertEqual(store.list_ic_runs("fixture-ic")["records"][0]["run_id"], native_id)
+            self.assertEqual(store.get_ic_run("fixture-ic", native_id)["run_id"], native_id)
+        self.assertEqual(self.app.store.path.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.directory.iterdir()), entries)
+
+    def test_ic_registered_gateway_and_run_row_identity_are_required(self):
+        self.seed_ic()
+        self.seed_ic("other-ic")
+        store = ReadStore(self.directory)
+        self.assertEqual(store.get_ic_run("other-ic", "native-run")["gateway_id"], "other-ic")
+        for gateway in ("missing", "../fixture-ic", "ic_submission:fixture-ic", "fixture-ic' OR 1=1--", 1):
+            with self.subTest(gateway=gateway), self.assertRaises(DomainError):
+                store.list_ic_runs(gateway)
+        for run_id in ("../native-run", "http://example.invalid", "n" * 181, True):
+            with self.subTest(run_id=run_id), self.assertRaises(DomainError):
+                store.get_ic_run("fixture-ic", run_id)
+        for field, value in (("run_id", "other-run"), ("gateway_id", "other-ic"), ("project_id", "foreign")):
+            original = self.app.store.get("ic_run:fixture-ic", "native-run")
+            self.app.store.update("ic_run:fixture-ic", "native-run", lambda r: r | {field: value})
+            with self.subTest(field=field), self.assertRaises(DomainError):
+                store.get_ic_run("fixture-ic", "native-run")
+            with self.assertRaises(DomainError):
+                store.list_ic_runs("fixture-ic")
+            self.app.store.update("ic_run:fixture-ic", "native-run", lambda _: original)
+        for kind in ("ic_run:fixture-ic", "ic_submission:fixture-ic", "ic_gateway"):
+            with self.subTest(kind=kind), self.assertRaises(DomainError):
+                store.list(kind)
+
+    def test_ic_lists_bound_rows_and_reject_damaged_json(self):
+        self.seed_ic()
+        for i in range(MAX_RECORDS + 1):
+            record = {"schema": "spiceowl.ic-run.v1", "backend": "ic-workbench", "source": "stored_observations",
+                      "gateway_id": "fixture-ic", "project_id": "fixture", "run_id": f"native-{i}"}
+            self.app.store.create("ic_run:fixture-ic", record["run_id"], record)
+        store = ReadStore(self.directory)
+        page = store.list_ic_runs("fixture-ic")
+        self.assertEqual(len(page["records"]), MAX_RECORDS)
+        self.assertTrue(page["truncated"])
+        for raw in ('{"run_id":"a","run_id":"b"}', '{"number":1e999}', '"' + 'x' * MAX_RECORD_BYTES + '"'):
+            with self.app.store.transaction() as db:
+                db.execute("UPDATE records SET body=? WHERE kind='ic_run:fixture-ic' AND id='native-run'", (raw,))
+            with self.assertRaises(DomainError) as error:
+                store.get_ic_run("fixture-ic", "native-run")
+            self.assertEqual(error.exception.code, "storage_record")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,26 +5,31 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#172e35">
   <title>SpiceOwl · Simulation workspace</title>
-  <link rel="icon" href="/owl.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/app.css">
-  <script src="/app.js" type="module"></script>
+  <link rel="icon" href="./owl.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./app.css">
+  <script src="./app.js" type="module"></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <aside class="sidebar">
-    <a class="brand" href="#overview"><img src="/owl.svg" width="42" height="42" alt="SpiceOwl"><span>SpiceOwl<small>SIMULATION WORKSPACE</small></span></a>
-    <div class="workspace-label"><span class="dot"></span> Personal workspace <span class="local-tag">LOCAL</span></div>
+    <a class="brand" href="#overview"><img src="./owl.svg" width="42" height="42" alt="SpiceOwl"><span>SpiceOwl<small>SIMULATION WORKSPACE</small></span></a>
+    <div class="workspace-label"><span class="dot"></span><span id="workspace-scope">Personal workspace</span><span class="local-tag">LOCAL</span></div>
     <nav aria-label="Main navigation">
       <a href="#overview" data-nav="overview"><span aria-hidden="true">▦</span> Overview</a>
       <a href="#connections" data-nav="connections"><span aria-hidden="true">⌁</span> AI connections <span id="connection-count" class="nav-count">0</span></a>
       <a href="#hosts" data-nav="hosts"><span aria-hidden="true">▤</span> Simulation hosts <span id="host-count" class="nav-count">0</span></a>
+      <a href="#agents" data-nav="agents"><span aria-hidden="true">✧</span> Agent chat <span id="native-count" class="nav-count">0</span></a>
     </nav>
     <div class="sidebar-caption">RECENT RUNS</div>
     <nav id="recent-runs" class="recent-runs" aria-label="Recent runs"></nav>
     <div class="sidebar-bottom"><div class="moon" aria-hidden="true">☾</div><p>You sleep.<br>SpiceOwl keeps watch.</p><div class="build"><span class="dot"></span> Connectivity alpha <span id="version">0.2</span></div></div>
   </aside>
   <div class="shell">
-    <header class="topbar"><div><span class="breadcrumb">Workspace</span><span class="slash">/</span><span id="location">Overview</span></div><span class="prototype-badge">Read-only connections · Demo runs</span></header>
+    <header class="topbar"><div><span class="breadcrumb">Workspace</span><span class="slash">/</span><span id="location">Overview</span></div><span class="prototype-badge">Server pool · Native Q&A · Demo runs</span><a id="public-github-link" class="button primary small public-github-link" href="https://github.com/joshuazeng713/spiceowl" target="_blank" rel="noopener noreferrer" aria-label="View SpiceOwl on GitHub (opens in a new tab)" hidden>GitHub</a></header>
+    <section id="public-demo-banner" class="public-demo-banner" aria-label="Public interactive demo" hidden>
+      <div class="public-demo-copy"><strong>Public interactive demo</strong><p>All scenarios are synthetic and agent responses are scripted. No SSH, real AI, or simulator is connected. Do not enter credentials or private design data.</p><small id="demo-storage-notice"></small></div>
+      <div class="public-demo-actions"><a class="button primary small" href="#local">Run locally</a><a class="button secondary small" href="https://github.com/joshuazeng713/spiceowl" target="_blank" rel="noopener noreferrer">GitHub</a><button class="button secondary small" type="button" data-action="demo-reset">Reset demo</button><span id="demo-build" class="demo-build"></span></div>
+    </section>
     <main id="main" tabindex="-1"><div class="empty"><h1>Opening your workspace…</h1><p>Reading local records.</p></div></main>
     <footer class="page-footer"><span>Local state · Explicit SSH checks</span><span>Execution · Observation · Validity · Specification</span></footer>
   </div>
@@ -37,6 +42,36 @@
       <label for="connection-kind">Connection type</label><select id="connection-kind" name="kind"><option value="agent">Agent runtime · simulated</option><option value="model">Model API · simulated</option></select>
       <label for="connection-scenario">Test scenario</label><select id="connection-scenario" name="scenario"><option value="success">Successful diagnosis</option><option value="inference_denied">Inference access denied</option><option value="disconnect">Stream disconnects after acceptance</option><option value="permission_denied">Runtime tool request is denied</option></select>
       <p id="form-error" class="error-text" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-dialog">Cancel</button><button class="button primary" type="submit">Create connection</button></div>
+    </form>
+  </dialog>
+  <dialog id="host-dialog" class="host-dialog" aria-labelledby="host-dialog-title">
+    <form id="host-form" autocomplete="off">
+      <div class="dialog-heading"><div><div class="eyebrow">SERVER SETUP</div><h2 id="host-dialog-title">Add a simulation host</h2></div><button class="icon-button" type="button" data-action="close-host-dialog" aria-label="Close host setup">×</button></div>
+      <p class="muted">Use an SSH alias already configured on this computer. Your SSH configuration supplies the login key, port and jump hosts.</p>
+      <div class="host-form-grid">
+        <div><label for="host-label">Display name</label><input id="host-label" name="label" required maxlength="80" placeholder="My simulation server"></div>
+        <div><label for="host-id">Stable host ID</label><input id="host-id" name="host_id" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9_\-]*" placeholder="my-sim-server"><small>Letters, numbers, hyphens and underscores.</small></div>
+      </div>
+      <label for="host-alias">Existing SSH alias</label><input id="host-alias" name="ssh_target" required maxlength="96" placeholder="my-cad-alias"><small>For example, the alias used in <code>ssh my-cad-alias</code>. Enter only the alias.</small>
+      <div class="host-form-grid">
+        <div><label for="host-expected">Expected remote hostname</label><input id="host-expected" name="expected_host" required maxlength="253" placeholder="sim-node-a"><small>The exact name returned by <code>hostname</code>.</small></div>
+        <div><label for="host-user">Expected remote username</label><input id="host-user" name="expected_user" required maxlength="64" placeholder="researcher"><small>The exact name returned by <code>id -un</code>.</small></div>
+      </div>
+      <details class="host-form-details"><summary>Use the alias as a route to another host</summary><label for="host-override">Target hostname override · optional</label><input id="host-override" name="ssh_hostname" maxlength="253" placeholder="sim-node-b.example.invalid"><p class="subtle-note">Reuse the alias's user, key and jump route with this target hostname. The target still needs its own verified SSH identity.</p></details>
+      <details class="host-form-details"><summary>Simulator executables · optional</summary><p class="subtle-note">Use absolute paths on the remote server. Leave blank for an identity-only connection check. Version checks do not validate a license or testbench.</p><label for="host-spectre">Spectre</label><input id="host-spectre" name="spectre" maxlength="1024" placeholder="/opt/cadence/tools/bin/spectre"><label for="host-virtuoso">Virtuoso</label><input id="host-virtuoso" name="virtuoso" maxlength="1024" placeholder="/opt/cadence/tools/bin/virtuoso"><label for="host-ngspice">ngspice</label><input id="host-ngspice" name="ngspice" maxlength="1024" placeholder="/usr/bin/ngspice"></details>
+      <p class="subtle-note">Registration saves a private local profile. It makes no connection and does not change your SSH configuration. Use Check connection after saving.</p>
+      <p id="host-form-error" class="error-text" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-host-dialog">Cancel</button><button class="button primary" type="submit">Register host</button></div>
+    </form>
+  </dialog>
+  <dialog id="pool-dialog" class="host-dialog" aria-labelledby="pool-dialog-title">
+    <form id="pool-import-form" autocomplete="off">
+      <div class="dialog-heading"><div><div class="eyebrow">SERVER SETUP</div><h2 id="pool-dialog-title">Import a server pool</h2></div><button class="icon-button" type="button" data-action="close-pool-dialog" aria-label="Close pool import">×</button></div>
+      <p class="muted">Select an existing host as a route template, then list the target hostnames. Only the names you provide will be registered.</p>
+      <label for="pool-template">Existing route template</label><select id="pool-template" name="template_id" required></select>
+      <label for="pool-names">Target hostnames</label><textarea id="pool-names" name="names" required maxlength="8200" rows="5" placeholder="sim-node-a&#10;sim-node-b&#10;sim-node-c"></textarea><small>Up to 32 distinct hostnames, separated by lines, spaces or commas. Each hostname must also match the remote <code>hostname</code> result; use Add host if these differ.</small>
+      <div id="pool-import-preview" class="host-import-preview" aria-live="polite" hidden></div>
+      <p class="subtle-note">The template supplies SSH routing, expected user and tool paths. Its host-key trust is not copied. Registration does not contact these hosts.</p>
+      <p id="pool-form-error" class="error-text" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-pool-dialog">Cancel</button><button id="pool-import-submit" class="button primary" type="submit">Review import</button></div>
     </form>
   </dialog>
   <noscript><p>This local console needs JavaScript. The CLI remains available.</p></noscript>

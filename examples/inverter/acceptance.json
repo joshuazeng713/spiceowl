@@ -1,0 +1,111 @@
+{
+  "schema": "spiceowl.inverter.acceptance.v1",
+  "status": "frozen_before_execution",
+  "description": "Validate a real Spectre transient of an original toy CMOS inverter, independently of whether its settled logic levels pass.",
+  "provenance": {
+    "design": "original_authored_example",
+    "model": "original_toy_mos1_not_fitted_to_a_process",
+    "uses_pdk": false,
+    "waveforms": "must_be_collected_from_the_actual_simulator_attempt",
+    "technology_performance_claim": false
+  },
+  "input_sha256": {
+    "models.scs": "32fbc1f48cf6c0f2b62376ed309a2b22832e49a54283bb0d12249439a463d3a9",
+    "inverter.scs": "096f578650160d7ced9c23e64ce0a3b726a3fe0a5ab6acb0c6e9f13ee1654c06",
+    "tb.scs": "7e70b214428393ef085f4de1f562194489ce76752c1a0078a2b853310d692750"
+  },
+  "simulation": {
+    "top_level_input": "tb.scs",
+    "analysis": "tran",
+    "supply_v": 1.2,
+    "load_f": 2e-14,
+    "temperature_c": 27,
+    "start_s": 0,
+    "stop_s": 5e-8,
+    "strobeperiod_s": 1e-11,
+    "strobeoutput": "strobeonly",
+    "input_pulse": {
+      "low_v": 0,
+      "high_v": 1.2,
+      "delay_s": 5e-9,
+      "rise_s": 1e-10,
+      "fall_s": 1e-10,
+      "width_s": 5e-9,
+      "period_s": 1e-8
+    }
+  },
+  "signal_units": {"time": "s", "vin": "V", "vout": "V", "vdd": "V"},
+  "measurement_preconditions": [
+    "source_hashes_match_frozen_input_manifest",
+    "actual_solver_completion_confirmed",
+    "required_signals_and_units_match",
+    "data_requirements_pass",
+    "input_levels_match_frozen_stimulus_windows"
+  ],
+  "data_requirements": {
+    "required_columns": ["time", "vin", "vout"],
+    "optional_columns": ["vdd"],
+    "all_values_finite": true,
+    "time_strictly_increasing": true,
+    "start_time_s": 0,
+    "stop_time_s": 5e-8,
+    "endpoint_tolerance_s": 1e-14,
+    "max_sample_gap_s": 1.01e-11,
+    "expected_samples": 5001,
+    "min_samples": 5000,
+    "max_samples": 5002
+  },
+  "settled_logic": {
+    "low_min_v": -0.02,
+    "low_max_v": 0.12,
+    "high_min_v": 1.08,
+    "high_max_v": 1.22,
+    "minimum_samples_per_window": 150,
+    "window_boundaries": "inclusive",
+    "check": "all_samples_in_each_window",
+    "classification": {
+      "vin_window_failure": "measurement_invalid",
+      "vout_window_failure": "specification_fail"
+    },
+    "windows": [
+      {"start_s": 2e-9, "end_s": 4e-9, "vin": "low", "vout": "high"},
+      {"start_s": 7e-9, "end_s": 9e-9, "vin": "high", "vout": "low"},
+      {"start_s": 1.2e-8, "end_s": 1.4e-8, "vin": "low", "vout": "high"},
+      {"start_s": 1.7e-8, "end_s": 1.9e-8, "vin": "high", "vout": "low"},
+      {"start_s": 2.2e-8, "end_s": 2.4e-8, "vin": "low", "vout": "high"},
+      {"start_s": 2.7e-8, "end_s": 2.9e-8, "vin": "high", "vout": "low"},
+      {"start_s": 3.2e-8, "end_s": 3.4e-8, "vin": "low", "vout": "high"},
+      {"start_s": 3.7e-8, "end_s": 3.9e-8, "vin": "high", "vout": "low"},
+      {"start_s": 4.2e-8, "end_s": 4.4e-8, "vin": "low", "vout": "high"},
+      {"start_s": 4.7e-8, "end_s": 4.9e-8, "vin": "high", "vout": "low"}
+    ]
+  },
+  "propagation_delay": {
+    "threshold_v": 0.6,
+    "input_rising_windows_s": [
+      [4.9e-9, 5.2e-9], [1.49e-8, 1.52e-8], [2.49e-8, 2.52e-8],
+      [3.49e-8, 3.52e-8], [4.49e-8, 4.52e-8]
+    ],
+    "input_falling_windows_s": [
+      [9.9e-9, 1.03e-8], [1.99e-8, 2.03e-8],
+      [2.99e-8, 3.03e-8], [3.99e-8, 4.03e-8]
+    ],
+    "max_pair_delay_s": 2e-9,
+    "interpolation": "linear",
+    "pairing": "unique_input_crossing_in_window_to_unique_subsequent_opposite_output_crossing",
+    "report_only": true,
+    "on_missing_or_ambiguous_crossing": "report_unavailable_with_warning"
+  },
+  "execution_budget": {
+    "cpu_limit": 1,
+    "planning_memory_mib": 1024,
+    "address_space_limit_mib": 4096,
+    "attempt_timeout_seconds": 120,
+    "license_wait_timeout_seconds": 60,
+    "max_retries": 0,
+    "automatic_input_changes": false,
+    "native_checkpoint_requested": false,
+    "enforcement": "runner_must_record_which_limits_are_actually_enforced"
+  },
+  "change_policy": "Freeze this file and all three SCS files before submission. A source, model, stimulus or acceptance change requires a new manifest and attempt; never relax criteria after observing results."
+}

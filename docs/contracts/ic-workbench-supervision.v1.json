@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ic.spiceowl-supervision.v1",
+  "title": "IC Workbench stored supervision and submission lookup",
+  "oneOf": [{"$ref": "#/$defs/snapshot"}, {"$ref": "#/$defs/lookup"}],
+  "x-http": {
+    "envelope": "Existing gateway envelope: {ok:true,data:<snapshot or lookup>}.",
+    "snapshot": "GET /api/supervision?project_id=<registered ID>; exactly one parameter.",
+    "lookup": "GET /api/submissions/<percent-encoded submission key>; no query parameters.",
+    "limits": {"max_runs": 25, "max_scanned_records": 200, "max_record_bytes": 1048576},
+    "effects": "Reads stored local records only. Does not SSH, poll the simulator, collect, submit, approve, or change workspace context revision.",
+    "prepare_reuse": "Use the installed IC MCP ic_sim_submit(project_id,configuration,source_commit,idempotency_key) with its existing configured Service ledger. It only prepares a pending_approval request. Query ic_request_status(request_id); human review stays in ic_request_review. No machine approval endpoint is added.",
+    "timestamps": "read_at is this read time. observed_at/latest_observed_at are original recorded observations and are never replaced by read_at.",
+    "legacy_identity": "project_id is the registered association: recorded project_id if registered, otherwise recorded plan.design_id if registered. original_project_id preserves the record. source_commit and compiled_inputs_sha256 are recorded values, never rebound to current HEAD or recomputed for legacy runs. Missing evidence remains null.",
+    "artifact_identity": "Metadata only; recorded digests are not freshly verified. waveform_run_id is non-null only when the bounded stored waveforms.json binds the same run_id and source_commit. No current schematic mapping is inferred.",
+    "unknown_lookup": "Returns HTTP 200 with found:false, run_id:null, run:null. This does not authorize resubmission of an uncertain operation."
+  },
+  "$defs": {
+    "nullable_text": {"type": ["string", "null"], "maxLength": 240},
+    "nullable_hash": {"anyOf": [{"type": "string", "pattern": "^[a-f0-9]{64}$"}, {"type": "null"}]},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "bytes", "sha256", "url", "digest_source"],
+      "properties": {
+        "name": {"type": "string", "maxLength": 80}, "bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/nullable_hash"}, "url": {"type": "string", "maxLength": 320},
+        "digest_source": {"enum": ["stored_record", "unavailable"]}
+      }
+    },
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "value", "unit", "passed", "scope"],
+      "properties": {
+        "name": {"type": "string", "maxLength": 160}, "value": {"type": ["number", "null"]},
+        "unit": {"$ref": "#/$defs/nullable_text"}, "passed": {"type": ["boolean", "null"]},
+        "scope": {"$ref": "#/$defs/nullable_text"}
+      }
+    },
+    "run": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "project_id", "original_project_id", "association_basis", "source_commit", "configuration", "compiled_inputs_sha256", "state", "execution", "observation", "data", "specification", "latest_observed_at", "record_updated_at", "issues", "waveform_run_id", "artifacts"],
+      "properties": {
+        "run_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,180}$"},
+        "project_id": {"$ref": "#/$defs/nullable_text"}, "original_project_id": {"$ref": "#/$defs/nullable_text"},
+        "association_basis": {"enum": ["recorded_project_id", "recorded_plan_design_id", "unregistered"]},
+        "source_commit": {"anyOf": [{"type": "string", "pattern": "^[a-f0-9]{40}$"}, {"type": "null"}]},
+        "configuration": {"$ref": "#/$defs/nullable_text"}, "compiled_inputs_sha256": {"$ref": "#/$defs/nullable_hash"},
+        "state": {"$ref": "#/$defs/nullable_text"},
+        "execution": {"type": "object", "additionalProperties": false, "required": ["state", "raw_state", "exit_code", "observed_at"], "properties": {
+          "state": {"enum": ["queued", "running", "succeeded", "failed", "unknown"]}, "raw_state": {"$ref": "#/$defs/nullable_text"},
+          "exit_code": {"type": ["integer", "null"]}, "observed_at": {"$ref": "#/$defs/nullable_text"}
+        }},
+        "observation": {"type": "object", "additionalProperties": false, "required": ["state", "observed_at"], "properties": {
+          "state": {"enum": ["recorded", "missing"]}, "observed_at": {"$ref": "#/$defs/nullable_text"}
+        }},
+        "data": {"type": "object", "additionalProperties": false, "required": ["state", "raw_retained"], "properties": {
+          "state": {"enum": ["not_collected", "collecting", "collected", "failed", "unknown"]}, "raw_retained": {"type": ["boolean", "null"]}
+        }},
+        "specification": {"type": "object", "additionalProperties": false, "required": ["state", "metrics"], "properties": {
+          "state": {"enum": ["reported", "not_evaluated"]}, "metrics": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/metric"}}
+        }},
+        "latest_observed_at": {"$ref": "#/$defs/nullable_text"}, "record_updated_at": {"$ref": "#/$defs/nullable_text"},
+        "issues": {"type": "array", "maxItems": 8, "items": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"type": "string", "maxLength": 80}, "message": {"type": "string", "maxLength": 240}}}},
+        "waveform_run_id": {"$ref": "#/$defs/nullable_text"}, "artifacts": {"type": "array", "maxItems": 7, "items": {"$ref": "#/$defs/artifact"}}
+      }
+    },
+    "snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "project_id", "read_at", "source", "runs", "scanned_records", "unavailable_records", "truncated", "single_site"],
+      "properties": {
+        "schema": {"const": "ic.supervision.snapshot.v1"}, "project_id": {"type": "string", "maxLength": 180},
+        "read_at": {"type": "string"}, "source": {"const": "stored_observations"},
+        "runs": {"type": "array", "maxItems": 25, "items": {"$ref": "#/$defs/run"}},
+        "scanned_records": {"type": "integer", "minimum": 0, "maximum": 200},
+        "unavailable_records": {"type": "integer", "minimum": 0}, "truncated": {"type": "boolean"}, "single_site": {"const": true}
+      }
+    },
+    "lookup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "submission_key", "read_at", "found", "run_id", "run"],
+      "properties": {
+        "schema": {"const": "ic.submission.lookup.v1"}, "submission_key": {"type": "string", "minLength": 8, "maxLength": 160},
+        "read_at": {"type": "string"}, "found": {"type": "boolean"}, "run_id": {"$ref": "#/$defs/nullable_text"},
+        "run": {"anyOf": [{"$ref": "#/$defs/run"}, {"type": "null"}]}
+      }
+    }
+  }
+}

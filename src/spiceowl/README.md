@@ -1,6 +1,6 @@
 # Source layout
 
-The alpha package implements fake connections, synthetic execution replay, acceptance and policy functions, local persistence, CLI and a bundled web console. The P0.2 slice adds explicit SSH identity/version probes and optional read-only stdio MCP queries. Real inference and simulation execution remain planned. See the [local guide](../../docs/local-console.md) and [connection guide](../../docs/real-connections.md).
+The alpha package implements fake connections, synthetic execution replay, acceptance and policy functions, local persistence, CLI and a bundled web console. It also provides explicit SSH identity/version/resource checks, native Codex text Q&A, a passive IC Workbench cache, and optional read-only stdio MCP queries. General product web/CLI simulation submission, unattended monitoring and recovery remain planned. A separate, explicitly authorized [developer inverter smoke utility](../../examples/inverter/README.md) can run the original MOS1 example on a licensed Spectre installation. See the [local guide](../../docs/local-console.md), [connection guide](../../docs/real-connections.md), and [IC integration guide](../../docs/ic-workbench.md).
 
 | Directory | Planned responsibility |
 | --- | --- |
@@ -20,4 +20,4 @@ The alpha package implements fake connections, synthetic execution replay, accep
 
 Dependency direction: adapters and interfaces depend on domain contracts; domain code must not depend on an orchestration framework, a model SDK, or a GUI. See [architecture](../../docs/architecture.md).
 
-The [integrated implementation plan](../../docs/design/integration-plan.md) places real provider adapters after the fake-backed connection slice. An `execution/` package remains planned for later real simulator dispatch and postprocessing; the current `service.py` performs neither.
+The [integrated implementation plan](../../docs/design/integration-plan.md) describes additional provider routes beyond the implemented native text-Q&A adapter. An `execution/` package remains planned for general simulator dispatch and postprocessing; the current `service.py` performs neither.

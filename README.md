@@ -12,7 +12,7 @@
 
 > **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `feat/server-pool-agent-qa`; the [publishing guide](https://github.com/joshuazeng713/spiceowl/blob/feat/server-pool-agent-qa/docs/github-pages.md) explains automatic updates.
 
-> **Early alpha — local console with read-only connectivity.** The CLI and browser manage synthetic runs and saved diagnoses. Explicit SSH probes check host identity and simulator versions; an optional stdio MCP server lets an existing agent query local records. Real model inference, simulation submission and unattended monitoring remain planned. See the [console guide](docs/local-console.md) and [real connection guide](docs/real-connections.md).
+> **Early alpha — server pool, native agent Q&A and a developer inverter smoke test.** Compare bounded SSH resource observations, prepare standalone or Virtuoso-origin execution plans, and ask an installed Codex runtime a short question. Web-console runs and run diagnoses remain synthetic. A separate, opt-in [developer script](examples/inverter/README.md) can execute the original MOS1 inverter on a licensed Spectre installation; general web/CLI job submission and unattended monitoring remain planned. Optional MCP tools read saved records. See the [console guide](docs/local-console.md), [server pool guide](docs/server-pool.md), and [native Q&A guide](docs/native-agent.md).
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
@@ -30,13 +30,13 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
-| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Fake agent/API management; read-only MCP queries and SSH identity/version probes implemented |
-| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Finite synthetic replay implemented |
-| Reconnect | Reconcile an existing job after a client or controller interruption | Local record recovery implemented; real jobs planned |
-| Validate | Check inputs, required signals, measurement windows, and result completeness | Acceptance reducer implemented; waveform validators planned |
+| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Native Codex Q&A, fake agent/API management, MCP queries and SSH host/resource checks implemented |
+| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Real host snapshots and developer smoke receipts; web runs remain synthetic |
+| Reconnect | Reconcile an existing job after a client or controller interruption | Local record recovery and same-run smoke status queries; general simulator reconnection planned |
+| Validate | Check inputs, required signals, measurement windows, and result completeness | Acceptance reducer and dedicated inverter waveform checks; general waveform validators planned |
 | Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; dispatch disabled |
 | Diagnose | Use an optional agent to explain evidence and propose actions | Offline fixture diagnosis implemented |
-| Report | Separate execution outcome, measurement validity, and circuit performance | Synthetic four-dimensional reports implemented |
+| Report | Separate execution outcome, measurement validity, and circuit performance | Synthetic web reports and a separate inverter smoke report |
 
 ### A morning report should answer three different questions
 
@@ -78,7 +78,7 @@ flowchart TD
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
-The current integration slice is **SSH connectivity plus MCP queries for an existing agent**. It follows the [P0.2 connectivity contract](docs/contracts/p02-connectivity.md). The broader [implementation plan](docs/design/integration-plan.md) also proposes native agent-runtime and API-key routes, then ACP expansion; these remain future work. The [three design workstreams](docs/design/README.md) cover AI connections, simulator connections, and simulation debugging under shared [interface boundaries](docs/contracts/interface-boundaries.md).
+The current slice adds **a server pool, execution-origin planning and native Q&A**, following the [P0.3 contract](docs/contracts/p03-pool-agent.md). The earlier [P0.2 contract](docs/contracts/p02-connectivity.md) covers SSH/MCP fundamentals. The broader [implementation plan](docs/design/integration-plan.md) also proposes API-key and ACP routes; these remain future work. The [three design workstreams](docs/design/README.md) share the [interface boundaries](docs/contracts/interface-boundaries.md).
 
 ## Repository map
 
@@ -88,7 +88,8 @@ spiceowl/
 ├── README.zh-CN.md            # Chinese introduction
 ├── docs/                      # Architecture, run contract, roadmap, decisions
 ├── assets/brand/              # Editable project icon and exported avatar
-├── examples/                  # Draft experiment, connection and policy examples
+├── examples/                  # Original inverter and draft configuration examples
+├── scripts/                   # Opt-in developer inverter smoke and result utilities
 ├── src/spiceowl/              # Installable Python package
 │   ├── domain/                # Experiment, attempt, receipt, and event models
 │   ├── adapters/              # Execution and simulator integrations
@@ -98,6 +99,7 @@ spiceowl/
 │   ├── storage/               # Durable records and artifact references
 │   ├── agent/                 # Connections, sessions and optional diagnosis
 │   ├── mcp/                   # Optional read-only tools for existing agents
+│   ├── scheduling/            # Resource placement and simulation-origin plans
 │   ├── cli/                   # Local command interface
 │   └── web/                   # Loopback API and bundled browser assets
 └── tests/                     # Offline tests and synthetic fixtures
@@ -119,9 +121,33 @@ python3 -m venv .venv
 
 Open the printed loopback URL. Explore Connections, inspect a synthetic run, advance its observations and request a demo diagnosis. No model, simulator, Node.js or credentials are needed. Repeating `--demo` preserves stored history. The [guide](docs/local-console.md) covers CLI commands, persistence, limitations and tests.
 
-To add a real connection, import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`, then explicitly run `spiceowl hosts probe HOST_ID` or use **Simulation hosts → Check connection**. OpenSSH uses your existing alias and jump-host configuration. Version queries do not establish license availability, job state, or simulation validity.
+To add a real connection, use **Simulation hosts → Add host**, or import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`. Registration saves local configuration; **Check connection** explicitly verifies the selected host. OpenSSH uses your existing alias and jump-host configuration. The [host onboarding guide](docs/host-onboarding.md) explains setup, safe retries and separate trust, authentication, network and stale-resource states. Version queries do not establish license availability, job state, or simulation validity.
 
 To expose stored observations to Codex or another MCP client, install `.[mcp]` and configure the client to run `spiceowl --data-dir ABSOLUTE_STATE_DIR mcp`. This optional server uses the official Python MCP SDK and reads the same local database without owning the controller. It cannot launch simulations or query arbitrary paths. Follow the [real connection guide](docs/real-connections.md) for the profile schema, commands and verification boundaries.
+
+For multiple nodes, use **Simulation hosts → Import pool** to preview an explicit hostname list and register it using an existing route template, or use `hosts import-pool`. Select up to 32 rows and use **Check selected hosts**; the CLI offers `hosts scan --hosts HOST_ID ...`. The browser evaluates requested CPUs and memory within the same selected batch. Unknown or stale nodes are excluded. Placement retains a resource margin and is a proposal, not a reservation. Standalone plans select a candidate for a new exported netlist; Virtuoso-managed plans preserve the original host/native run mapping.
+
+For real text answers, register a private native runtime profile using `agents add --file PROFILE.json`, then open **Agent chat**. This uses the runtime's existing provider/auth configuration, which may be a subscription or a separately configured API route. Requests have durable keys, no automatic provider fallback, and no simulator tools. See the [native Q&A guide](docs/native-agent.md).
+
+## Developer inverter smoke test
+
+The source-checkout utility [run_inverter_smoke.py](scripts/run_inverter_smoke.py) provides an explicit `prepare → stage → launch → status → collect` workflow for the [original toy MOS1 inverter](examples/inverter/README.md). It requires a registered, authorized Linux host with licensed Spectre, GNU `timeout`, and a working Python 3.6+ interpreter. Replace `HOST_ID` with a registered host ID and `PYTHON_ABSOLUTE_PATH` with that remote interpreter's absolute path. Run the steps individually and inspect each result before continuing:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py prepare --data-dir .spiceowl --hosts HOST_ID --run-key inverter-smoke-001 --remote-python PYTHON_ABSOLUTE_PATH
+PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py stage --run-dir .spiceowl/smoke/inverter-smoke-001
+PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py launch --run-dir .spiceowl/smoke/inverter-smoke-001
+PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py status --run-dir .spiceowl/smoke/inverter-smoke-001
+PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py collect --run-dir .spiceowl/smoke/inverter-smoke-001
+```
+
+If the remote launch environment needs explicit license configuration, append the optional `--license-env-json PRIVATE_LICENSE_JSON_PATH` to **prepare**. The private JSON object accepts only `CDS_LIC_FILE` and/or `LM_LICENSE_FILE`; their values are frozen in the private plan and passed to the solver environment. Omit the option when the existing environment is already configured. A successful version check does not prove that a simulation license is available. See the [example guide](examples/inverter/README.md) for the JSON shape; keep actual license configuration out of public source and shared receipts.
+
+`prepare` actively checks the selected hosts and freezes a local source/acceptance bundle; it does not reserve resources or launch a job. `stage` writes the frozen input to an isolated remote directory. `launch` rechecks resource headroom, verifies the remote identity/version and claims one bounded attempt. If delivery is uncertain, use `status` with the same saved run directory; do not prepare a new key or blindly relaunch. Collect only after a confirmed terminal result. Collection checks hashes and completion evidence, saves native PSF ASCII and logs, and produces separate execution, measurement-validity and toy-inverter results. Optional `collect --plots` needs a separately installed local matplotlib.
+
+Keep `.spiceowl/smoke/` private. The original educational models represent no fabrication process, and a passing smoke test does not qualify a PDK or unattended recovery. This utility is separate from the product's web/CLI execution plans and read-only MCP; those interfaces do not dispatch simulations. Limits and acceptance criteria are documented with the [example](examples/inverter/README.md).
+
+SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three optional MCP tools expose the local cache to agents. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. This does not enable continuous monitoring or automatic recovery. See the [IC Workbench integration guide](docs/ic-workbench.md).
 
 ## Contributing
 

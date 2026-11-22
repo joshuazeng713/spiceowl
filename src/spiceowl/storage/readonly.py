@@ -2,7 +2,9 @@
 
 from contextlib import contextmanager
 import json
+import math
 from pathlib import Path
+import re
 import sqlite3
 
 from spiceowl.domain.common import DomainError, require_id
@@ -14,6 +16,13 @@ _KINDS = frozenset({"run", "connection", "host", "session"})
 _TURN_STATES = frozenset({
     "dispatching", "running", "completed", "failed", "cancelled", "outcome_unknown"
 })
+
+
+def require_ic_run_id(value):
+    """IC native IDs have their own bounded vocabulary; never trim them."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,180}", value):
+        raise DomainError("Invalid IC run ID.")
+    return value
 
 
 class ReadStore:
@@ -103,8 +112,22 @@ class ReadStore:
         def reject_constant(_):
             raise ValueError("nonfinite JSON")
 
+        def finite_float(value):
+            parsed = float(value)
+            if not math.isfinite(parsed):
+                raise ValueError("nonfinite JSON")
+            return parsed
+
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON key")
+                result[key] = value
+            return result
+
         try:
-            value = json.loads(body, parse_constant=reject_constant)
+            value = json.loads(body, parse_constant=reject_constant, parse_float=finite_float, object_pairs_hook=unique)
         except (TypeError, ValueError, RecursionError):
             raise DomainError("A stored record is invalid or exceeds the read limit.", "storage_record") from None
         if not isinstance(value, dict):
@@ -151,3 +174,61 @@ class ReadStore:
             for row in db.execute("SELECT status,count(*) FROM turns GROUP BY status"):
                 states[row[0] if row[0] in _TURN_STATES else "other"] += row[1]
             return {"records": counts, "turn_states": states}
+
+    def _ic_gateway(self, db, gateway_id):
+        require_id(gateway_id, "gateway ID")
+        row = db.execute("SELECT CASE WHEN length(CAST(body AS BLOB))<=? THEN body END "
+                         "FROM records WHERE kind='ic_gateway' AND id=?", (MAX_RECORD_BYTES, gateway_id)).fetchone()
+        if row is None:
+            raise DomainError("The IC gateway is not registered in this state directory.", "not_found")
+        record = self._decode(row[0])
+        if record.get("id") != gateway_id or record.get("backend") != "ic-workbench":
+            raise DomainError("The stored IC gateway identity is invalid.", "storage_record")
+        return record
+
+    @staticmethod
+    def _ic_run(record, gateway_id, run_id, project_id):
+        if (record.get("run_id") != run_id or record.get("gateway_id") != gateway_id
+                or record.get("project_id") != project_id or record.get("backend") != "ic-workbench"
+                or record.get("schema") != "spiceowl.ic-run.v1" or record.get("source") != "stored_observations"):
+            raise DomainError("The stored IC run identity is invalid.", "storage_record")
+        require_ic_run_id(run_id)
+        return record
+
+    def list_ic_gateways(self):
+        """A fixed namespace read; no routes, keys or active client are opened."""
+        with self.transaction() as db:
+            rows = db.execute("SELECT id,CASE WHEN length(CAST(body AS BLOB))<=? THEN body END AS body "
+                              "FROM records WHERE kind='ic_gateway' ORDER BY rowid DESC LIMIT ?",
+                              (MAX_RECORD_BYTES, MAX_RECORDS + 1)).fetchall()
+            records = []
+            for row in rows[:MAX_RECORDS]:
+                record = self._decode(row["body"])
+                if record.get("id") != row["id"] or record.get("backend") != "ic-workbench":
+                    raise DomainError("The stored IC gateway identity is invalid.", "storage_record")
+                require_id(row["id"], "gateway ID")
+                records.append(record)
+            return {"records": records, "limit": MAX_RECORDS, "truncated": len(rows) > MAX_RECORDS}
+
+    def list_ic_runs(self, gateway_id):
+        require_id(gateway_id, "gateway ID")
+        with self.transaction() as db:
+            gateway = self._ic_gateway(db, gateway_id)
+            rows = db.execute("SELECT id,CASE WHEN length(CAST(body AS BLOB))<=? THEN body END AS body "
+                              "FROM records WHERE kind=? ORDER BY rowid DESC LIMIT ?",
+                              (MAX_RECORD_BYTES, "ic_run:" + gateway_id, MAX_RECORDS + 1)).fetchall()
+            return {"records": [self._ic_run(self._decode(row["body"]), gateway_id, row["id"], gateway.get("project_id"))
+                                for row in rows[:MAX_RECORDS]],
+                    "limit": MAX_RECORDS, "truncated": len(rows) > MAX_RECORDS}
+
+    def get_ic_run(self, gateway_id, run_id):
+        require_id(gateway_id, "gateway ID")
+        require_ic_run_id(run_id)
+        with self.transaction() as db:
+            gateway = self._ic_gateway(db, gateway_id)
+            row = db.execute("SELECT CASE WHEN length(CAST(body AS BLOB))<=? THEN body END "
+                             "FROM records WHERE kind=? AND id=?",
+                             (MAX_RECORD_BYTES, "ic_run:" + gateway_id, run_id)).fetchone()
+            if row is None:
+                raise DomainError("The IC run has no saved projection in this gateway.", "not_found")
+            return self._ic_run(self._decode(row[0]), gateway_id, run_id, gateway.get("project_id"))

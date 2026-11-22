@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -71,6 +72,30 @@ class FakeSSH:
 
 
 class HostProfileTests(unittest.TestCase):
+    def test_v2_preserves_v1_route_and_adds_exactly_hostname(self):
+        original = profile()
+        self.assertEqual(validate_host_profile(original), original)
+        data = {**original, "schema": "spiceowl.host.v2", "ssh_hostname": "compute-02.example.test"}
+        normalized = validate_host_profile(data)
+        self.assertEqual(normalized, data)
+        self.assertEqual(set(normalized), set(original) | {"ssh_hostname"})
+        self.assertEqual(normalized["ssh_target"], original["ssh_target"])
+        invalid = {**original, "ssh_hostname": "compute-02.example.test"}
+        with self.assertRaises(DomainError):
+            validate_host_profile(invalid)
+
+    def test_v2_hostname_injection_and_invalid_dns_are_rejected(self):
+        bad_names = (None, "", True, [], "a" * 254, "a" * 64 + ".test", ".host", "host.",
+                     "a..b", "-host", "host-", "host.-test", "host_2", "host:22", "[::1]",
+                     "user@host", "ssh://host", "host -oProxyCommand=evil", "host;id", "a\nb",
+                     "host$(id)", "host`id`", "host'", 'host"', "host!", "host/other", "*", "主机")
+        with patch.object(ssh.subprocess, "Popen") as popen:
+            for hostname in bad_names:
+                data = {**profile(), "schema": "spiceowl.host.v2", "ssh_hostname": hostname}
+                with self.subTest(hostname=hostname), self.assertRaises(DomainError):
+                    probe_host(data)
+            popen.assert_not_called()
+
     def test_validation_is_strict_pure_and_json_compatible(self):
         data = profile()
         before = deepcopy(data)
@@ -206,6 +231,19 @@ class SSHProbeTests(unittest.TestCase):
             self.assertIn("/usr/bin/id -un", words[-1])
         self.assertIn("/opt/example/spectre/bin/spectre -W", shlex.split(peer.calls[1][0][-1])[-1])
 
+    def test_v2_version_probes_override_only_hostname_on_every_request(self):
+        data = {**profile(), "schema": "spiceowl.host.v2", "ssh_hostname": "compute-02.example.test"}
+        result, peer = self.run_peer([{}, {"banner": "sub-version 99.1.0.123"},
+                                     {"banner": "sub-version IC99.1-64b.500.7"}], data)
+        self.assertIsNone(result["error"])
+        self.assertEqual(len(peer.calls), 3)
+        for argv, _ in peer.calls:
+            self.assertEqual(argv[-3:-1], ["--", "example-route"])
+            self.assertEqual(argv.count("Hostname=compute-02.example.test"), 1)
+            self.assertNotIn("-F", argv)
+            self.assertNotIn("-i", argv)
+            self.assertFalse(any(value.startswith(("UserKnownHostsFile=", "HostKeyAlias=")) for value in argv))
+
     def test_identity_mismatch_prevents_all_tool_calls(self):
         for reply in ({"host": "wrong-host"}, {"user": "wrong-user"}):
             with self.subTest(reply=reply):
@@ -293,6 +331,112 @@ class SSHProbeTests(unittest.TestCase):
         popen.assert_called_once()
         self.assertEqual(result["error"]["code"], "ssh_unavailable")
         self.assertNotIn("/fictional", json.dumps(result))
+
+    def test_safe_ssh_error_categories_never_expose_raw_stderr(self):
+        cases = [
+            (b"Host key verification failed. /fictional/known_hosts", "ssh_host_key_unverified"),
+            (b"REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed. /fictional/key", "ssh_host_key_changed"),
+            (b"fixture@private-name: Permission denied (publickey).", "ssh_permission_denied"),
+            (b"connect to private-name port 123: Connection timed out", "ssh_connection_timeout"),
+            (b"Operation timed out /fictional/private", "ssh_connection_timeout"),
+            (b"ssh: Could not resolve hostname private-name: Name or service not known", "ssh_name_resolution_failed"),
+            (b"channel 0: open failed: connect failed: Temporary failure in name resolution", "ssh_name_resolution_failed"),
+            (b"ssh: connect to host private-name port 123: No route to host", "ssh_network_unreachable"),
+            (b"channel 0: open failed: connect failed: Network is unreachable", "ssh_network_unreachable"),
+            (b"channel 0: open failed: connect failed: Connection refused", "ssh_connection_refused"),
+            (b"kex_exchange_identification: read: Connection reset by peer", "ssh_connection_lost"),
+            (b"Connection closed by UNKNOWN port 65535", "ssh_connection_lost"),
+            (b"Bad owner or permissions on /fictional/config", "ssh_config_invalid"),
+            (b"/fictional/config: line 1: Bad configuration option: fakeoption", "ssh_config_invalid"),
+            (b"Unrecognized remote error: /fictional/private", "ssh_probe_failed"),
+        ]
+        for stderr, code in cases:
+            with self.subTest(code=code):
+                result, peer = self.run_peer([{"stdout": b"", "stderr": stderr, "returncode": 255}])
+                self.assertEqual(len(peer.calls), 1)
+                self.assertEqual(result["error"]["code"], code)
+                self.assertEqual(result["transport"], "unknown")
+                self.assertFalse(result["identity"]["verified"])
+                serialized = json.dumps(result)
+                for raw in ("/fictional", "private-name", "publickey", "port 123"):
+                    self.assertNotIn(raw, serialized)
+                self.assertLess(len(result["error"]["message"]), 160)
+
+    def test_route_cause_outranks_proxy_closure_and_never_triggers_retry(self):
+        # An implicit jump can append a generic closure after its useful
+        # failure. The UI needs the useful cause, without guessing which hop.
+        for cause, expected in (
+            (b"ssh: Could not resolve hostname example-jump", "ssh_name_resolution_failed"),
+            (b"channel 0: open failed: connect failed: Connection refused", "ssh_connection_refused"),
+            (b"channel 0: open failed: connect failed: No route to host", "ssh_network_unreachable"),
+            (b"fixture@example-jump: Permission denied (publickey).", "ssh_permission_denied"),
+            (b"Host key verification failed.", "ssh_host_key_unverified"),
+            (b"REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed.", "ssh_host_key_changed"),
+        ):
+            with self.subTest(expected=expected):
+                result, peer = self.run_peer([{"stdout": b"", "returncode": 255,
+                    "stderr": cause + b"\nConnection closed by UNKNOWN port 65535\n"}])
+                self.assertEqual(result["error"]["code"], expected)
+                self.assertEqual(result["transport"], "unknown")
+                self.assertFalse(result["identity"]["verified"])
+                self.assertEqual(len(peer.calls), 1)
+
+    def test_localized_service_preserves_auth_environment_for_child(self):
+        selected = {"LC_ALL": "de_DE.UTF-8", "LANG": "zh_CN.UTF-8",
+                    "SSH_AUTH_SOCK": "/fictional/agent.sock", "SPICEOWL_ENV_FIXTURE": "kept"}
+        with patch.dict(os.environ, selected):
+            before = dict(os.environ)
+            result, peer = self.run_peer([{}], profile([]))
+            self.assertEqual(dict(os.environ), before)
+        self.assertTrue(result["identity"]["verified"])
+        child = peer.calls[0][1]["env"]
+        self.assertEqual(child["LC_ALL"], "C")
+        self.assertEqual(child["LANG"], "C")
+        self.assertEqual(child["SSH_AUTH_SOCK"], selected["SSH_AUTH_SOCK"])
+        self.assertEqual(child["SPICEOWL_ENV_FIXTURE"], "kept")
+        self.assertNotIn("/fictional/agent.sock", json.dumps(result))
+
+    def test_stderr_hints_do_not_override_success_or_remote_command_failure(self):
+        result, _ = self.run_peer([{"stderr": b"Host key verification failed"}], profile([]))
+        self.assertIsNone(result["error"])
+        self.assertTrue(result["identity"]["verified"])
+        result, _ = self.run_peer([{"stderr": b"Permission denied", "returncode": 70}])
+        self.assertEqual(result["error"]["code"], "ssh_probe_failed")
+        result, _ = self.run_peer([{"stdout": b"Host key verification failed", "returncode": 255}])
+        self.assertEqual(result["error"]["code"], "ssh_probe_failed")
+
+    def test_classified_later_ssh_failure_preserves_prior_tool_evidence(self):
+        result, peer = self.run_peer([
+            {}, {"banner": "sub-version 99.1.0.123"},
+            {"stdout": b"", "stderr": b"Host key verification failed", "returncode": 255},
+        ])
+        self.assertEqual(len(peer.calls), 3)
+        self.assertEqual(result["transport"], "unknown")
+        self.assertEqual(result["error"]["code"], "ssh_host_key_unverified")
+        self.assertEqual(result["tools"][0]["version"], "99.1.0.123")
+        self.assertEqual(result["tools"][1]["error"]["code"], "ssh_host_key_unverified")
+
+    def test_stderr_classifier_handles_split_phrases_with_bounded_tail(self):
+        hints = ssh._StderrHints()
+        for byte in b"prefix /fictional/private\nHOST KEY VERIFICATION FAILED.\n":
+            hints.feed(bytes([byte]))
+            self.assertLessEqual(len(hints._tail), ssh._STDERR_TAIL_BYTES)
+        self.assertEqual(hints.category(), "ssh_host_key_unverified")
+        hints.feed(b"REMOTE HOST IDENTIFICATION HAS CHANGED")
+        self.assertEqual(hints.category(), "ssh_host_key_changed")
+        hints.feed(b"x" * 4096)
+        self.assertLessEqual(len(hints._tail), ssh._STDERR_TAIL_BYTES)
+        self.assertEqual(hints.category(), "ssh_host_key_changed")
+
+    def test_all_diagnostic_phrases_survive_arbitrary_chunk_boundaries(self):
+        for code, phrases in ssh._SSH_ERROR_PATTERNS:
+            for phrase in phrases:
+                with self.subTest(code=code, phrase=phrase):
+                    hints = ssh._StderrHints()
+                    for byte in b"prefix /fictional/private: " + phrase.upper() + b"\n":
+                        hints.feed(bytes([byte]))
+                        self.assertLessEqual(len(hints._tail), ssh._STDERR_TAIL_BYTES)
+                    self.assertEqual(hints.category(), code)
 
     def test_timeout_reaps_peer_and_returns_unknown(self):
         started = time.monotonic()

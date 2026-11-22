@@ -10,7 +10,9 @@ Keep three identities separate:
 
 - **Experiment ID:** the intended scientific question and its accepted requirements.
 - **Attempt ID:** one execution under that experiment, including recovery attempts.
-- **Submission key:** the stable identity of one external submission operation. Reuse it only when reconciling/retrying that same operation; a genuinely new attempt gets a new key after the prior outcome is resolved.
+- **Submission key:** the stable identity of one SpiceOwl submission operation. Reuse it only when reconciling/retrying that same operation; a genuinely new SpiceOwl submission gets a new key after the prior outcome is resolved.
+
+An explicitly imported external run has a null submission key and a native import binding. Unknown historical input/launch fingerprints remain null. A future native scheduler restart is a child attempt with an execution generation and original submission reference; no new key is invented unless SpiceOwl actually submits a new operation. Initial profiles do not enable automatic requeue recovery. See [shared identities and receipts](contracts/interface-boundaries.md).
 
 ## Proposed manifest sections
 
@@ -62,6 +64,8 @@ The [synthetic disconnect scenario](../tests/fixtures/synthetic/disconnected-run
 ## Execution and action receipts
 
 Persist the execution owner, job/process identity, submission key, dispatch/acknowledgment times, and input fingerprint. Action receipts additionally record the action key, target attempt, policy version, decision/approval evidence, proposed diff, observed outcome, and recovery lineage.
+
+Execution receipts represent native execution/import bindings; action receipts represent lifecycle operations. Raw collection only reads/inventories/copies existing artifacts. OCEAN or other postprocessing uses a separate task/action key and postprocessing receipt, retaining its source attempt and artifact manifest. An uncertain operation remains a durable unresolved record, not a fabricated successful receipt.
 
 Cancellation is a request until the executor confirms the terminal state. Collection completion is separate from solver completion. Record incomplete retrieval without relabeling a finished solver run as scientifically valid.
 

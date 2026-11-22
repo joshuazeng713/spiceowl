@@ -39,3 +39,7 @@ No dependency is installed, pinned, or integrated by this decision. Select and l
 ## Consequences
 
 The first release will be narrower than the product vision but easier to verify. Contributors can inspect failure behavior without licensed software. Submission reliability and scientific acceptance remain project responsibilities even when an orchestration framework is used.
+
+## Amendment: connection management first
+
+On 2026-11-13, the maintainer prioritized user-owned agent/API connection management and requested three parallel design workstreams. [ADR 0002](0002-connection-layer.md) inserts milestone P0 before M1. It changes the implementation order while preserving independent execution ownership, optional diagnostic agents, and scientific validation requirements.

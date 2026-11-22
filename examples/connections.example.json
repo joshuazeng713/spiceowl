@@ -1,0 +1,262 @@
+{
+  "schema_version": "spiceowl.connections/0.1-draft",
+  "example_only": true,
+  "executable": false,
+  "synthetic": true,
+  "status": "design_only_not_an_executable_configuration",
+  "checked_on": "2026-11-13",
+  "deployment": {
+    "mode": "local_single_user",
+    "host_ref": "example-host-not-configured",
+    "automatic_runtime_install": false,
+    "automatic_runtime_update": false,
+    "hosted_native_subscription_auth": false
+  },
+  "selected_connection_id": null,
+  "defaults": {
+    "diagnostic_mode": "proposal_only",
+    "connection_switch": "explicit_user_selection",
+    "cross_connection_handoff": "new_session_with_reviewed_context",
+    "automatic_account_rotation": false,
+    "automatic_provider_fallback": false,
+    "automatic_inference_probe": false,
+    "automatic_inference_retries": 0,
+    "unknown_inference_outcome": "reconcile_or_preserve_unknown",
+    "permission_profile": "deny_runtime_tool_escalation",
+    "external_tracing": false,
+    "request_body_logging": false,
+    "max_concurrent_turns_per_connection": 1,
+    "max_turns_per_diagnosis": 1,
+    "max_input_bytes": 32768,
+    "max_wall_time_seconds": 120,
+    "max_pending_turns_per_connection": 4,
+    "required_terminal_result": true,
+    "unsupported_required_limit": "reject_before_dispatch",
+    "rate_limit_policy": {
+      "honor_retry_after": true,
+      "metadata_probe_max_retries": 1,
+      "backoff": "bounded_exponential_jitter",
+      "automatic_credit_purchase_or_limit_reset": false
+    }
+  },
+  "connections": [
+    {
+      "connection_id": "example-fake-agent",
+      "revision": 1,
+      "label": "Synthetic AgentBackend fixture",
+      "kind": "agent",
+      "backend": "fake_agent",
+      "enabled": false,
+      "auth": {"mode": "none"},
+      "runtime": {
+        "transport": "in_process_fixture",
+        "scenario": "example-authenticated-catalog-listed-inference-denied"
+      },
+      "model_selection": {
+        "mode": "fixture",
+        "model_id": "synthetic-agent-model"
+      },
+      "isolation_profile_ref": "example-synthetic-only",
+      "expected_fixture_observations": {
+        "transport": "reachable",
+        "authentication": "authenticated",
+        "catalog": "advertised",
+        "inference_access": "denied"
+      }
+    },
+    {
+      "connection_id": "example-fake-model",
+      "revision": 1,
+      "label": "Synthetic ModelBackend fixture",
+      "kind": "model",
+      "backend": "fake_model",
+      "enabled": false,
+      "auth": {"mode": "none"},
+      "api": {
+        "transport": "in_process_fixture",
+        "dialect": "synthetic",
+        "scenario": "example-stream-disconnect-after-acceptance"
+      },
+      "model_selection": {
+        "mode": "fixture",
+        "model_id": "synthetic-api-model"
+      },
+      "expected_fixture_observations": {
+        "inference_access": "unknown",
+        "turn_outcome": "outcome_unknown",
+        "reported_cost": null
+      }
+    },
+    {
+      "connection_id": "example-codex-native-local",
+      "revision": 1,
+      "label": "Official Codex runtime / native local login",
+      "kind": "agent",
+      "backend": "codex_app_server",
+      "enabled": false,
+      "minimum_slice": "P0.2",
+      "deployment_constraint": "local_open_source_native_route_only",
+      "auth": {
+        "mode": "native_runtime",
+        "native_profile_ref": "example-user-selected-codex-profile",
+        "credential_access": "runtime_managed_no_token_extraction",
+        "login_trigger": "explicit_user_action",
+        "auth_status_source": "documented_runtime_account_api"
+      },
+      "runtime": {
+        "executable": "/EXAMPLE_ONLY/choose-installed-codex",
+        "argv": ["app-server", "--listen", "stdio://"],
+        "shell": false,
+        "working_directory_ref": "example-sanitized-diagnostic-workspace",
+        "isolation_profile_ref": "example-native-isolation-not-yet-verified",
+        "environment_policy": "allowlist_no_unrelated_credentials",
+        "required_binary_version": "EXAMPLE_ONLY_SELECT_TESTED_VERSION",
+        "required_schema_digest": "EXAMPLE_ONLY_GENERATE_FROM_SELECTED_BINARY",
+        "experimental_api": false,
+        "attach_existing_desktop_session": false
+      },
+      "model_selection": {
+        "mode": "explicit_user_choice_from_catalog_or_validated_override",
+        "model_id": "EXAMPLE_ONLY_CHOOSE_AUTHORIZED_MODEL",
+        "catalog_is_entitlement": false
+      },
+      "capability_policy": {
+        "missing_optional_capability": "unavailable",
+        "resume": "same_profile_and_verified_native_session_only",
+        "isolation_required_for_private_evidence": "integration_tested"
+      },
+      "usage_policy": {
+        "billing_route": "native_runtime_account",
+        "currency": null,
+        "price_source": null,
+        "unknown_cost_policy": "explicit_turn_and_time_budget",
+        "quota_source": "provider_if_reported",
+        "hard_internal_model_token_limit": "not_claimed"
+      }
+    },
+    {
+      "connection_id": "example-openai-api",
+      "revision": 1,
+      "label": "OpenAI API / separately billed user API key",
+      "kind": "model",
+      "backend": "openai_api",
+      "enabled": false,
+      "minimum_slice": "P0.2",
+      "auth": {
+        "mode": "api_key_ref",
+        "secret_ref": {
+          "store": "env_ref",
+          "name": "SPICEOWL_EXAMPLE_OPENAI_API_KEY",
+          "bound_origin": "https://api.openai.com"
+        },
+        "credential_value_in_config": false
+      },
+      "api": {
+        "transport": "https",
+        "base_url": "https://api.openai.com/v1",
+        "dialect": "openai_responses",
+        "auth_scheme": "bearer",
+        "allow_cross_origin_redirects": false,
+        "sdk_max_retries": 0,
+        "stream": true,
+        "store": false,
+        "provider_tools": []
+      },
+      "model_selection": {
+        "mode": "explicit_user_choice",
+        "model_id": "EXAMPLE_ONLY_CHOOSE_API_MODEL",
+        "catalog_is_entitlement": false
+      },
+      "limits": {
+        "max_output_tokens": 1024,
+        "limit_enforceability": "verify_selected_model_and_endpoint",
+        "currency_budget": null,
+        "price_source": null,
+        "unknown_cost_policy": "require_explicit_probe_budget_authorization"
+      },
+      "history": {
+        "owner": "spiceowl",
+        "provider_response_resume": "unavailable_until_verified"
+      }
+    },
+    {
+      "connection_id": "example-custom-api",
+      "revision": 1,
+      "label": "User-selected compatible endpoint / operator key",
+      "kind": "model",
+      "backend": "openai_compatible_api",
+      "enabled": false,
+      "minimum_slice": "after_P0.2_dialect_contracts",
+      "auth": {
+        "mode": "api_key_ref",
+        "secret_ref": {
+          "store": "env_ref",
+          "name": "SPICEOWL_EXAMPLE_CUSTOM_API_KEY",
+          "bound_origin": "https://models.example.invalid"
+        },
+        "credential_value_in_config": false
+      },
+      "api": {
+        "transport": "https",
+        "base_url": "https://models.example.invalid/v1",
+        "dialect": "openai_chat_completions",
+        "auth_scheme": "bearer",
+        "operator_ref": "example-operator-requires-user-verification",
+        "allow_cross_origin_redirects": false,
+        "automatic_dialect_detection": false,
+        "sdk_max_retries": 0,
+        "stream": true,
+        "provider_tools": []
+      },
+      "model_selection": {
+        "mode": "explicit_user_choice",
+        "model_id": "EXAMPLE_ONLY_OPERATOR_MODEL_ID",
+        "catalog_is_entitlement": false
+      },
+      "limits": {
+        "max_output_tokens": 1024,
+        "limit_enforceability": "unverified",
+        "currency_budget": null,
+        "price_source": null,
+        "unknown_cost_policy": "require_explicit_probe_budget_authorization"
+      }
+    },
+    {
+      "connection_id": "example-acp-later",
+      "revision": 1,
+      "label": "ACP expansion placeholder / provider route unverified",
+      "kind": "agent",
+      "backend": "acp",
+      "enabled": false,
+      "minimum_slice": "P0.3",
+      "auth": {
+        "mode": "agent_advertised_reviewed_method_only",
+        "provider_route_review_ref": "EXAMPLE_ONLY_REVIEW_NATIVE_OR_API_ROUTE",
+        "generic_subscription_token_import": false
+      },
+      "runtime": {
+        "executable": "/EXAMPLE_ONLY/choose-reviewed-acp-agent",
+        "argv": [],
+        "shell": false,
+        "transport": "stdio",
+        "working_directory_ref": "example-sanitized-diagnostic-workspace",
+        "isolation_profile_ref": "example-acp-isolation-not-yet-verified",
+        "sdk_distribution": "agent-client-protocol",
+        "required_sdk_version": "EXAMPLE_ONLY_SELECT_TESTED_VERSION",
+        "protocol_major": 1,
+        "unstable_extensions": false,
+        "environment_policy": "allowlist_no_unrelated_credentials"
+      },
+      "client_capabilities_intent": {
+        "filesystem_read": false,
+        "filesystem_write": false,
+        "terminal": false
+      },
+      "capability_policy": {
+        "missing_optional_capability": "unavailable",
+        "load_session_requires": "advertised_loadSession_and_adapter_test",
+        "provider_capabilities_and_auth": "unverified"
+      }
+    }
+  ]
+}

@@ -6,6 +6,7 @@ SpiceOwl is currently a documentation and directory scaffold. Read the [roadmap]
 
 - A reproducible, sanitized simulation failure with a clear expected outcome.
 - Review of the experiment/run contract from an analog-design perspective.
+- A small connection-management slice with fake agent/API backends, following the [parallel design workstreams](docs/design/README.md).
 - A small slice of the mock executor and read-only monitor.
 - An input or measurement validator with synthetic/public fixtures.
 - Documentation corrections and improvements to the English/Chinese introductions.

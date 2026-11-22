@@ -1,0 +1,457 @@
+{
+  "schema_version": "0.1-draft",
+  "example_only": true,
+  "executable": false,
+  "synthetic": true,
+  "policy_id": "synthetic-debug-observe-only",
+  "policy_version": "debug-0.1-draft",
+  "checked_date": "2026-11-13",
+  "implementation_priority": "after_P0_AI_connection_management",
+  "pipeline": ["Evidence", "Proposal", "PolicyDecision", "OperationResult", "Validation"],
+  "receipt_handoff": {
+    "dispatcher_result": "OperationResult",
+    "kind_to_receipt": {
+      "execution": "ExecutionReceipt",
+      "action": "ActionReceipt",
+      "postprocess": "PostprocessReceipt"
+    },
+    "unresolved_tag": "unresolved",
+    "unresolved_references": "original_operation_ref",
+    "unresolved_expected_receipt_kinds": ["execution", "action", "postprocess"],
+    "duplicates_receipt_truth": false
+  },
+  "description": "Non-executable design fixture for a future deterministic evaluator. Contains no commands, endpoints, credentials, or runtime grants. All limits are synthetic test constants.",
+  "mode": "observe_only",
+  "runtime_loading": "reject_example_only",
+  "scope": {
+    "experiment_id": "synthetic-debug-campaign",
+    "executor_profile_ref": "synthetic:mock-profile-placeholder",
+    "simulator_profile_ref": "synthetic:normalized-events-placeholder",
+    "real_environment_authorized": false,
+    "capability_provenance": "documented",
+    "integration_tested": false
+  },
+  "import_binding_example": {
+    "execution_receipt_ref": "synthetic:imported-execution-receipt",
+    "import_binding_ref": "synthetic:verified-native-import-binding",
+    "submission_key": null,
+    "actual_input_fingerprint": null,
+    "launch_plan_fingerprint": null,
+    "missing_provenance_reason": "historical_submission_and_inputs_not_known",
+    "invent_submission_or_historical_fingerprint": false
+  },
+  "scheduler_restart": {
+    "integration_enabled": false,
+    "future_generation_representation": "child_attempt",
+    "required_lineage": ["parent_attempt_id", "execution_generation", "origin_submission_key"],
+    "child_submission_key": null,
+    "invent_spiceowl_submission": false,
+    "unknown_imported_origin_submission": "retain_null_and_reference_import_binding",
+    "unsupported_generation": "retain_evidence_and_defer_dependent_recovery",
+    "unknown_restart_count": "budget_uncertainty"
+  },
+  "collection_and_postprocessing": {
+    "executor_collect_effects": ["read", "inventory", "copy_existing_artifacts"],
+    "executor_collect_result": "ExistingArtifactRef[]",
+    "executor_collect_may_compute": false,
+    "executor_collect_may_modify_source_artifacts": false,
+    "ocean_owner": "service_postprocess",
+    "postprocess_requires_separate_authorization": true,
+    "postprocess_requires_separate_operation_key": true,
+    "postprocess_receipt_type": "PostprocessReceipt",
+    "collection_completion_implies_computation_completion": false
+  },
+  "authorization": {
+    "grant_refs": [],
+    "human_review_required_for_mutations": true,
+    "model_may_approve": false,
+    "model_may_dispatch": false,
+    "approval_must_bind": [
+      "environment",
+      "target_attempt_id",
+      "execution_generation",
+      "proposal_digest",
+      "effective_diff_digest",
+      "policy_version",
+      "budget_bounds",
+      "expires_at"
+    ]
+  },
+  "observation": {
+    "poll_interval_seconds": 30,
+    "source_freshness_ttl_seconds": 120,
+    "backoff": {
+      "initial_seconds": 30,
+      "multiplier": 2,
+      "maximum_seconds": 600,
+      "jitter": "deterministic_fixture_only"
+    },
+    "unavailable_resource_value": "unknown",
+    "retain_last_confirmed_execution": true,
+    "deduplicate_by": ["event_id", "source_generation", "source_record_identity"],
+    "clock_skew_policy": "retain_source_and_observed_times_with_uncertainty",
+    "historical_sealed_verdicts": "retain_with_original_as_of_and_artifact_identity"
+  },
+  "budgets": {
+    "max_retries": 0,
+    "max_in_flight_mutations_per_attempt": 0,
+    "experiment_wall_time_budget_seconds": 172800,
+    "license_wait_alert_after_seconds": 7200,
+    "max_automatic_cancellations": 0,
+    "max_model_requests": 0,
+    "allowed_resource_profile_refs": [],
+    "count_native_scheduler_restarts": true,
+    "persist_across_controller_and_session_restarts": true,
+    "reserve_before_dispatch": true,
+    "unknown_outcome_releases_reservation": false,
+    "deadline_effect": "stop_authorizing_new_attempts_and_report",
+    "deadline_implies_solver_cancellation": false
+  },
+  "operation_guards": {
+    "unknown_outcome": "reconcile_original_operation_key",
+    "unknown_outcome_blocks_dependent_mutations": true,
+    "allow_model_backend_account_or_key_switch_to_repeat_effect": false,
+    "require_verified_target_ownership": true,
+    "require_current_evidence_for_mutations": true,
+    "require_terminal_reconciliation_before_service_retry": true,
+    "native_requeue_pending_blocks_competing_submission": true,
+    "unsupported_capability": "deny",
+    "unknown_diff_field": "require_review_and_adapter_resolution",
+    "proposal_classification": "recompute_from_full_effective_diff",
+    "precedence": [
+      "reject_runtime_example",
+      "reject_invalid_schema_or_unresolvable_evidence",
+      "deny_unsupported_or_unowned_action",
+      "defer_dependent_mutation_until_original_operation_reconciled",
+      "deny_recovery_for_valid_design_failure",
+      "deny_all_mutations_in_observe_only",
+      "evaluate_authorization_freshness_and_aggregate_budgets"
+    ]
+  },
+  "allowed_actions": ["observe", "reconcile", "report"],
+  "denied_actions": [
+    "collect",
+    "postprocess",
+    "cancel_owned",
+    "retry_same_inputs",
+    "retry_with_resource_profile",
+    "retry_with_output_config",
+    "retry_with_numerical_recipe",
+    "restore_frozen_inputs",
+    "continue_native_checkpoint",
+    "create_experiment_revision"
+  ],
+  "change_classes": {
+    "observation": {
+      "fixture_decision": "allow_scoped_read_only",
+      "creates_attempt": false
+    },
+    "lifecycle": {
+      "fixture_decision": "deny",
+      "future_requirement": "concrete_environment_action_grant_and_verified_ownership"
+    },
+    "postprocessing": {
+      "fixture_decision": "deny",
+      "future_requirement": "separate_service_authorization_operation_key_and_PostprocessReceipt"
+    },
+    "resource": {
+      "fixture_decision": "deny",
+      "future_requirement": "allowlisted_profile_and_aggregate_budget_and_revalidation"
+    },
+    "output_configuration": {
+      "fixture_decision": "deny",
+      "future_requirement": "reviewed_exact_diff_or_narrow_preauthorization_and_full_revalidation"
+    },
+    "numerical": {
+      "fixture_decision": "deny",
+      "future_requirement": "human_reviewed_finite_recipe_and_reference_comparison",
+      "convergence_alone_establishes_validity": false
+    },
+    "input_restoration": {
+      "fixture_decision": "deny",
+      "future_requirement": "human_reviewed_diff_targeting_exact_original_frozen_intent_and_revalidation",
+      "may_redefine_original_contract": false
+    },
+    "scientific_intent": {
+      "fixture_decision": "deny",
+      "future_requirement": "human_authorized_linked_new_experiment",
+      "preserve_original_results": true
+    }
+  },
+  "automatic_input_changes": false,
+  "protected_fields": [
+    "electrical_design",
+    "stimulus",
+    "parameters",
+    "corner",
+    "temperature",
+    "model_identity",
+    "model_section",
+    "random_seed",
+    "monte_carlo_sample_id",
+    "measurement_definition",
+    "measurement_window",
+    "specification_threshold",
+    "solver_tolerances",
+    "accuracy_preset",
+    "integration_method",
+    "step_control",
+    "initial_conditions",
+    "required_saved_signals"
+  ],
+  "detectors": [
+    {
+      "rule_id": "D01",
+      "condition": "connection_interruption",
+      "predicate_ref": "proposed:transport_unavailable_or_observation_missing",
+      "fixture_response": ["reconcile", "report"],
+      "implies_execution_failed": false
+    },
+    {
+      "rule_id": "D02",
+      "condition": "license_wait",
+      "predicate_ref": "proposed:explicit_current_license_wait",
+      "fixture_response": ["observe", "report"],
+      "new_attempt_while_waiting": false
+    },
+    {
+      "rule_id": "D03",
+      "condition": "license_failure",
+      "predicate_ref": "proposed:checkout_error_and_terminal_execution",
+      "fixture_response": ["report"],
+      "persistent_entitlement_error_retry": false
+    },
+    {
+      "rule_id": "D04",
+      "condition": "out_of_memory",
+      "predicate_ref": "proposed:identity_scoped_oom_evidence",
+      "insufficient_evidence": ["exit_137_alone", "high_rss_alone"],
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D05",
+      "condition": "disk_quota_or_write_failure",
+      "predicate_ref": "proposed:attributed_write_error_or_resource_pressure",
+      "fixture_response": ["report"],
+      "delete_artifacts_or_drop_required_signals": false
+    },
+    {
+      "rule_id": "D06",
+      "condition": "execution_time_limit",
+      "predicate_ref": "proposed:authoritative_execution_timeout",
+      "rpc_timeout_is_execution_timeout": false,
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D07",
+      "condition": "node_or_launch_failure",
+      "predicate_ref": "proposed:identity_scoped_scheduler_failure",
+      "fixture_response": ["reconcile", "report"],
+      "inspect_requeue_generation_before_proposal": true
+    },
+    {
+      "rule_id": "D08",
+      "condition": "numerical_nonconvergence",
+      "predicate_ref": "proposed:release_and_stage_specific_terminal_failure",
+      "intermediate_warning_is_terminal": false,
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D09",
+      "condition": "suspected_stall",
+      "predicate_ref": "proposed:stage_specific_corroborated_no_progress",
+      "profile_ref": "synthetic:known_transient_stage",
+      "minimum_distinct_observations": 3,
+      "minimum_window_seconds": 600,
+      "unprofiled_stage": "insufficient_evidence",
+      "quiet_log_alone": "insufficient_evidence",
+      "maximum_grade": "suspected",
+      "fixture_response": ["observe", "report"],
+      "automatic_termination": false
+    },
+    {
+      "rule_id": "D10",
+      "condition": "required_signal_absent_or_wrong",
+      "predicate_ref": "proposed:sealed_inventory_disagrees_with_frozen_signal_mapping",
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D11",
+      "condition": "measurement_window_or_sampling_invalid",
+      "predicate_ref": "proposed:window_or_sampling_contract_violated",
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D12",
+      "condition": "input_corner_or_model_mismatch",
+      "predicate_ref": "proposed:expected_resolved_actual_input_mismatch",
+      "missing_actual_identity": "indeterminate",
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D13",
+      "condition": "artifact_or_parser_failure",
+      "predicate_ref": "proposed:artifact_integrity_or_reader_failure",
+      "unsupported_format": "indeterminate",
+      "fixture_response": ["report"]
+    },
+    {
+      "rule_id": "D14",
+      "condition": "valid_design_target_miss",
+      "predicate_ref": "proposed:valid_measurement_fails_frozen_predicate",
+      "fixture_response": ["report"],
+      "recovery_trigger": false
+    }
+  ],
+  "validation": {
+    "required_measurement_validator_ids": ["V01", "V02", "V03", "V04", "V05"],
+    "conditional_measurement_validator_ids": {
+      "after_numerical_change": ["V06"],
+      "campaign_aggregate": ["V08"]
+    },
+    "specification_evaluator_ids": ["V07"],
+    "required_measurement_check_precedence": ["fail", "indeterminate", "pending", "pass"],
+    "v07_in_measurement_check_list": "reject_schema_or_configuration",
+    "v07_failure_changes_measurement_validity": false,
+    "v08_rewrites_individual_sample_validity": false,
+    "evaluate_specification_only_for_valid_measurements": true,
+    "aggregate_specification_requires_all_required_measurements_valid": true,
+    "aggregate_specification_requires_all_required_predicates_evaluated": true,
+    "preserve_per_measurement_failures_while_aggregate_not_evaluated": true,
+    "accept_bounded_valid_target_failure": true,
+    "forbid_implicit_interpolation_or_window_clipping": true,
+    "measurement_validator_exception": "indeterminate",
+    "specification_evaluator_exception": "not_evaluated_without_changing_measurement_validity",
+    "rewrite_prior_report": false,
+    "reducer_fixture_defaults": {
+      "required_measurement_check_results": {
+        "V01": "pass", "V02": "pass", "V03": "pass", "V04": "pass", "V05": "pass"
+      },
+      "conditional_measurement_checks_applicable": false,
+      "all_listed_measurements_and_specification_predicates_required": true
+    },
+    "reducer_cases": [
+      {
+        "case_id": "T15-valid-target-miss",
+        "measurements": [
+          {"measurement_id": "A", "measurement_check_overrides": {}, "v07_result": "fail"}
+        ],
+        "expected": {
+          "measurement_validity": "valid",
+          "specification_result": "fail",
+          "per_measurement": {"A": ["valid", "fail"]},
+          "d14_recovery_trigger": false
+        }
+      },
+      {
+        "case_id": "T25-mixed-valid-specifications",
+        "measurements": [
+          {"measurement_id": "A", "measurement_check_overrides": {}, "v07_result": "fail"},
+          {"measurement_id": "B", "measurement_check_overrides": {}, "v07_result": "pass"}
+        ],
+        "expected": {
+          "measurement_validity": "valid",
+          "specification_result": "fail",
+          "per_measurement": {"A": ["valid", "fail"], "B": ["valid", "pass"]},
+          "d14_recovery_trigger": false
+        }
+      },
+      {
+        "case_id": "T25-valid-failure-with-invalid-peer",
+        "measurements": [
+          {"measurement_id": "A", "measurement_check_overrides": {}, "v07_result": "fail"},
+          {"measurement_id": "B", "measurement_check_overrides": {"V03": "fail"}, "v07_result": "not_evaluated"}
+        ],
+        "expected": {
+          "measurement_validity": "invalid",
+          "specification_result": "not_evaluated",
+          "per_measurement": {"A": ["valid", "fail"], "B": ["invalid", "not_evaluated"]},
+          "d14_recovery_trigger": false
+        }
+      },
+      {
+        "case_id": "T25-valid-failure-with-indeterminate-peer",
+        "measurements": [
+          {"measurement_id": "A", "measurement_check_overrides": {}, "v07_result": "fail"},
+          {"measurement_id": "B", "measurement_check_overrides": {"V03": "indeterminate"}, "v07_result": "not_evaluated"}
+        ],
+        "expected": {
+          "measurement_validity": "indeterminate",
+          "specification_result": "not_evaluated",
+          "per_measurement": {"A": ["valid", "fail"], "B": ["indeterminate", "not_evaluated"]},
+          "d14_recovery_trigger": false
+        }
+      },
+      {
+        "case_id": "T25-specification-evaluator-unavailable",
+        "measurements": [
+          {"measurement_id": "A", "measurement_check_overrides": {}, "v07_result": "not_evaluated"}
+        ],
+        "expected": {
+          "measurement_validity": "valid",
+          "specification_result": "not_evaluated",
+          "per_measurement": {"A": ["valid", "not_evaluated"]},
+          "d14_recovery_trigger": false
+        }
+      }
+    ]
+  },
+  "monte_carlo": {
+    "roster_ref": "synthetic:fixed-roster-placeholder",
+    "identity_fields": [
+      "experiment_id",
+      "corner",
+      "monte_carlo_sample_id",
+      "sample_index",
+      "base_seed",
+      "per_sample_seed_if_applicable",
+      "transient_noise_seed_if_applicable",
+      "sampler_identity",
+      "actual_input_fingerprint"
+    ],
+    "preserve_missing_failed_and_invalid_samples": true,
+    "replace_failed_sample_with_new_seed": false,
+    "seed_alone_proves_same_sample": false,
+    "selection_rule": "first_valid_protocol_compliant_attempt_in_attempt_sequence",
+    "select_best_passing_attempt": false,
+    "retain_contradictory_replicates": true,
+    "numerically_modified_result_eligible_only_under_frozen_campaign_protocol": true,
+    "missing_result_bounds": "P_over_N_to_P_plus_U_over_N",
+    "bounds_are_statistical_confidence_interval": false,
+    "nominal_run_in_random_sample_denominator": false
+  },
+  "diagnostic_agent": {
+    "enabled": false,
+    "mode": "evidence_to_typed_proposal_only",
+    "credential_access": false,
+    "job_control_tools": false,
+    "evidence_refs_must_resolve": true,
+    "model_confidence_is_authority": false,
+    "untrusted_text_is_instruction": false,
+    "on_unavailable": "continue_deterministic_rules",
+    "session_cancel_effect": "cancel_diagnosis_only",
+    "session_cancel_stops_simulation": false,
+    "provider_fallback_replays_unknown_side_effect": false
+  },
+  "audit": {
+    "retain": [
+      "frozen_contract",
+      "resolved_and_actual_input_identities",
+      "evidence_snapshot",
+      "detections",
+      "diagnoses",
+      "proposals",
+      "policy_decisions",
+      "authorization_references",
+      "budget_reservations",
+      "execution_action_and_postprocess_receipts",
+      "tagged_operation_result_references",
+      "import_bindings_and_unknown_historical_provenance",
+      "recovery_lineage",
+      "validation_reports",
+      "sample_roster_and_all_attempts"
+    ],
+    "store_credentials_in_records": false,
+    "delete_original_outputs_as_recovery": false
+  }
+}

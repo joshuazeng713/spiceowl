@@ -40,6 +40,36 @@
       <p id="form-error" class="error-text" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-dialog">Cancel</button><button class="button primary" type="submit">Create connection</button></div>
     </form>
   </dialog>
+  <dialog id="host-dialog" class="host-dialog" aria-labelledby="host-dialog-title">
+    <form id="host-form" autocomplete="off">
+      <div class="dialog-heading"><div><div class="eyebrow">SERVER SETUP</div><h2 id="host-dialog-title">Add a simulation host</h2></div><button class="icon-button" type="button" data-action="close-host-dialog" aria-label="Close host setup">×</button></div>
+      <p class="muted">Use an SSH alias already configured on this computer. Your SSH configuration supplies the login key, port and jump hosts.</p>
+      <div class="host-form-grid">
+        <div><label for="host-label">Display name</label><input id="host-label" name="label" required maxlength="80" placeholder="My simulation server"></div>
+        <div><label for="host-id">Stable host ID</label><input id="host-id" name="host_id" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9_\-]*" placeholder="my-sim-server"><small>Letters, numbers, hyphens and underscores.</small></div>
+      </div>
+      <label for="host-alias">Existing SSH alias</label><input id="host-alias" name="ssh_target" required maxlength="96" placeholder="my-cad-alias"><small>For example, the alias used in <code>ssh my-cad-alias</code>. Enter only the alias.</small>
+      <div class="host-form-grid">
+        <div><label for="host-expected">Expected remote hostname</label><input id="host-expected" name="expected_host" required maxlength="253" placeholder="sim-node-a"><small>The exact name returned by <code>hostname</code>.</small></div>
+        <div><label for="host-user">Expected remote username</label><input id="host-user" name="expected_user" required maxlength="64" placeholder="researcher"><small>The exact name returned by <code>id -un</code>.</small></div>
+      </div>
+      <details class="host-form-details"><summary>Use the alias as a route to another host</summary><label for="host-override">Target hostname override · optional</label><input id="host-override" name="ssh_hostname" maxlength="253" placeholder="sim-node-b.example.invalid"><p class="subtle-note">Reuse the alias's user, key and jump route with this target hostname. The target still needs its own verified SSH identity.</p></details>
+      <details class="host-form-details"><summary>Simulator executables · optional</summary><p class="subtle-note">Use absolute paths on the remote server. Leave blank for an identity-only connection check. Version checks do not validate a license or testbench.</p><label for="host-spectre">Spectre</label><input id="host-spectre" name="spectre" maxlength="1024" placeholder="/opt/cadence/tools/bin/spectre"><label for="host-virtuoso">Virtuoso</label><input id="host-virtuoso" name="virtuoso" maxlength="1024" placeholder="/opt/cadence/tools/bin/virtuoso"><label for="host-ngspice">ngspice</label><input id="host-ngspice" name="ngspice" maxlength="1024" placeholder="/usr/bin/ngspice"></details>
+      <p class="subtle-note">Registration saves a private local profile. It makes no connection and does not change your SSH configuration. Use Check connection after saving.</p>
+      <p id="host-form-error" class="error-text" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-host-dialog">Cancel</button><button class="button primary" type="submit">Register host</button></div>
+    </form>
+  </dialog>
+  <dialog id="pool-dialog" class="host-dialog" aria-labelledby="pool-dialog-title">
+    <form id="pool-import-form" autocomplete="off">
+      <div class="dialog-heading"><div><div class="eyebrow">SERVER SETUP</div><h2 id="pool-dialog-title">Import a server pool</h2></div><button class="icon-button" type="button" data-action="close-pool-dialog" aria-label="Close pool import">×</button></div>
+      <p class="muted">Select an existing host as a route template, then list the target hostnames. Only the names you provide will be registered.</p>
+      <label for="pool-template">Existing route template</label><select id="pool-template" name="template_id" required></select>
+      <label for="pool-names">Target hostnames</label><textarea id="pool-names" name="names" required maxlength="8200" rows="5" placeholder="sim-node-a&#10;sim-node-b&#10;sim-node-c"></textarea><small>Up to 32 distinct hostnames, separated by lines, spaces or commas. Each hostname must also match the remote <code>hostname</code> result; use Add host if these differ.</small>
+      <div id="pool-import-preview" class="host-import-preview" aria-live="polite" hidden></div>
+      <p class="subtle-note">The template supplies SSH routing, expected user and tool paths. Its host-key trust is not copied. Registration does not contact these hosts.</p>
+      <p id="pool-form-error" class="error-text" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-pool-dialog">Cancel</button><button id="pool-import-submit" class="button primary" type="submit">Review import</button></div>
+    </form>
+  </dialog>
   <noscript><p>This local console needs JavaScript. The CLI remains available.</p></noscript>
 </body>
 </html>

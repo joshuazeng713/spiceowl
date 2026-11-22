@@ -1,0 +1,18 @@
+// Self-contained inverter transient experiment; see acceptance.json before run.
+simulator lang=spectre
+global 0
+
+include "models.scs"
+include "inverter.scs"
+
+parameters VDD=1.2 CL=20f
+V_SUPPLY (vdd 0) vsource type=dc dc=VDD
+V_INPUT (vin 0) vsource type=pulse val0=0 val1=VDD delay=5n \
+    rise=100p fall=100p width=5n period=10n
+X_INV (vin vout vdd 0) owl_inverter
+C_LOAD (vout 0) capacitor c=CL
+
+simulatorOptions options temp=27 tnom=27 reltol=1e-4 vabstol=1u iabstol=1p
+saveOptions options save=selected
+save vin vout vdd
+tran tran start=0 stop=50n strobeperiod=10p strobeoutput=strobeonly

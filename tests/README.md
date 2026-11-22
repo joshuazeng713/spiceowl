@@ -4,6 +4,8 @@ Run `PYTHONPATH=src python3 -m unittest discover -s tests` with Python 3.11+. Te
 
 Browser verification covers connection creation/probing, the host page and explicit probe controls, manual run replay, diagnostic events, persisted-session reload, escaped content and narrow layouts. The [local guide](../docs/local-console.md) records the implemented scope.
 
+The optional `node tests/ui-host-onboarding.mjs` checks production host-page logic in a Node VM with local DOM/fetch stubs. It covers selected batch limits, invalid/future observation timestamps, request payloads, and rejecting delayed replies after selection changes. It needs no external packages or network access. These checks do not replace real-browser layout, accessibility and interaction verification. Node is a development test dependency only; the shipped console does not require it.
+
 ## Additional public tests for later milestones
 
 - Domain model validation, including explicit units and immutable attempt identity.
@@ -25,3 +27,7 @@ Public fixtures must be original, synthetic, or explicitly redistributable. `.lo
 ## Real-tool checks
 
 Add opt-in integration tests only after selecting the first backend. Run them in a configured private environment with user-provided tools and inputs. They must be skipped by default and must not be required for a public pull request to run its normal tests.
+
+## IC Workbench read integration
+
+`test_ic_workbench.py`, `test_ic_cli.py`, and `test_ic_integration_verifier.py` cover bounded gateway reads, native identity preservation, failed-read caching, submission-key reconciliation, and CLI behavior. Fixtures are synthetic. MCP/readonly tests also cover the three cache-only IC tools, including independent stdio calls and unchanged database bytes. Live checks are opt-in and must use saved-record endpoints; a single-run status endpoint can perform SSH and is not part of a passive check.

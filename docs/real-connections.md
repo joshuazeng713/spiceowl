@@ -41,6 +41,8 @@ The MCP reader requires an existing supported database. It does not initialize, 
 
 ## 2. Prepare a private host profile
 
+The [browser onboarding forms](host-onboarding.md) can register these profiles and explicit server pools. The JSON/CLI workflow below remains available. Registration does not initiate SSH or establish trust automatically.
+
 Use an existing, operator-reviewed OpenSSH alias. SSH authentication and jump routing remain in the user's SSH configuration. SpiceOwl does not accept password/key contents, arbitrary SSH options, environment scripts, or shell snippets in this profile.
 
 An example `/home/example/private/spiceowl-host.json`:

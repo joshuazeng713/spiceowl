@@ -25,6 +25,21 @@ def parser():
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
     commands.add_parser("status", help="Print locally stored connection/run/session records as JSON.")
     commands.add_parser("mcp", help="Serve read-only local queries over stdio (requires the mcp extra).")
+    ic = commands.add_parser("ic", help="Read saved IC Workbench tasks through a registered local gateway.").add_subparsers(dest="action", required=True)
+    ic.add_parser("list", help="List registered gateways without a network request.")
+    ic.add_parser("register", help="Save an explicit private gateway profile; no network request.").add_argument("--file", required=True)
+    for action in ("sync", "runs", "inspect", "lookup"):
+        command = ic.add_parser(action, help={
+            "sync": "Read a stored gateway snapshot; never probes SSH or the simulator.",
+            "runs": "List locally cached IC runs.",
+            "inspect": "Read one locally cached IC run.",
+            "lookup": "Look up an existing submission key without submitting anything.",
+        }[action])
+        command.add_argument("gateway_id")
+        if action == "inspect":
+            command.add_argument("run_id")
+        elif action == "lookup":
+            command.add_argument("submission_key")
     hosts = commands.add_parser("hosts", help="Register private SSH profiles and explicitly probe connectivity.").add_subparsers(dest="action", required=True)
     hosts.add_parser("list", help="List stored metadata; no network requests.")
     host_add = hosts.add_parser("add", help="Import a private JSON profile; no network requests.")
@@ -92,6 +107,28 @@ def output(value):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "ic":
+            from spiceowl.integrations.ic_workbench import ICGatewayBackend
+            from spiceowl.hosts import load_profile
+            backend = ICGatewayBackend(args.data_dir)
+            if args.action == "register":
+                record, created = backend.register(load_profile(args.file))
+                output({"gateway": record, "created": created})
+            elif args.action == "list":
+                output(backend.list())
+            elif args.action == "sync":
+                receipt = backend.refresh(args.gateway_id)
+                output(receipt)
+                return 0 if receipt.get("updated") is True else 1
+            elif args.action == "runs":
+                output(backend.runs(args.gateway_id))
+            elif args.action == "inspect":
+                output(backend.run(args.gateway_id, args.run_id))
+            else:
+                receipt = backend.lookup_submission(args.gateway_id, args.submission_key)
+                output(receipt)
+                return 0 if receipt["observation"]["state"] == "readable" else 1
+            return 0
         if args.command == "mcp":
             try:
                 from spiceowl.mcp.server import serve

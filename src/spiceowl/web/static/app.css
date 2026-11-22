@@ -1213,6 +1213,41 @@ dialog .muted {
 .plan-json { white-space:pre-wrap; overflow-wrap:anywhere; background:#f4f7f5; padding:16px; font-size:11px; border-radius:6px; }
 .host-details { margin:22px 0; }
 .host-details>summary { cursor:pointer; padding:16px 0; font-weight:600; font-size:13px; }
+.host-page-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; max-width:390px; }
+.host-onboarding { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; margin:0 0 24px; padding:20px 24px; background:#eaf2ee; border:1px solid #dce8e1; border-radius:9px; }
+.host-onboarding strong { display:block; font-size:12px; margin-bottom:6px; color:var(--green); }
+.host-onboarding span { display:block; font-size:12px; line-height:1.6; color:#526a62; }
+.host-table-note { margin:0; padding:14px 24px; font-size:12px; color:#61746b; border-bottom:1px solid var(--line); }
+.host-selection-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:14px 24px; border-bottom:1px solid var(--line); }
+.host-selection-bar strong { display:block; font-size:12px; font-weight:600; }
+.host-selection-bar small { display:block; margin-top:6px; font-size:11px; line-height:1.6; color:#61746b; }
+.host-selection-bar>div:last-child { display:flex; gap:8px; }
+.pool-table .host-select-cell { padding-right:4px; }
+.host-select-cell input { width:17px; height:17px; accent-color:var(--green); cursor:pointer; }
+.pool-table td { vertical-align:top; }
+.host-connection-cell { min-width:225px; max-width:310px; }
+.host-connection-cell>.button { margin-top:10px; font-size:10px; }
+.host-next-step { margin-top:8px; font-size:11px; }
+.host-next-step summary { cursor:pointer; color:var(--green); }
+.host-next-step p { margin:8px 0 0; font-size:11px; line-height:1.6; }
+.host-dialog { width:min(640px,calc(100vw - 32px)); max-height:calc(100dvh - 40px); overflow-y:auto; }
+.host-dialog textarea { width:100%; resize:vertical; line-height:1.6; }
+.host-dialog small { display:block; color:#62766e; font-size:11px; line-height:1.6; margin-top:6px; }
+.host-dialog .subtle-note { margin:12px 0; color:#62766e; }
+.host-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+.host-form-grid>div { min-width:0; }
+.host-form-details { border-top:1px solid var(--line); padding:16px 0 0; margin:18px 0; }
+.host-form-details summary { cursor:pointer; font-size:12px; font-weight:600; }
+.host-import-preview { margin-top:18px; padding:16px; border:1px solid #c9ddd2; border-radius:7px; background:#f1f7f3; }
+.host-import-preview strong { font-size:13px; }
+.host-import-preview p { font-size:12px; margin:8px 0; }
+.host-import-preview ul { padding-left:20px; max-height:160px; overflow-y:auto; font-size:12px; line-height:1.8; overflow-wrap:anywhere; }
+@media(max-width:900px) { .host-page-actions { max-width:240px; } }
+@media(max-width:730px) {
+  .host-onboarding { grid-template-columns:minmax(0,1fr); gap:16px; padding:18px; }
+  .host-form-grid { grid-template-columns:minmax(0,1fr); gap:0; }
+  .host-page-actions { max-width:180px; }
+}
 .native-grid { display:grid; grid-template-columns:minmax(0, .85fr) minmax(0, 1.15fr); gap:24px; }
 #native-question { min-height:130px; }
 #native-question-form { margin-bottom:16px; }

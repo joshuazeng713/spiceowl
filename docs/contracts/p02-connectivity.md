@@ -2,6 +2,8 @@
 
 Scope: explicit, bounded SSH identity/tool-version probes and a stdio MCP server that reads SpiceOwl state. No simulation submission, cancellation, netlisting, OCEAN evaluation, daemon control, or model inference. The existing synthetic runs and fake AI backends remain labeled as synthetic.
 
+Later extension: [host onboarding](../host-onboarding.md) adds explicit browser registration and pool import. The original no-HTTP-registration boundary below describes P0.2; the new endpoints persist the same strict profiles and remain separate from active checks.
+
 ## Private host profiles and observations
 
 `spiceowl.adapters.hosts.validate_host_profile(data) -> dict` validates a strict JSON object:

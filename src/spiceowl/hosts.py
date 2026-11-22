@@ -85,6 +85,28 @@ class HostRegistry:
         record = profile | {"created_at": utcnow(), "revision": 1, "synthetic": False, "last_probe": None, "last_resources": None}
         return self.store.create("host", record["host_id"], record)
 
+    def register(self, data):
+        """Register an exact profile once; an identical browser retry is a read.
+
+        The profile ID is the local operation identity. Reusing it for different
+        input is a conflict, never an implicit configuration change. Existing
+        probe observations and creation metadata survive an identical retry.
+        """
+        from spiceowl.adapters.hosts import validate_host_profile
+        profile = validate_host_profile(data)
+        with self.store.transaction() as db:
+            row = db.execute("SELECT body FROM records WHERE kind='host' AND id=?",
+                             (profile["host_id"],)).fetchone()
+            if row is not None:
+                record = json.loads(row[0])
+                if profile_from_record(record) != profile:
+                    raise DomainError("This host ID is already registered with different settings. Use a new ID for a different profile.", "conflict")
+                return host_summary(record), False
+            record = profile | {"created_at": utcnow(), "revision": 1, "synthetic": False,
+                                "last_probe": None, "last_resources": None}
+            self.store._put(db, "host", profile["host_id"], record)
+        return host_summary(record), True
+
     def import_pool(self, template_id, names):
         """Register only explicitly supplied hostnames using an existing route."""
         from spiceowl.adapters.hosts import validate_host_profile
@@ -120,6 +142,17 @@ class HostRegistry:
     def inspect(self, host_id):
         return self.store.get("host", require_id(host_id, "host ID"))
 
+    def _selected_records(self, host_ids):
+        """Validate one explicit batch before probing or evaluating any host."""
+        if (not isinstance(host_ids, list) or not 1 <= len(host_ids) <= 32
+                or any(not isinstance(i, str) for i in host_ids) or len(set(host_ids)) != len(host_ids)):
+            raise DomainError("Select 1–32 distinct registered host IDs.")
+        ids = [require_id(identifier, "host ID") for identifier in host_ids]
+        records = {record["host_id"]: record for record in self.store.list("host")}
+        if any(identifier not in records for identifier in ids):
+            raise DomainError("A selected host is not registered.", "not_found")
+        return [records[identifier] for identifier in ids]
+
     @contextmanager
     def _guard(self, host_id):
         host_id = require_id(host_id, "host ID")
@@ -154,10 +187,7 @@ class HostRegistry:
     def scan(self, host_ids=None):
         from spiceowl.adapters.hosts import probe_host, probe_resources
         ids = host_ids if host_ids is not None else [h["host_id"] for h in self.store.list("host")]
-        if not isinstance(ids, list) or not 1 <= len(ids) <= 32 or any(not isinstance(i, str) for i in ids) or len(set(ids)) != len(ids):
-            raise DomainError("A pool scan needs 1–32 distinct registered hosts.")
-        for host_id in ids:
-            self.inspect(host_id)
+        ids = [record["host_id"] for record in self._selected_records(ids)]
         started = utcnow()
         deadline = time.monotonic() + 120
         def scan_one(host_id):
@@ -172,7 +202,8 @@ class HostRegistry:
                     else:
                         resources = {"host_id": host_id, "scope": "host_resources", "synthetic": False, "observed_at": utcnow(),
                                      "transport": "unknown", "identity": {"verified": False}, "resources": {},
-                                     "error": {"code": "identity_unverified", "message": "Resource check requires verified SSH identity."}}
+                                     "error": _summary_error(probe.get("error")) or {
+                                         "code": "identity_unverified", "message": "Resource check requires verified SSH identity."}}
                     self.store.update("host", host_id, lambda h: h | {"last_resources": resources})
                     return {"host_id": host_id, "error": resources.get("error")}
             except (DomainError, OSError):
@@ -187,6 +218,7 @@ class HostRegistry:
         return {"started_at": started, "completed_at": utcnow(), "results": results,
                 "hosts": self.list(), "concurrency": 2, "simulation_actions": False}
 
-    def recommend(self, requirements):
+    def recommend(self, requirements, host_ids=None):
         from spiceowl.scheduling.placement import recommend_hosts
-        return recommend_hosts(self.store.list("host"), requirements)
+        records = self.store.list("host") if host_ids is None else self._selected_records(host_ids)
+        return recommend_hosts(records, requirements)

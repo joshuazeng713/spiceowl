@@ -6,7 +6,7 @@ import re
 
 from spiceowl import __version__
 from spiceowl.domain.common import DomainError, require_id, utcnow
-from spiceowl.storage.readonly import MAX_RECORDS
+from spiceowl.storage.readonly import MAX_RECORDS, require_ic_run_id
 from spiceowl.domain.connectivity import resource_summary
 
 
@@ -44,6 +44,10 @@ _READINESS = {
     "inference_access": {"unverified", "verified_for_request", "denied", "rate_limited", "unknown"},
     "isolation": {"synthetic_only", "unchecked", "blocked"},
 }
+_IC_ARTIFACTS = {"full-results.tar.gz", "result-summary.json", "archive-files.json",
+                 "latest-status.log", "waveforms.csv", "waveforms.json", "waveforms.png"}
+_IC_ISSUES = {"observation_missing", "compiled_hash_missing", "project_unregistered", "error",
+              "status_error", "operation_error", "postprocess_error", "synthetic_fixture"}
 
 
 def _text(value, limit):
@@ -152,6 +156,99 @@ def _probe_error(error):
     return {"code": "stored_probe_error", "message": "Stored connectivity probe reported an error."}
 
 
+def _ic_error(value):
+    if not isinstance(value, dict):
+        return None
+    return {"code": "stored_ic_observation_error", "message": "The saved IC observation records an error; no new query was made."}
+
+
+def _ic_observation(value):
+    raw = value if isinstance(value, dict) else {}
+    return {"state": _enum(raw.get("state"), {"readable", "unobserved", "recorded", "missing"}),
+            "source_state": _enum(raw.get("source_state"), {"recorded", "missing"}),
+            "observed_at": _timestamp(raw.get("observed_at")), "checked_at": _timestamp(raw.get("checked_at")),
+            "last_success_at": _timestamp(raw.get("last_success_at")), "error": _ic_error(raw.get("error"))}
+
+
+def _ic_hash(value, size=64):
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{%d}" % size, value):
+        raise DomainError("A stored IC identity digest is invalid.", "storage_record")
+    return value
+
+
+def _ic_summary(record):
+    raw_execution = record.get("execution") if isinstance(record.get("execution"), dict) else {}
+    raw_data = record.get("data") if isinstance(record.get("data"), dict) else {}
+    raw_specification = record.get("specification") if isinstance(record.get("specification"), dict) else {}
+    raw_state = raw_execution.get("raw_state")
+    native_state = raw_state if isinstance(raw_state, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", raw_state) else None
+    return {"run_id": require_ic_run_id(record.get("run_id")), "gateway_id": _id(record.get("gateway_id")),
+            "project_id": _text(record.get("project_id"), 180), "original_project_id": _text(record.get("original_project_id"), 240),
+            "association_basis": _enum(record.get("association_basis"), {"recorded_project_id", "recorded_plan_design_id"}),
+            "source_commit": _ic_hash(record.get("source_commit"), 40),
+            "configuration": _text(record.get("configuration"), 240),
+            "compiled_inputs_sha256": _ic_hash(record.get("compiled_inputs_sha256")),
+            "backend": "ic-workbench", "source": "stored_observations", "imported": True,
+            "synthetic": _boolean(record.get("synthetic")), "source_read_at": _timestamp(record.get("source_read_at")),
+            "first_seen_at": _timestamp(record.get("first_seen_at")),
+            "latest_observed_at": _timestamp(record.get("latest_observed_at")),
+            "record_updated_at": _timestamp(record.get("record_updated_at")),
+            "execution": {"state": _enum(raw_execution.get("state"), {"queued", "running", "succeeded", "failed", "unknown"}),
+                          "raw_state": native_state,
+                          "exit_code": raw_execution.get("exit_code") if type(raw_execution.get("exit_code")) is int else None,
+                          "observed_at": _timestamp(raw_execution.get("observed_at"))},
+            "observation": _ic_observation(record.get("observation")),
+            "data": {"state": _enum(raw_data.get("state"), {"not_collected", "collecting", "collected", "failed", "unknown"}),
+                     "raw_retained": _boolean(raw_data.get("raw_retained"))},
+            "measurement": {"state": "indeterminate", "reason": "measurement_validity_not_attested"},
+            "specification": {"state": _enum(raw_specification.get("state"), {"reported", "not_evaluated"})}}
+
+
+def _ic_detail(record):
+    result = _ic_summary(record)
+    source = record.get("specification") if isinstance(record.get("specification"), dict) else {}
+    metrics = source.get("metrics") if isinstance(source.get("metrics"), list) else []
+    values = []
+    for metric in metrics[:16]:
+        if not isinstance(metric, dict):
+            continue
+        value = metric.get("value")
+        if not (type(value) in (int, float) and abs(value) <= 1e300 and math.isfinite(value)):
+            value = None
+        values.append({"name": _text(metric.get("name"), 160), "value": value,
+                       "unit": _text(metric.get("unit"), 240), "passed": _boolean(metric.get("passed")),
+                       "scope": _text(metric.get("scope"), 240)})
+    result["specification"].update(metrics=values, metrics_truncated=len(metrics) > 16)
+    issues = record.get("issues") if isinstance(record.get("issues"), list) else []
+    result["issues"] = [{"code": _enum(issue.get("code"), _IC_ISSUES),
+                         "message": "A stored IC issue was reported; its text is not exported by this reader."}
+                        for issue in issues[:8] if isinstance(issue, dict)]
+    result["issues_truncated"] = len(issues) > 8
+    raw_artifacts = record.get("artifacts") if isinstance(record.get("artifacts"), list) else []
+    artifacts = []
+    for artifact in raw_artifacts[:7]:
+        if not isinstance(artifact, dict):
+            continue
+        name = artifact.get("name")
+        if not isinstance(name, str) or name not in _IC_ARTIFACTS:
+            continue
+        url = "/api/jobs/" + result["run_id"] + "/artifacts/" + name
+        if artifact.get("url") != url:
+            continue
+        digest = artifact.get("sha256")
+        digest = digest if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) else None
+        artifacts.append({"name": name, "bytes": _number(artifact.get("bytes"), 2**63 - 1), "sha256": digest,
+                          "url": url, "digest_source": "stored_record" if digest else "unavailable"})
+    result["artifacts"] = artifacts
+    result["artifacts_omitted"] = len(raw_artifacts) - len(artifacts)
+    result["artifact_scope"] = "stored_metadata_only_not_freshly_verified"
+    waveform_id = record.get("waveform_run_id")
+    result["waveform_run_id"] = waveform_id if waveform_id == result["run_id"] and result["source_commit"] is not None else None
+    return result
+
+
 class ReadViews:
     def __init__(self, store):
         self.store = store
@@ -161,7 +258,8 @@ class ReadViews:
             version=__version__, schema_version=1, mode="read_only_mcp",
             counts=self.store.counts(), counts_scope="stored_rows_including_deleted_connections",
             capabilities={"stored_state_reads": True, "ssh": False, "probe": False,
-                          "inference": False, "simulation_actions": False, "controller_recovery": False},
+                          "inference": False, "simulation_actions": False, "controller_recovery": False,
+                          "ic_cached_reads": True, "ic_gateway_sync": False},
         )
 
     def list_runs(self):
@@ -237,3 +335,23 @@ class ReadViews:
                            "last_resources": resource_summary(record.get("last_resources"))})
         return _envelope(hosts=result, limit=MAX_RECORDS, truncated=page["truncated"],
                          scope="stored_connectivity_metadata_only")
+
+    def list_ic_gateways(self):
+        page = self.store.list_ic_gateways()
+        gateways = [{"gateway_id": _id(record.get("id")), "label": _text(record.get("label"), 80),
+                     "project_id": _text(record.get("project_id"), 180), "backend": "ic-workbench",
+                     "created_at": _timestamp(record.get("created_at")),
+                     "observation": _ic_observation(record.get("observation"))} for record in page["records"]]
+        return _envelope(gateways=gateways, limit=page["limit"], truncated=page["truncated"],
+                         scope="stored_ic_gateway_metadata_only")
+
+    def list_ic_runs(self, gateway_id):
+        page = self.store.list_ic_runs(gateway_id)
+        return _envelope(gateway_id=gateway_id, runs=[_ic_summary(record) for record in page["records"]],
+                         limit=page["limit"], truncated=page["truncated"], scope="stored_ic_run_projections",
+                         active_query_performed=False, simulation_actions=False)
+
+    def get_ic_run(self, gateway_id, run_id):
+        record = self.store.get_ic_run(gateway_id, run_id)
+        return _envelope(run=_ic_detail(record), scope="stored_ic_run_projection",
+                         active_query_performed=False, simulation_actions=False)

@@ -72,10 +72,12 @@ class Controller:
 
     def plan_execution(self, data):
         from spiceowl.scheduling.origins import plan_execution, validate_origin
-        if not isinstance(data, dict) or set(data) != {"origin", "requirements"}:
-            raise DomainError("An execution plan needs origin and requirements.")
+        if not isinstance(data, dict) or set(data) not in ({"origin", "requirements"}, {"origin", "requirements", "host_ids"}):
+            raise DomainError("An execution plan needs origin and requirements, with an optional host_ids list.")
+        if "host_ids" in data and not isinstance(data["host_ids"], list):
+            raise DomainError("Execution plan host_ids must be a list of registered host IDs.")
         origin = validate_origin(data["origin"])
-        placement = self.hosts.recommend(data["requirements"])
+        placement = self.hosts.recommend(data["requirements"], data.get("host_ids"))
         return plan_execution(origin, placement)
 
     def add_connection(self, data):

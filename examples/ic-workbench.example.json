@@ -1,0 +1,6 @@
+{
+  "id": "ic-example",
+  "label": "IC Workbench example",
+  "base_url": "http://127.0.0.1:8766",
+  "project_id": "example-project"
+}

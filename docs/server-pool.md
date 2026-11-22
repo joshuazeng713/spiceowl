@@ -8,6 +8,8 @@ All names, references, paths, and numeric examples below are fictional. Keep act
 
 ## Register only the hosts you select
 
+The browser's **Add host** and **Import pool** forms provide the same registration workflow without editing JSON. Pool import previews the selected names before saving; registration makes no network calls. See [host onboarding](host-onboarding.md) for fields, duplicate handling and connection diagnostics.
+
 Start with an existing host profile imported through `hosts add --file`, as described in the [real connection guide](real-connections.md). Its `host_id` can serve as a route template. The pool import takes an explicit list of hostnames:
 
 ```bash

@@ -1,0 +1,8 @@
+// Original toy MOS level-1 models for a connectivity and waveform smoke test.
+// These values are not fitted to a fabrication process and use no PDK files.
+simulator lang=spectre
+
+model owl_nmos mos1 type=n vto=0.4 kp=120u gamma=0 phi=0.7 \
+    lambda=0.02 tox=10n
+model owl_pmos mos1 type=p vto=-0.4 kp=60u gamma=0 phi=0.7 \
+    lambda=0.02 tox=10n

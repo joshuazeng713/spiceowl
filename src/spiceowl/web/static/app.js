@@ -16,6 +16,9 @@ let requestedCpus = 4, requestedMemory = 8, requestedSimulator = 'spectre';
 let plannedKind = 'standalone', plannedReference = '', plannedHost = '';
 let nativeAgentId = '', nativeQuestion = 'SSH 断开是否一定意味着 Spectre 仿真失败？请用一句话回答。';
 let selectedQa = null, qaView = null, qaPolling = false, qaSubmitting = false;
+let poolImportPreview = null;
+let selectedHostIds = null;
+let hostSelectionRevision = 0, planningBusy = false;
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -101,21 +104,21 @@ function connections() {
 }
 
 function hosts() {
-  let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Compare saved resource observations and plan where a new exported-netlist job could run.', `<button class="button primary" data-action="pool-scan" ${poolScanning || !state.hosts.length ? 'disabled' : ''}>${poolScanning ? 'Checking pool…' : 'Check server pool'}</button>`);
+  syncHostSelection();
+  const count = selectedHostIds?.size || 0;
+  let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Register your servers, verify each connection, then compare saved resource observations.', `<div class="host-page-actions"><button class="button secondary" data-action="add-host">＋ Add host</button><button class="button secondary" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button primary" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>`);
+  html += `<div class="host-onboarding"><div><strong>1. Register</strong><span>Add an existing SSH alias or import a list using a route template.</span></div><div><strong>2. Verify</strong><span>Check the route, SSH trust and remote identity for each host.</span></div><div><strong>3. Check resources</strong><span>Run a pool check when you need fresh CPU and memory observations.</span></div></div>`;
   html += poolOverview();
-  html += `<div class="watch-banner"><img src="/owl.svg" alt=""><div><h3>Your existing SSH route.</h3><p>Import a private host profile with <code>spiceowl hosts add --file PROFILE.json</code>. SSH keys and jump hosts remain in your SSH configuration.</p></div></div>`;
-  if (!state.hosts.length) html += `<div class="empty"><h2>No simulation hosts registered.</h2><p>Add a profile through the CLI, then refresh this page. Adding or listing hosts makes no remote request.</p></div>`;
+  if (!state.hosts.length) html += `<div class="empty"><h2>No simulation hosts registered.</h2><p>Add a host to start. Registration saves local configuration; Check connection is a separate action.</p><button class="button primary" data-action="add-host">Add your first host</button></div>`;
   html += `<details class="host-details" ${state.hosts.length <= 1 ? 'open' : ''}><summary>Host identity and tool versions</summary><div class="connections-list">${state.hosts.map(host => {
     const probe = host.last_probe;
-    const matched = probe?.identity?.verified === true;
-    const when = probe ? new Date(probe.observed_at).toLocaleString() : 'Never checked';
-    const status = !probe ? 'not checked' : probe.error ? 'check incomplete' : matched ? 'identity matched' : 'identity unverified';
-    const fields = [['SSH transport', probe?.transport || 'unchecked'], ['Host identity', matched ? 'matched at last check' : 'unverified'], ['Scope', 'connectivity only'], ['Simulation readiness', 'not tested']];
+    const evidence = connectionEvidence(host), status = connectionStatus(evidence);
+    const fields = [['SSH transport', evidence?.transport || 'unchecked'], ['Host identity', evidence?.identity?.verified === true ? 'matched at last check' : 'unverified'], ['Tool check', observationTime(probe)], ['Simulation readiness', 'not tested']];
     const toolRows = host.tools.map(tool => {
       const result = probe?.tools?.find(item => item.kind === tool.kind);
       return `<div class="host-tool"><strong>${escape(title(tool.kind))}</strong>${chip(result?.status || 'unchecked', result?.status === 'available' ? 'green' : result ? 'amber' : '')}<span class="host-version">${escape(result?.version || 'Version unverified')}</span>${result?.error ? `<p class="error-text">${escape(result.error.message)}</p>` : ''}</div>`;
     }).join('');
-    return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">▤</div><div class="connection-name"><h3>${escape(host.label)} ${chip(status, matched && !probe.error ? 'green' : probe ? 'amber' : '')}</h3><p>Real connection · ${escape(host.host_id)}</p></div><div class="connection-actions"><button class="button primary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></div></div><div class="connection-readiness">${fields.map(([label, value]) => `<div class="readiness-field"><span>${label}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="host-tools">${toolRows}</div>${probe?.error ? `<div class="host-error">${escape(probe.error.message)}</div>` : ''}<div class="connection-bottom"><span>Last check: ${escape(when)}</span><span>Saved result · no automatic polling</span></div></article>`;
+    return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">▤</div><div class="connection-name"><h3>${escape(host.label)} ${chip(status.label, status.color)}</h3><p>Registered host · ${escape(host.host_id)}</p></div><div class="connection-actions"><button class="button primary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></div></div><div class="connection-readiness">${fields.map(([label, value]) => `<div class="readiness-field"><span>${label}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="host-tools">${toolRows || '<p class="subtle-note">No simulator executable configured. Connection checks verify identity only.</p>'}</div>${status.help ? `<div class="host-error">${escape(status.help)}</div>` : ''}<div class="connection-bottom"><span>Connection evidence: ${escape(observationTime(evidence))}</span><span>Saved result · no automatic remote polling</span></div></article>`;
   }).join('')}</div></details>`;
   return html + `<div class="planned-note"><strong>Plans preserve simulation ownership.</strong><p>A new standalone job can receive a proposed host. An existing Virtuoso-managed run retains its original host and native run reference. These plans do not reserve resources or launch a simulation; input, environment and license checks still belong to submission.</p></div>`;
 }
@@ -124,16 +127,118 @@ function metric(value, suffix = '', digits = 1) {
   return Number.isFinite(value) ? `${escape(value.toFixed(digits))}${suffix}` : 'Unknown';
 }
 
+function syncHostSelection() {
+  // A newly registered host must not silently expand an established selection.
+  if (selectedHostIds === null && state.hosts.length) selectedHostIds = new Set(state.hosts.length <= 32 ? state.hosts.map(host => host.host_id) : []);
+  if (selectedHostIds !== null) {
+    const registered = new Set(state.hosts.map(host => host.host_id));
+    selectedHostIds = new Set([...selectedHostIds].filter(id => registered.has(id)));
+  }
+}
+
+function hostSelectionLabel() {
+  const count = selectedHostIds?.size || 0;
+  return `${count} of ${state.hosts.length} hosts selected · maximum 32 per check or plan${count > 32 ? ' · Reduce the selection to continue' : ''}`;
+}
+
+function selectedPoolIds() {
+  syncHostSelection();
+  const ids = state.hosts.filter(host => selectedHostIds?.has(host.host_id)).map(host => host.host_id);
+  if (!ids.length || ids.length > 32) throw new Error('Select 1–32 hosts in the table before checking resources or preparing a placement plan.');
+  return ids;
+}
+
+function hostPlanScope() {
+  return `Placement scope: ${selectedHostIds?.size || 0} selected host(s). Choose 1–32 rows above. An existing native run keeps its original host even when that host is outside this selection.`;
+}
+
+function invalidateHostPlans() {
+  hostSelectionRevision++;
+  placement = null; executionPlan = null;
+  const result = $('.placement-result');
+  if (result) result.innerHTML = '<p class="subtle-note">Selection changed. Evaluate the selected hosts again to prepare a new recommendation or plan.</p>';
+  $('.pool-placement .plan-summary')?.remove();
+}
+
+function updateHostSelectionUI() {
+  syncHostSelection();
+  const count = selectedHostIds?.size || 0, label = $('#host-selection-count');
+  if (label) label.textContent = hostSelectionLabel();
+  document.querySelectorAll('[data-host-select]').forEach(input => {
+    input.checked = selectedHostIds?.has(input.dataset.hostSelect) || false;
+    input.disabled = poolScanning;
+  });
+  const scan = $('[data-action="pool-scan"]');
+  if (scan) scan.disabled = poolScanning || !count || count > 32;
+  const scope = $('#placement-scope');
+  if (scope) scope.textContent = hostPlanScope();
+  document.querySelectorAll('#placement-form [type="submit"], #execution-plan-form [type="submit"]').forEach(button => {
+    button.disabled = planningBusy || poolScanning || !count || count > 32;
+  });
+  const all = $('[data-action="host-select-all"]'), none = $('[data-action="host-select-none"]');
+  if (all) all.disabled = poolScanning || !state.hosts.length || state.hosts.length > 32;
+  if (none) none.disabled = poolScanning || !count;
+}
+
+function observationTime(observation) {
+  if (!observation) return 'Never checked';
+  const time = Date.parse(observation.observed_at);
+  return Number.isFinite(time) ? new Date(time).toLocaleString() : 'Timestamp unavailable';
+}
+
+function connectionEvidence(host) {
+  const observations = [host.last_probe, host.last_resources].filter(Boolean);
+  const now = Date.now();
+  const valid = observation => Number.isFinite(Date.parse(observation.observed_at)) && Date.parse(observation.observed_at) <= now;
+  return observations.sort((a, b) => Number(valid(b)) - Number(valid(a)) || (valid(a) && valid(b) ? Date.parse(b.observed_at) - Date.parse(a.observed_at) : 0))[0] || null;
+}
+
+function connectionStatus(observation) {
+  if (!observation) return {label: 'Never checked', color: '', help: ''};
+  const stamp = Date.parse(observation.observed_at);
+  if (!Number.isFinite(stamp) || stamp > Date.now()) return {label: 'Timestamp invalid', color: 'amber', help: 'This observation has an invalid or future timestamp. Check the clock and obtain a new connection observation.'};
+  const guidance = {
+    ssh_host_key_unverified: ['Trust pending', 'Verify the server fingerprint with your administrator or another trusted source, establish SSH trust, then check again. Your login key is a separate identity.'],
+    ssh_host_key_changed: ['Host key changed', 'Ask the administrator to verify the changed server identity before updating its trust record.'],
+    ssh_permission_denied: ['Authentication denied', 'Check the SSH alias, remote account and authorized login key, including the jump host.'],
+    ssh_config_invalid: ['SSH configuration error', 'Review the selected alias and the SSH configuration on the computer running SpiceOwl.'],
+    ssh_name_resolution_failed: ['Name resolution failed', 'Check the target and jump-host names and the required VPN or internal DNS.'],
+    ssh_network_unreachable: ['Route unavailable', 'Check the network, VPN and jump-host route. The failing hop is not yet identified.'],
+    ssh_connection_refused: ['Connection refused', 'Check the SSH service and port on the target and jump hosts.'],
+    ssh_connection_timeout: ['Connection timed out', 'Check network access, VPN and the jump-host route, then retry the bounded check.'],
+    ssh_connection_lost: ['Connection lost', 'The SSH connection closed before the check completed. Simulation state remains unknown.'],
+    probe_timeout: ['Check timed out', 'The bounded check did not finish. Review the route and server responsiveness before checking again.'],
+    identity_mismatch: ['Identity mismatch', 'The returned hostname or username differs from the registered identity. Review the target mapping before proceeding.'],
+    identity_unverified: ['Identity unverified', 'Verify the connection and registered hostname and username before reading resources.'],
+  };
+  if (observation.error) {
+    const [label, help] = guidance[observation.error.code] || ['Check incomplete', observation.error.message || 'Inspect the saved connection error.'];
+    return {label, help, color: observation.error.code === 'ssh_host_key_changed' || observation.error.code === 'identity_mismatch' ? 'red' : 'amber'};
+  }
+  if (observation.synthetic !== false || observation.transport !== 'reachable' || observation.identity?.verified !== true) return {label: 'Identity unverified', color: 'amber', help: 'A verified remote identity has not been established by this observation.'};
+  return {label: 'Verified at last check', color: 'green', help: ''};
+}
+
+function resourceStatus(sample) {
+  if (!sample) return {label: 'No resource check', color: ''};
+  if (sample.error) return {label: 'Resource check failed', color: 'amber'};
+  if (sample.synthetic !== false || sample.transport !== 'reachable' || sample.identity?.verified !== true) return {label: 'Resource identity unverified', color: 'amber'};
+  const age = (Date.now() - Date.parse(sample.observed_at)) / 1000;
+  if (!Number.isFinite(age) || age < 0) return {label: 'Timestamp invalid', color: 'amber'};
+  if (age > 120) return {label: 'Resource data stale', color: 'amber'};
+  const keys = ['cpu_count', 'cpu_busy_percent', 'load_1m', 'load_5m', 'memory_total_bytes', 'memory_available_bytes', 'home_disk_available_bytes'];
+  if (keys.some(key => !Number.isFinite(sample.resources?.[key]))) return {label: 'Resource data incomplete', color: 'amber'};
+  return {label: 'Recent resource sample', color: 'green'};
+}
+
 function poolOverview() {
   const rows = state.hosts.map(host => {
     const sample = host.last_resources, r = sample?.resources || {};
-    const age = sample?.observed_at ? (Date.now() - Date.parse(sample.observed_at)) / 1000 : NaN;
-    const known = sample?.identity?.verified && !sample.error && age >= 0 && age <= 120;
-    const issue = host.last_probe?.error || sample?.error;
-    return `<tr><th scope="row">${escape(host.label)}<small>${escape(host.host_id)}</small></th><td>${metric(r.cpu_busy_percent, '%')}<small>${metric(r.cpu_count, ' CPUs', 0)}</small></td><td>${metric(r.load_1m)} / ${metric(r.load_5m)}</td><td>${metric(Number.isFinite(r.memory_available_bytes) ? r.memory_available_bytes / 2**30 : null, ' GiB')}<small>of ${metric(Number.isFinite(r.memory_total_bytes) ? r.memory_total_bytes / 2**30 : null, ' GiB')}</small></td><td>${chip(known ? 'recent observation' : sample ? 'unknown or stale' : 'not checked', known ? 'green' : 'amber')}<small>${sample?.observed_at ? escape(new Date(sample.observed_at).toLocaleTimeString()) : 'No resource sample'}</small>${issue ? `<small>${escape(issue.message)}</small>` : ''}</td></tr>`;
+    const evidence = connectionEvidence(host), connection = connectionStatus(evidence), resources = resourceStatus(sample);
+    return `<tr><td class="host-select-cell"><input type="checkbox" data-host-select="${escape(host.host_id)}" aria-label="Select ${escape(host.label)} for pool check" ${selectedHostIds?.has(host.host_id) ? 'checked' : ''} ${poolScanning ? 'disabled' : ''}></td><th scope="row">${escape(host.label)}<small>${escape(host.host_id)}</small></th><td class="host-connection-cell">${chip(connection.label, connection.color)}<small>Connection: ${escape(observationTime(evidence))}</small>${connection.help ? `<details class="host-next-step"><summary>Next step</summary><p>${escape(connection.help)}</p></details>` : ''}<button class="button secondary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></td><td>${metric(r.cpu_busy_percent, '%')}<small>${metric(r.cpu_count, ' CPUs', 0)}</small></td><td>${metric(r.load_1m)} / ${metric(r.load_5m)}</td><td>${metric(Number.isFinite(r.memory_available_bytes) ? r.memory_available_bytes / 2**30 : null, ' GiB')}<small>of ${metric(Number.isFinite(r.memory_total_bytes) ? r.memory_total_bytes / 2**30 : null, ' GiB')}</small></td><td data-resource-status="${escape(host.host_id)}">${chip(resources.label, resources.color)}<small>Resources: ${escape(observationTime(sample))}</small>${sample?.error ? `<small>${escape(sample.error.message)}</small>` : ''}</td></tr>`;
   }).join('');
-  let html = `<section class="panel"><div class="panel-head"><h2>Resource observations</h2><span class="section-note">Two hosts checked at a time · manual refresh</span></div><div class="pool-table-wrap"><table class="pool-table"><thead><tr><th>Host</th><th>CPU busy</th><th>Load 1m / 5m</th><th>Memory available</th><th>Observation</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No registered hosts.</td></tr>'}</tbody></table></div></section>`;
-  html += `<section class="panel pool-placement"><div class="panel-head"><h2>Plan a new execution</h2><span class="chip">NO RESERVATION</span></div><div class="panel-body"><form id="placement-form" class="placement-form"><div><label for="pool-cpus">Requested CPUs</label><input id="pool-cpus" name="cpus" type="number" min="1" max="4096" value="${requestedCpus}" required></div><div><label for="pool-memory">Memory (GiB)</label><input id="pool-memory" name="memory" type="number" min="0.001" step="any" max="1048576" value="${requestedMemory}" required></div><div><label for="pool-simulator">Simulator</label><select id="pool-simulator" name="simulator"><option value="spectre" ${requestedSimulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${requestedSimulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></div><button class="button secondary" type="submit">Evaluate saved data</button></form><div class="placement-result">${placement ? `<strong>${placement.recommended_host_id ? 'Proposed host: ' + escape(placement.recommended_host_id) : 'No eligible host in this snapshot'}</strong><p class="subtle-note">Evaluation: ${escape(new Date(placement.evaluated_at).toLocaleString())} · ${placement.candidates.length} candidate(s). Resource observations expire; this does not reserve the host.</p><ul>${placement.excluded.map(h => `<li>${escape(h.label || h.host_id)}: ${escape(h.reasons.join('; '))}</li>`).join('')}</ul>` : '<p class="subtle-note">Set requirements, then evaluate recent saved observations. Unknown nodes are excluded.</p>'}</div><form id="execution-plan-form" class="execution-plan-form"><label for="execution-kind">Simulation origin</label><select id="execution-kind" name="kind"><option value="standalone">New standalone exported netlist</option><option value="virtuoso_managed">Existing Virtuoso-managed run</option></select><label for="execution-ref">Experiment input reference / native run reference</label><input id="execution-ref" name="reference" maxlength="96" placeholder="experiment-rc-check" required><label for="execution-host">Existing native host (Virtuoso only)</label><select id="execution-host" name="host">${state.hosts.map(h => `<option value="${escape(h.host_id)}">${escape(h.label)}</option>`).join('')}</select><button class="button secondary" type="submit">Prepare reviewable plan</button></form>${executionPlan ? planSummary(executionPlan) : ''}</div></section>`;
+  let html = `<section class="panel"><div class="panel-head"><h2>Connections and resources</h2><span class="section-note">Two hosts checked at a time · explicit checks</span></div><p class="host-table-note">Listed hosts are registered candidates. Resource values are saved samples and expire after two minutes; unknown values do not mean idle. No automatic remote polling.</p><div class="host-selection-bar"><div><strong id="host-selection-count" role="status">${escape(hostSelectionLabel())}</strong><small>${state.hosts.length > 32 ? 'Choose the hosts for this check using the row checkboxes. No partial pool is chosen automatically.' : 'Only checked rows will be contacted. New registrations are not added to your existing selection.'}</small></div><div><button class="button secondary small" data-action="host-select-all" ${poolScanning || !state.hosts.length || state.hosts.length > 32 ? 'disabled' : ''}>Select all</button><button class="button secondary small" data-action="host-select-none" ${poolScanning || !selectedHostIds?.size ? 'disabled' : ''}>Clear selection</button></div></div><div class="pool-table-wrap"><table class="pool-table"><thead><tr><th scope="col">Select</th><th>Host</th><th>Connection evidence</th><th>CPU busy</th><th>Load 1m / 5m</th><th>Memory available</th><th>Resource evidence</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No registered hosts.</td></tr>'}</tbody></table></div></section>`;
+  html += `<section class="panel pool-placement"><div class="panel-head"><h2>Plan a new execution</h2><span class="chip">NO RESERVATION</span></div><div class="panel-body"><p id="placement-scope" class="subtle-note">${escape(hostPlanScope())}</p><form id="placement-form" class="placement-form"><div><label for="pool-cpus">Requested CPUs</label><input id="pool-cpus" name="cpus" type="number" min="1" max="4096" value="${requestedCpus}" required></div><div><label for="pool-memory">Memory (GiB)</label><input id="pool-memory" name="memory" type="number" min="0.001" step="any" max="1048576" value="${requestedMemory}" required></div><div><label for="pool-simulator">Simulator</label><select id="pool-simulator" name="simulator"><option value="spectre" ${requestedSimulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${requestedSimulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></div><button class="button secondary" type="submit">Evaluate saved data</button></form><div class="placement-result">${placement ? `<strong>${placement.recommended_host_id ? 'Proposed host: ' + escape(placement.recommended_host_id) : 'No eligible host in this snapshot'}</strong><p class="subtle-note">Evaluation: ${escape(new Date(placement.evaluated_at).toLocaleString())} · ${placement.candidates.length} candidate(s). Resource observations expire; this does not reserve the host.</p><ul>${placement.excluded.map(h => `<li>${escape(h.label || h.host_id)}: ${escape(h.reasons.join('; '))}</li>`).join('')}</ul>` : '<p class="subtle-note">Set requirements, select 1–32 hosts above, then evaluate their saved observations. Unknown nodes are excluded.</p>'}</div><form id="execution-plan-form" class="execution-plan-form"><label for="execution-kind">Simulation origin</label><select id="execution-kind" name="kind"><option value="standalone">New standalone exported netlist</option><option value="virtuoso_managed">Existing Virtuoso-managed run</option></select><label for="execution-ref">Experiment input reference / native run reference</label><input id="execution-ref" name="reference" maxlength="96" placeholder="experiment-rc-check" required><label for="execution-host">Existing native host (Virtuoso only)</label><select id="execution-host" name="host">${state.hosts.map(h => `<option value="${escape(h.host_id)}">${escape(h.label)}</option>`).join('')}</select><button class="button secondary" type="submit">Prepare reviewable plan</button></form>${executionPlan ? planSummary(executionPlan) : ''}</div></section>`;
   return html;
 }
 
@@ -217,6 +322,7 @@ function render() {
     $('#execution-kind').value = plannedKind;
     $('#execution-ref').value = plannedReference;
     if (plannedHost) $('#execution-host').value = plannedHost;
+    updateHostSelectionUI();
   }
   if (page === 'agents') { renderNativeResponse(); if (selectedQa) pollNative(); }
 }
@@ -266,16 +372,36 @@ document.addEventListener('click', async event => {
     $('#connection-form').reset(); $('#form-error').textContent = ''; $('#connection-dialog').showModal(); return;
   }
   if (action === 'close-dialog') { $('#connection-dialog').close(); return; }
+  if (action === 'add-host') {
+    $('#host-form-error').textContent = ''; $('#host-dialog').showModal(); return;
+  }
+  if (action === 'close-host-dialog') { $('#host-dialog').close(); return; }
+  if (action === 'import-pool') {
+    const selected = $('#pool-template').value;
+    $('#pool-template').innerHTML = state.hosts.map(host => `<option value="${escape(host.host_id)}">${escape(host.label)} · ${escape(host.host_id)}</option>`).join('');
+    if (state.hosts.some(host => host.host_id === selected)) $('#pool-template').value = selected;
+    resetPoolPreview(); $('#pool-form-error').textContent = ''; $('#pool-dialog').showModal(); return;
+  }
+  if (action === 'close-pool-dialog') { $('#pool-dialog').close(); return; }
+  if (action === 'host-select-all') {
+    if (!poolScanning && state.hosts.length <= 32) { selectedHostIds = new Set(state.hosts.map(host => host.host_id)); invalidateHostPlans(); }
+    updateHostSelectionUI(); return;
+  }
+  if (action === 'host-select-none') {
+    if (!poolScanning) { selectedHostIds = new Set(); invalidateHostPlans(); }
+    updateHostSelectionUI(); return;
+  }
   button.disabled = true;
   const originalText = button.textContent;
   try {
     if (action === 'pool-scan') {
-      poolScanning = true; button.textContent = 'Checking pool…';
+      const host_ids = selectedPoolIds();
+      poolScanning = true; button.textContent = 'Checking selected hosts…'; updateHostSelectionUI();
       try {
-        const result = await api('/api/hosts/scan', {method: 'POST'});
+        const result = await api('/api/hosts/scan', {method: 'POST', body: {host_ids}});
         placement = null; executionPlan = null;
         toast(`Pool check saved. ${result.results.filter(r => r.error).length} host(s) remain unknown or incomplete.`);
-      } finally { poolScanning = false; }
+      } finally { poolScanning = false; updateHostSelectionUI(); }
     }
     if (action === 'native-probe') {
       button.textContent = 'Checking runtime…';
@@ -298,7 +424,7 @@ document.addEventListener('click', async event => {
     if (action === 'cancel') { await api(`/api/turns/${encodeURIComponent(id)}/cancel`, {method: 'POST'}); await pollSession(); return; }
     await refresh(); render();
   } catch (error) { toast(error.message); }
-  finally { if (button.isConnected) { button.disabled = false; button.textContent = originalText; } }
+  finally { if (button.isConnected) { button.disabled = false; button.textContent = originalText; } if (action === 'pool-scan') updateHostSelectionUI(); }
 });
 
 $('#connection-form').addEventListener('submit', async event => {
@@ -314,14 +440,92 @@ $('#connection-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 
+function resetPoolPreview() {
+  poolImportPreview = null;
+  $('#pool-import-preview').hidden = true;
+  $('#pool-import-preview').textContent = '';
+  $('#pool-import-submit').textContent = 'Review import';
+}
+
+function setHostFormBusy(form, busy) {
+  form.querySelectorAll('input, select, textarea, button').forEach(control => { control.disabled = busy; });
+}
+
+$('#host-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, fields = new FormData(form);
+  const profile = {schema: 'spiceowl.host.v1', tools: []};
+  for (const key of ['host_id', 'label', 'ssh_target', 'expected_host', 'expected_user']) profile[key] = fields.get(key).trim();
+  const override = fields.get('ssh_hostname').trim();
+  if (override) { profile.schema = 'spiceowl.host.v2'; profile.ssh_hostname = override; }
+  for (const kind of ['spectre', 'virtuoso', 'ngspice']) {
+    const executable = fields.get(kind).trim();
+    if (executable) profile.tools.push({kind, executable});
+  }
+  setHostFormBusy(form, true);
+  $('#host-form-error').textContent = '';
+  try {
+    await api('/api/hosts', {method: 'POST', body: profile});
+    $('#host-dialog').close(); form.reset();
+    placement = null; executionPlan = null;
+    await refresh(); render(); toast('Host registered locally. Use Check connection to verify it.');
+  } catch (error) {
+    if ($('#host-dialog').open) $('#host-form-error').textContent = error.message;
+    else toast(error.message + ' Refresh the host list to inspect saved registrations.');
+  }
+  finally { setHostFormBusy(form, false); }
+});
+
+$('#pool-import-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, fields = new FormData(form);
+  $('#pool-form-error').textContent = '';
+  try {
+    const names = fields.get('names').trim().split(/[\s,]+/).filter(Boolean);
+    if (!names.length || names.length > 32 || new Set(names).size !== names.length) throw new Error('Enter 1–32 distinct target hostnames.');
+    const label = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+    if (names.some(name => name.length > 253 || name.split('.').some(part => !label.test(part)))) throw new Error('Use explicit DNS hostnames: no wildcards, commands, user@host values or URLs.');
+    const request = {template_id: fields.get('template_id'), names};
+    if (!state.hosts.some(host => host.host_id === request.template_id)) throw new Error('Select an existing registered host as a route template.');
+    if (poolImportPreview !== JSON.stringify(request)) {
+      poolImportPreview = JSON.stringify(request);
+      const template = state.hosts.find(host => host.host_id === request.template_id);
+      $('#pool-import-preview').innerHTML = `<strong>Review ${names.length} target hostname(s)</strong><p>Route template: ${escape(template.label)} · ${escape(template.host_id)}</p><ul>${names.map(name => `<li>${escape(name)}</li>`).join('')}</ul><p>Matching existing registrations are reused. Every target needs an independent connection check.</p>`;
+      $('#pool-import-preview').hidden = false;
+      $('#pool-import-submit').textContent = 'Register listed hosts';
+      return;
+    }
+    setHostFormBusy(form, true);
+    await api('/api/hosts/import-pool', {method: 'POST', body: request});
+    $('#pool-dialog').close(); form.reset(); resetPoolPreview();
+    placement = null; executionPlan = null;
+    await refresh(); render(); toast('Pool registered locally. Use Check selected hosts to verify the hosts and resources.');
+  } catch (error) {
+    if ($('#pool-dialog').open) $('#pool-form-error').textContent = error.message;
+    else toast(error.message + ' Refresh the host list to inspect saved registrations.');
+  }
+  finally { setHostFormBusy(form, false); }
+});
+
 document.addEventListener('input', event => {
   if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
   if (event.target.id === 'native-question') nativeQuestion = event.target.value;
+  if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
 document.addEventListener('change', event => {
+  if (event.target.matches('[data-host-select]')) {
+    if (!poolScanning) {
+      selectedHostIds ??= new Set();
+      if (event.target.checked) selectedHostIds.add(event.target.dataset.hostSelect);
+      else selectedHostIds.delete(event.target.dataset.hostSelect);
+      invalidateHostPlans();
+    }
+    updateHostSelectionUI();
+  }
   if (event.target.id === 'diagnostic-connection') selectedConnection = event.target.value;
   if (event.target.id === 'native-agent') { nativeAgentId = event.target.value; selectedQa = null; qaView = null; render(); }
   if (event.target.id === 'session-picker') { selectedSession = event.target.value; sessionView = null; routeEpoch++; pollSession(); }
+  if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
 
 function placementRequirements() {
@@ -336,11 +540,16 @@ document.addEventListener('submit', async event => {
   const id = event.target.id;
   if (!['placement-form', 'execution-plan-form', 'native-question-form'].includes(id)) return;
   event.preventDefault();
+  if (id !== 'native-question-form' && planningBusy) return;
   const button = event.target.querySelector('[type=submit]');
   button.disabled = true;
   try {
     if (id === 'placement-form') {
-      placement = await api('/api/placement/recommend', {method: 'POST', body: placementRequirements()});
+      const host_ids = selectedPoolIds(), revision = hostSelectionRevision;
+      planningBusy = true; updateHostSelectionUI();
+      const result = await api('/api/placement/recommend', {method: 'POST', body: {...placementRequirements(), host_ids}});
+      if (revision !== hostSelectionRevision) throw new Error('The host selection changed during evaluation. Evaluate the selected hosts again.');
+      placement = result;
       executionPlan = null; render();
     } else if (id === 'execution-plan-form') {
       const form = new FormData(event.target), kind = form.get('kind'), reference = form.get('reference');
@@ -348,7 +557,11 @@ document.addEventListener('submit', async event => {
       const origin = kind === 'standalone' ? {kind, simulator: requestedSimulator, input_ref: reference} : {kind, simulator: 'spectre', host_id: form.get('host'), native_run_ref: reference};
       const requirements = placementRequirements();
       if (kind === 'standalone') origin.simulator = requirements.simulator;
-      executionPlan = await api('/api/execution/plan', {method: 'POST', body: {origin, requirements}});
+      const host_ids = selectedPoolIds(), revision = hostSelectionRevision;
+      planningBusy = true; updateHostSelectionUI();
+      const result = await api('/api/execution/plan', {method: 'POST', body: {origin, requirements, host_ids}});
+      if (revision !== hostSelectionRevision) throw new Error('The host selection changed during planning. Prepare a plan for the selected hosts again.');
+      executionPlan = result;
       render();
     } else {
       if (qaSubmitting) return;
@@ -371,7 +584,7 @@ document.addEventListener('submit', async event => {
   } catch (error) {
     if (id === 'native-question-form' && error.definitive) sessionStorage.removeItem('spiceowl.native-pending');
     toast(error.message);
-  } finally { qaSubmitting = false; if (button.isConnected) button.disabled = false; const send = $('#native-question-form [type=submit]'); if (send) send.disabled = false; }
+  } finally { qaSubmitting = false; if (button.isConnected) button.disabled = false; const send = $('#native-question-form [type=submit]'); if (send) send.disabled = false; if (id !== 'native-question-form') { planningBusy = false; updateHostSelectionUI(); } }
 });
 
 document.addEventListener('submit', async event => {
@@ -409,5 +622,14 @@ window.addEventListener('hashchange', async () => {
 });
 setInterval(() => { if (currentRun() && selectedSession && !document.hidden) pollSession(); }, 900);
 setInterval(() => { if (location.hash === '#agents' && selectedQa && !document.hidden && (!qaView || ['queued', 'running'].includes(qaView.status))) pollNative(); }, 1000);
+// Update the age label locally; this does not request another remote sample.
+setInterval(() => {
+  if (location.hash !== '#hosts' || document.hidden) return;
+  document.querySelectorAll('[data-resource-status]').forEach(cell => {
+    const host = state.hosts.find(item => item.host_id === cell.dataset.resourceStatus);
+    const status = resourceStatus(host?.last_resources), badge = cell.querySelector('.chip');
+    if (badge) badge.outerHTML = chip(status.label, status.color);
+  });
+}, 10000);
 try { await refresh(); render(); }
 catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>Could not open the local workspace.</h2><p>${escape(error.message)} Refresh this page after the service is available.</p></div>`; }

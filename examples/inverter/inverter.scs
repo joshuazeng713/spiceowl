@@ -1,0 +1,7 @@
+// Original four-terminal CMOS inverter. Device node order is D G S B.
+simulator lang=spectre
+
+subckt owl_inverter (vin vout vdd vss)
+    MN (vout vin vss vss) owl_nmos w=1u l=1u
+    MP (vout vin vdd vdd) owl_pmos w=2u l=1u
+ends owl_inverter

@@ -15,6 +15,8 @@ from spiceowl.mcp.server import create_server, serve
 from spiceowl.mcp.views import MAX_EVENTS, MAX_RESOURCES, ReadViews
 from spiceowl.service import Controller
 from spiceowl.storage.readonly import MAX_RECORDS, ReadStore
+from spiceowl.integrations.ic_workbench import ICGatewayBackend, LoopbackGatewayClient
+from test_ic_workbench import CONFIG as IC_CONFIG, run_fixture as ic_run_fixture, snapshot_fixture as ic_snapshot_fixture
 
 
 try:
@@ -25,6 +27,12 @@ except ModuleNotFoundError:
 TOOLS = {
     "spiceowl_status", "spiceowl_list_runs", "spiceowl_get_run",
     "spiceowl_list_connections", "spiceowl_list_hosts",
+    "spiceowl_list_ic_gateways", "spiceowl_list_ic_runs", "spiceowl_get_ic_run",
+}
+TOOL_ARGUMENTS = {
+    "spiceowl_get_run": {"run_id": "demo-disconnect"},
+    "spiceowl_list_ic_runs": {"gateway_id": IC_CONFIG["id"]},
+    "spiceowl_get_ic_run": {"gateway_id": IC_CONFIG["id"], "run_id": "fixture-native-run"},
 }
 SENTINEL = "SYNTHETIC_PRIVATE_SENTINEL"
 
@@ -44,6 +52,14 @@ def add_host(app):
             "error": {"code": SENTINEL, "message": SENTINEL}, "stdout": SENTINEL,
         },
     })
+
+
+def add_ic(app):
+    backend = ICGatewayBackend(app.store.directory)
+    backend.register(IC_CONFIG)
+    with patch.object(LoopbackGatewayClient, "supervision", return_value=ic_snapshot_fixture(ic_run_fixture())):
+        backend.refresh(IC_CONFIG["id"])
+    return backend
 
 
 class ReadViewTests(unittest.TestCase):
@@ -184,6 +200,83 @@ class ReadViewTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, "missing_dependency")
                 self.assertIn("mcp==1.30.0", str(error.exception))
 
+    def test_ic_cached_queries_preserve_identity_dimensions_and_stored_times(self):
+        backend = add_ic(self.app)
+        stored = backend.run(IC_CONFIG["id"], "fixture-native-run")
+        with patch("spiceowl.storage.sqlite.Store.__init__", side_effect=AssertionError("Writable store")), \
+                patch.object(LoopbackGatewayClient, "_get", side_effect=AssertionError("Network")), \
+                patch("subprocess.Popen", side_effect=AssertionError("External process")):
+            gateways = self.views.list_ic_gateways()["gateways"]
+            runs = self.views.list_ic_runs(IC_CONFIG["id"])["runs"]
+            run = self.views.get_ic_run(IC_CONFIG["id"], "fixture-native-run")["run"]
+        self.assertEqual(gateways[0]["gateway_id"], IC_CONFIG["id"])
+        self.assertEqual(runs[0]["run_id"], "fixture-native-run")
+        self.assertEqual(run["original_project_id"], "old-project")
+        self.assertEqual(run["source_commit"], "a" * 40)
+        self.assertEqual(run["execution"]["state"], "succeeded")
+        self.assertEqual(run["data"]["state"], "collected")
+        self.assertEqual(run["measurement"]["state"], "indeterminate")
+        self.assertEqual(run["specification"]["state"], "reported")
+        self.assertTrue(run["specification"]["metrics"][0]["passed"])
+        self.assertEqual(run["observation"]["observed_at"], stored["observation"]["observed_at"])
+        self.assertEqual(run["observation"]["checked_at"], stored["observation"]["checked_at"])
+        self.assertTrue(run["synthetic"])
+
+    def test_ic_allowlist_drops_paths_keys_raw_messages_and_foreign_artifact_urls(self):
+        add_ic(self.app)
+        self.app.store.update("ic_gateway", IC_CONFIG["id"], lambda record: record | {
+            "base_url": "http://127.0.0.1:9999/" + SENTINEL, "api_key": SENTINEL,
+            "observation": record["observation"] | {"error": {"code": SENTINEL, "message": SENTINEL}}})
+        def corrupt(record):
+            record.update(submission_key=SENTINEL, private_path=SENTINEL, ssh_target=SENTINEL,
+                          measurement={"state": "valid", "raw": SENTINEL})
+            record["execution"]["command"] = SENTINEL
+            record["data"]["local_path"] = SENTINEL
+            record["issues"].append({"code": SENTINEL, "message": SENTINEL})
+            record["specification"]["metrics"][0]["private_path"] = SENTINEL
+            record["artifacts"][0]["local_path"] = SENTINEL
+            record["artifacts"].append({"name": "waveforms.csv", "url": "https://example.invalid/" + SENTINEL})
+            record["artifacts"].append({"name": "waveforms.png", "url": "/api/jobs/other-run/artifacts/waveforms.png"})
+            record["observation"]["state"] = "unobserved"
+            record["observation"]["error"] = {"code": SENTINEL, "message": SENTINEL}
+            return record
+        self.app.store.update("ic_run:" + IC_CONFIG["id"], "fixture-native-run", corrupt)
+        results = [self.views.list_ic_gateways(), self.views.list_ic_runs(IC_CONFIG["id"]),
+                   self.views.get_ic_run(IC_CONFIG["id"], "fixture-native-run")]
+        for forbidden in (SENTINEL, "base_url", "submission_key", "private_path", "ssh_target", "local_path", "other-run"):
+            self.assertNotIn(forbidden, json.dumps(results))
+        run = results[-1]["run"]
+        self.assertEqual(run["measurement"]["state"], "indeterminate")
+        self.assertEqual(run["observation"]["state"], "unobserved")
+        self.assertEqual(run["artifacts_omitted"], 2)
+        self.assertEqual(run["artifacts"][0]["url"], "/api/jobs/fixture-native-run/artifacts/waveforms.json")
+
+    def test_ic_lists_and_evidence_have_independent_bounds(self):
+        add_ic(self.app)
+        record = self.app.store.get("ic_run:" + IC_CONFIG["id"], "fixture-native-run")
+        for i in range(MAX_RECORDS + 1):
+            self.app.store.create("ic_run:" + IC_CONFIG["id"], f"native-{i}", record | {"run_id": f"native-{i}"})
+            self.app.store.create("ic_gateway", f"gw-{i}", {"id": f"gw-{i}", "backend": "ic-workbench", "project_id": "fixture"})
+        listed = self.views.list_ic_runs(IC_CONFIG["id"])
+        self.assertEqual(len(listed["runs"]), MAX_RECORDS)
+        self.assertTrue(listed["truncated"])
+        gateways = self.views.list_ic_gateways()
+        self.assertEqual(len(gateways["gateways"]), MAX_RECORDS)
+        self.assertTrue(gateways["truncated"])
+        def extend(raw):
+            raw["specification"]["metrics"] *= 20
+            raw["issues"] *= 10
+            raw["artifacts"] *= 10
+            return raw
+        self.app.store.update("ic_run:" + IC_CONFIG["id"], "fixture-native-run", extend)
+        run = self.views.get_ic_run(IC_CONFIG["id"], "fixture-native-run")["run"]
+        self.assertEqual(len(run["specification"]["metrics"]), 16)
+        self.assertTrue(run["specification"]["metrics_truncated"])
+        self.assertEqual(len(run["issues"]), 8)
+        self.assertTrue(run["issues_truncated"])
+        self.assertEqual(len(run["artifacts"]), 7)
+        self.assertEqual(run["artifacts_omitted"], 3)
+
 
 @unittest.skipUnless(SDK_AVAILABLE, "optional official MCP SDK is not installed")
 class MCPIntegrationTests(unittest.TestCase):
@@ -194,6 +287,7 @@ class MCPIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, Controller(directory) as app:
             app.seed_demo()
             add_host(app)
+            add_ic(app)
             # An accepted but unexecuted turn must not be recovered by a reader.
             turn, _ = app.store.claim_turn("live-pending", digest("live"), "demo-agent", "demo-disconnect", SENTINEL, {})
             app.store.append_event(turn["turn_id"], "turn.fixture", {}, {"status": "running"})
@@ -222,9 +316,9 @@ class MCPIntegrationTests(unittest.TestCase):
                                 self.assertFalse(tool.annotations.openWorldHint)
                                 self.assertFalse(tool.inputSchema["additionalProperties"])
                                 self.assertEqual(set(tool.inputSchema.get("properties", {})),
-                                                 {"run_id"} if tool.name == "spiceowl_get_run" else set())
+                                                 set(TOOL_ARGUMENTS.get(tool.name, {})))
                             for name in sorted(TOOLS):
-                                result = await client.call_tool(name, {"run_id": "demo-disconnect"} if name == "spiceowl_get_run" else {})
+                                result = await client.call_tool(name, TOOL_ARGUMENTS.get(name, {}))
                                 self.assertFalse(result.isError, result.content)
                                 self.assertIsInstance(result.structuredContent, dict)
                                 self.assertTrue(result.structuredContent["read_only"])
@@ -239,6 +333,14 @@ class MCPIntegrationTests(unittest.TestCase):
                                 ("spiceowl_get_run", {"run_id": 42}),
                                 ("spiceowl_get_run", {"run_id": "missing"}),
                                 ("spiceowl_get_run", {"run_id": "demo-disconnect", "command": SENTINEL}),
+                                ("spiceowl_sync_ic_gateway", {"gateway_id": IC_CONFIG["id"]}),
+                                ("spiceowl_lookup_ic_submission", {"gateway_id": IC_CONFIG["id"], "key": SENTINEL}),
+                                ("spiceowl_list_ic_runs", {"gateway_id": "../" + SENTINEL}),
+                                ("spiceowl_list_ic_runs", {"gateway_id": 42}),
+                                ("spiceowl_list_ic_runs", {"gateway_id": "missing"}),
+                                ("spiceowl_get_ic_run", {"gateway_id": IC_CONFIG["id"], "run_id": "../" + SENTINEL}),
+                                ("spiceowl_get_ic_run", {"gateway_id": IC_CONFIG["id"], "run_id": 42}),
+                                ("spiceowl_get_ic_run", {"gateway_id": IC_CONFIG["id"], "run_id": "fixture-native-run", "sync": True}),
                             ]
                             for name, arguments in invalid:
                                 result = await client.call_tool(name, arguments)

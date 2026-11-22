@@ -7,7 +7,7 @@ Sources: https://github.com/modelcontextprotocol/python-sdk/tree/v1.30.0
 """
 
 from spiceowl.domain.common import DomainError, require_id
-from spiceowl.storage.readonly import ReadStore
+from spiceowl.storage.readonly import ReadStore, require_ic_run_id
 from .views import ReadViews
 
 
@@ -17,6 +17,9 @@ _TOOLS = {
     "spiceowl_get_run": frozenset({"run_id"}),
     "spiceowl_list_connections": frozenset(),
     "spiceowl_list_hosts": frozenset(),
+    "spiceowl_list_ic_gateways": frozenset(),
+    "spiceowl_list_ic_runs": frozenset({"gateway_id"}),
+    "spiceowl_get_ic_run": frozenset({"gateway_id", "run_id"}),
 }
 _INSTRUCTIONS = (
     "Read-only access to stored local SpiceOwl evidence. Stored timestamps are source observations; "
@@ -26,12 +29,14 @@ _INSTRUCTIONS = (
     "This server has no SSH, probe, submit, cancel, recovery, login or inference tools. "
     "The operator selects the data directory; tool arguments cannot select paths. "
     "Lists contain at most 25 recent stored records; run evidence and resource histories are bounded. "
+    "IC tools read already imported gateway/run projections only; they do not sync gateways or fetch artifacts. "
+    "IC retains native run ownership. Stored reported metrics do not attest measurement validity or authorize resubmission. "
     "A successful MCP handshake does not prove a desktop client has registered or reloaded these tools."
 )
 
 
 def create_server(directory):
-    """Bind five fixed read tools to operator-selected state; no controller."""
+    """Bind eight fixed read tools to operator-selected state; no controller."""
     try:
         from mcp.server.fastmcp import FastMCP
         from mcp.server.fastmcp.exceptions import ToolError
@@ -53,6 +58,14 @@ def create_server(directory):
                     tool.inputSchema["properties"]["run_id"].update(
                         minLength=1, maxLength=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
                     )
+                if tool.name in {"spiceowl_list_ic_runs", "spiceowl_get_ic_run"}:
+                    tool.inputSchema["properties"]["gateway_id"].update(
+                        minLength=1, maxLength=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$"
+                    )
+                if tool.name == "spiceowl_get_ic_run":
+                    tool.inputSchema["properties"]["run_id"].update(
+                        minLength=1, maxLength=180, pattern=r"^[A-Za-z0-9_-]{1,180}$"
+                    )
             return tools
 
         async def call_tool(self, name, arguments):
@@ -67,6 +80,10 @@ def create_server(directory):
             try:
                 if name == "spiceowl_get_run":
                     require_id(arguments["run_id"], "run ID")
+                if name in {"spiceowl_list_ic_runs", "spiceowl_get_ic_run"}:
+                    require_id(arguments["gateway_id"], "gateway ID")
+                if name == "spiceowl_get_ic_run":
+                    require_ic_run_id(arguments["run_id"])
                 return await super().call_tool(name, arguments)
             except DomainError as exc:
                 raise ToolError(f"{exc.code}: {exc}") from None
@@ -100,6 +117,21 @@ def create_server(directory):
     def spiceowl_list_hosts() -> dict[str, object]:
         """Read host IDs, labels, tool kinds and sanitized stored probe results; no active probing."""
         return views.list_hosts()
+
+    @server.tool(annotations=annotations, structured_output=True)
+    def spiceowl_list_ic_gateways() -> dict[str, object]:
+        """Read at most 25 registered IC gateway summaries, without URLs, keys or network calls."""
+        return views.list_ic_gateways()
+
+    @server.tool(annotations=annotations, structured_output=True)
+    def spiceowl_list_ic_runs(gateway_id: str) -> dict[str, object]:
+        """Read at most 25 cached IC run projections for one registered gateway; never sync or submit."""
+        return views.list_ic_runs(gateway_id)
+
+    @server.tool(annotations=annotations, structured_output=True)
+    def spiceowl_get_ic_run(gateway_id: str, run_id: str) -> dict[str, object]:
+        """Read one exact native IC run from local cache, with bounded metrics and artifact metadata only."""
+        return views.get_ic_run(gateway_id, run_id)
 
     return server
 

@@ -105,12 +105,31 @@ def make_server(controller, port=0):
                 return self.reply(controller.diagnose(self.body()), 202)
             if self.command == "POST" and path == "/api/agent-questions":
                 return self.reply(controller.ask(self.body()), 202)
+            if self.command == "GET" and path == "/api/hosts":
+                return self.reply({"hosts": controller.hosts.list()})
+            if self.command == "POST" and path == "/api/hosts":
+                host, created = controller.hosts.register(self.body())
+                return self.reply(host, 201 if created else 200)
+            if self.command == "POST" and path == "/api/hosts/import-pool":
+                body = self.body()
+                if set(body) != {"template_id", "names"}:
+                    raise DomainError("Pool import requires only template_id and names.")
+                return self.reply(controller.hosts.import_pool(body["template_id"], body["names"]))
             if self.command == "POST" and path == "/api/hosts/scan":
-                if self.body():
-                    raise DomainError("Pool scan takes an empty object and uses registered hosts.")
-                return self.reply(controller.hosts.scan())
+                body = self.body()
+                if not body:
+                    return self.reply(controller.hosts.scan())
+                if set(body) != {"host_ids"} or not isinstance(body["host_ids"], list):
+                    raise DomainError("Pool scan takes an empty object or exactly a host_ids list.")
+                return self.reply(controller.hosts.scan(body["host_ids"]))
             if self.command == "POST" and path == "/api/placement/recommend":
-                return self.reply(controller.hosts.recommend(self.body()))
+                body = self.body()
+                if "host_ids" in body:
+                    host_ids = body.pop("host_ids")
+                    if not isinstance(host_ids, list):
+                        raise DomainError("Placement host_ids must be a list of registered host IDs.")
+                    return self.reply(controller.hosts.recommend(body, host_ids))
+                return self.reply(controller.hosts.recommend(body))
             if self.command == "POST" and path == "/api/execution/plan":
                 return self.reply(controller.plan_execution(self.body()))
             parts = path.strip("/").split("/")
@@ -124,7 +143,7 @@ def make_server(controller, port=0):
                     return self.reply(controller.native_agents.probe(identifier))
                 if parts[1] == "hosts" and len(parts) == 4 and parts[3] == "probe" and self.command == "POST":
                     if self.body():
-                        raise DomainError("A host probe takes an empty object; configure profiles through the CLI.")
+                        raise DomainError("A host probe takes an empty object and uses its registered profile.")
                     return self.reply(controller.hosts.probe(identifier))
                 if parts[1] == "connections":
                     if len(parts) == 3 and self.command == "PATCH":

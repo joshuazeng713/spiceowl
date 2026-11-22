@@ -45,14 +45,26 @@ _IDENTITY_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}", re.ASCII)
 _SSH_ERROR_PATTERNS = (
     ("ssh_host_key_changed", (b"remote host identification has changed",)),
     ("ssh_host_key_unverified", (b"host key verification failed",)),
+    ("ssh_config_invalid", (b"bad configuration option:", b"bad owner or permissions on",
+                            b"terminating, 1 bad configuration options", b"unsupported option")),
     ("ssh_permission_denied", (b"permission denied",)),
+    ("ssh_name_resolution_failed", (b"could not resolve hostname", b"name or service not known",
+                                    b"temporary failure in name resolution", b"nodename nor servname provided")),
+    ("ssh_network_unreachable", (b"no route to host", b"network is unreachable", b"host is unreachable")),
+    ("ssh_connection_refused", (b"connection refused",)),
     ("ssh_connection_timeout", (b"connection timed out", b"operation timed out")),
+    ("ssh_connection_lost", (b"connection reset", b"connection closed", b"broken pipe")),
 )
 _SSH_ERROR_MESSAGES = {
     "ssh_host_key_changed": "SSH reported a changed host key; administrator verification is required.",
     "ssh_host_key_unverified": "SSH could not verify the host key using existing trust records.",
+    "ssh_config_invalid": "SSH reported an invalid or unreadable local configuration. Check the selected route configuration.",
     "ssh_permission_denied": "SSH reported access denied; check the selected route and existing authorization.",
+    "ssh_name_resolution_failed": "SSH could not resolve a hostname on the selected route. Check hostnames and DNS for the target and jump hosts.",
+    "ssh_network_unreachable": "SSH reported an unreachable network route. Check the VPN, network and jump-host route.",
+    "ssh_connection_refused": "SSH reported a refused connection. Check the SSH service and port for the target and jump hosts.",
     "ssh_connection_timeout": "SSH reported a connection timeout; reachability remains unknown.",
+    "ssh_connection_lost": "SSH reported a closed or reset connection. Target reachability remains unknown; no job outcome is inferred.",
 }
 _STDERR_TAIL_BYTES = max(len(pattern) for _, patterns in _SSH_ERROR_PATTERNS for pattern in patterns) - 1
 
@@ -84,7 +96,9 @@ class _StderrHints:
 
     def category(self):
         # A changed-key warning outranks the generic verification-failed line
-        # that commonly follows it; raw text and matched locations stay local.
+        # that commonly follows it. Specific route errors also outrank a final
+        # generic proxy-connection closure. These are hints, not hop identity;
+        # raw text and matched locations stay local.
         return next((code for code, _ in _SSH_ERROR_PATTERNS if code in self._matched), None)
 
 
@@ -174,6 +188,10 @@ def _invoke(target, script, deadline, *, ssh_hostname=None):
             _ssh_argv(target, script, ssh_hostname=ssh_hostname), stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             shell=False, start_new_session=True, close_fds=True,
+            # Local resolver/SSH errors need the same language as the fixed
+            # classifier. Preserve the caller's agent socket and other route
+            # environment; never mutate this long-lived service's environment.
+            env={**os.environ, "LC_ALL": "C", "LANG": "C"},
         )
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ, "stdout")

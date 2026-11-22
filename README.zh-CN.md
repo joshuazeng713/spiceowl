@@ -8,6 +8,10 @@
 <p align="center">面向长时间电路仿真的开源 Agent 控制台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
+<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>直接体验在线交互演示</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/feat/server-pool-agent-qa">当前 Alpha 源码</a></p>
+
+> **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH、真实 Agent 和仿真执行需要本地安装。公开演示目前跟随 `feat/server-pool-agent-qa` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/joshuazeng713/spiceowl/blob/feat/server-pool-agent-qa/docs/github-pages.md)。
+
 > **早期开发：目前只有文档与目录骨架。** 尚未实现可运行的监控服务、仿真器接入或 CLI。下文介绍目标能力，进度以[开发里程碑](docs/roadmap.md)为准。
 
 ## 为什么做 SpiceOwl

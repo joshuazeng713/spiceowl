@@ -16,6 +16,8 @@
 
 > **早期 Alpha：通过可选 CircuitGit 连接运行真实的独立 Spectre 仿真。** 本地 CLI 和单独的真实仿真面板可以检查已授权的服务器池，经 CircuitGit 原有 Runner 提交已固定 Git 版本的输入、后台观察已有任务，并显式收集结果。SpiceOwl 提供共用的监控器、Spectre 诊断、PSF ASCII 解析器和签名客户端。合成演示继续保留；公开演示不执行仿真。自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[原生问答指南](docs/native-agent.md)。
 
+[引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。配套 CircuitGit 工作台和 MCP 工具返回明确的下一步动作；新 intake 使用自己的网表与新发现，缺失证据和提交结果不确定的状态会明确保留。
+
 ![SpiceOwl 本地控制台的合成演示任务](docs/images/local-console.png)
 
 *实际原型界面，使用项目编写的合成观测数据。*

@@ -16,6 +16,8 @@
 
 The paired CircuitGit development branch also provides a [fresh simulation intake](docs/onboarding-discovery.md): parse an imported inverter, discover selected SSH environments and model candidates, then freeze explicit experiment conditions. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
 
+[Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired workbench and MCP tools return exact next actions; missing evidence and uncertain submissions remain explicit.
+
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
 *Actual prototype interface with authored synthetic observations.*

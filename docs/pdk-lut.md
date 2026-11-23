@@ -72,7 +72,7 @@ historical snapshot for stable pagination. TTL and fresh-audit requirements
 apply to both forms; alias lookup never claims the remote symlink is unchanged.
 
 The scanner retains its finite file, graph, directory and byte policy. This mode
-stores at most 4096 device names, 256 candidate entries and 8192 device-entry
+stores at most 4096 device names, 256 candidate entries and 65536 device-entry
 bindings, with a 16 MiB receipt ceiling. It can index more than 128 devices in one
 entry; a source-bound binding query accepts up to 128 required names. Coverage
 records observed, indexed, unindexed and omitted counts, search policy and
@@ -80,6 +80,39 @@ truncation. `complete_within_policy` means the declared attempt completed within
 those bounds; `whole_pdk_qualified` is always false. Parser gaps, omitted files,
 entries or names remain visible. This is metadata coverage, not process or
 simulator qualification.
+
+Entry enumeration considers nodes with observed include targets before
+definition-only nodes, with deterministic path/section ordering within each
+group. A filename that sorts earlier cannot consume the entire binding budget
+before include entries are considered. This ordering is a retention priority,
+not an assertion that an entry or corner is suitable for the experiment; source
+and dependency evidence still determine each candidate's identity.
+
+New `spiceowl.pdk-library.v1` receipts explicitly declare
+`contract_storage="shared-model-contracts.v1"`. Their `model_contracts` table
+maps a complete model-contract SHA256 to the unchanged contract object, and
+each candidate's `models` list contains `{name, contract_id}` references. Only
+exactly equal evidence is shared. Different active definitions, terminal maps,
+polarities, source locations or unknown states never become the same contract
+merely because their model names match. Validation checks every table hash,
+named reference and the absence of unused table entries.
+Shared receipts use compact JSON encoding for both output and the 16 MiB size
+check. Install the paired pinned version before consuming this encoding; support
+for historical inline receipts does not make older readers forward-compatible.
+
+`validate_pdk_library` continues to accept historical inline receipts. After
+validating a receipt, use `library_candidate_models(library, candidate)` to
+resolve either encoding without changing its original bytes or digest. Do not
+mutate the returned evidence objects. `PdkLut.put_library` resolves these
+references during ingestion; source-bound discovery and recommendation APIs
+continue to return full inline model contracts. The SQLite size limit remains
+128 MiB and query responses remain bounded at 2 MiB.
+
+The 16 MiB receipt cap remains independent of the binding count cap. Oversized
+results omit duplicate graph details first, then retain a fitting prefix of
+priority-ordered candidates with all their referenced contracts. Omitted
+entries and resulting incomplete coverage remain explicit. A scan that exceeds
+file, parser or output limits must not be reported as complete.
 
 Both APIs accept `library_id`, `content_fingerprint`, `max_age_s`, `now` and
 `refresh`. TTL, identity and freshness semantics match the legacy lookup below.
@@ -128,7 +161,8 @@ PYTHONPATH=src .venv/bin/python -B -m tests.benchmark_pdk_library --iterations 1
 PYTHONPATH=src .venv/bin/python -B -m tests.benchmark_pdk_library --devices 256 --entries 32 --iterations 10
 ```
 
-Measured November 24, 2026 on Darwin arm64, Python 3.12.14, SQLite 3.53.1. The
+Historical inline-storage baseline at commit `cce7598`, measured November 24,
+2026 on Darwin arm64, Python 3.12.14, SQLite 3.53.1. The
 default newly authored workload contains 160 devices, 33 actual entry closures
 and 5280 device-entry bindings. One full scan took 168.445 ms and insertion took
 140.288 ms. Its receipt was about 4.87 MB and SQLite database about 14.84 MB.
@@ -150,13 +184,49 @@ evidence is substantially more expensive than indexed name lookup. Cold means a
 new SQLite connection; filesystem caches are not purged. Benchmarks perform no
 SSH, compiler or simulator operation and do not enforce timing in CI.
 
-The additional cap workload requested 256 devices across 33 potential entries.
+The historical 8192-binding cap workload requested 256 devices across 33 potential entries.
 It stored 8192 device-entry bindings across 32 entries and correctly marked the
 receipt `partial` when the binding cap was reached. Scan/insertion were
 256.966/281.103 ms. Over ten samples, a device page had median/max
 0.495/0.514 ms; 128 devices in an explicitly selected observed entry had
 median/max 5.817/5.924 ms. The partial search flag remains in source-bound results;
 locally observed coverage never erases that wider inventory gap.
+
+The original multi-corner scaling benchmark can compare this implementation to
+a locally available exact Git revision:
+
+```bash
+PYTHONPATH=src .venv/bin/python -B -m tests.benchmark_pdk_library_scaling \
+  --corners 48 --devices 200 --iterations 3 \
+  --baseline-commit cce759844d079e55ce55be116af6117aa4e9c039
+```
+
+It includes shared definitions and separate definitions for each corner, with
+`a_definitions.scs` deliberately sorting before `z_entry.scs`. Results report
+retained include/definition entries, bindings, unique contracts, coverage,
+receipt bytes and elapsed times. The baseline uses the historical discovery
+builder with the current shared dependency parser; no source is downloaded.
+These are original synthetic inputs. They do not establish a real TSMC PDK
+scan time or Python 2.7 execution performance. Generated-program grammar checks
+likewise do not substitute for execution with the site's actual interpreter.
+
+The following measurements used three serial runs on November 24, 2026,
+Darwin arm64 / Python 3.12.12. Both workloads contain 48 corners and 200 model
+names; the second gives each corner its own physical declarations.
+
+| Workload | Baseline median | Current median | Baseline include entries / bindings | Current include entries / bindings | Current receipt |
+| --- | ---: | ---: | --- | --- | ---: |
+| Shared declarations | 184.171 ms | 57.343 ms | 39 / 8000, partial | 48 / 9800, complete within policy | 1,655,791 bytes |
+| Separate corner declarations | 426.939 ms | 437.456 ms | 0 / 8000, partial | 48 / 19200, complete within policy | 15,276,363 bytes |
+
+These timings compare different retained coverage. In particular, the second
+current run preserves 2.4 times as many bindings and all include entries; it is
+not faster in this measurement. To isolate the CPU-index changes, a separate
+five-run comparison kept the old serializer and 8192-binding limit on both
+sides and verified identical candidate evidence by ID. With 100 corners, 20
+wrappers plus 20 primitives per corner and 8000 bindings, median full scanning
+changed from 539.894 to 462.987 ms on Python 3.12.14. No tenfold speedup or
+real-PDK completion time is established by these results.
 
 ## Verilog-A standard-header metadata
 

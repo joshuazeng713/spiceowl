@@ -26,6 +26,8 @@ MAX_SOURCE_BYTES = 1024 * 1024
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 LIBRARY_SCHEMA = 'spiceowl.pdk-library.v1'
 MAX_LIBRARY_RESULT_BYTES = 16 * 1024 * 1024
+MAX_LIBRARY_BINDINGS = 65536
+LIBRARY_CONTRACT_STORAGE = 'shared-model-contracts.v1'
 DIRECTORY_SNAPSHOT_PREFIX = "SPICEOWL_DISCOVERY_DIRECTORY_SNAPSHOT "
 MAX_DIRECTORY_SNAPSHOT_BYTES = 64 * 1024
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.$:+-]{0,127}\Z")
@@ -354,7 +356,7 @@ def build_pdk_library_script(*, roots, cds_libs=None, search_hints=None, limits=
     if script.count(before_graph) != 1: _invalid('The installed scanner cannot inventory library models.')
     script = script.replace(before_graph, inject, 1)
     marker = "    candidate={'entry_path':path,'entry_sha256':files[path]['sha256'],"
-    replacement = ("    if sum(len(c['models']) for c in entry_candidates)+len(covered)>8192:\n"
+    replacement = ("    if sum(len(c['models']) for c in entry_candidates)+len(covered)>65536:\n"
                    "        issue('library_binding_limit');break\n"
                    "    discovery['required_masters']=sorted(covered)\n" + marker)
     if script.count(marker) != 1: _invalid('The installed scanner cannot preserve library entry scope.')
@@ -373,7 +375,7 @@ def validate_pdk_library(library):
     if (not isinstance(library, dict) or library.get('schema') != LIBRARY_SCHEMA
             or library.get('mode') != 'full_library'):
         _invalid('Use an explicit full-library receipt, never a filtered scan relabeled as an inventory.')
-    try: raw = json.dumps(library, allow_nan=False).encode()
+    try: raw = json.dumps(library, allow_nan=False, separators=(',', ':')).encode()
     except (ValueError, TypeError, UnicodeError, RecursionError): _invalid()
     if len(raw) > MAX_LIBRARY_RESULT_BYTES or library.get('library_id') != _digest(
             {key: value for key, value in library.items() if key != 'library_id'}):
@@ -407,7 +409,19 @@ def validate_pdk_library(library):
         path = _path(row.get('path'))
         if path in files: _invalid('Duplicate observed file identities are unsupported.')
         files[path] = row['sha256']
-    ids, indexed, binding_count = set(), set(), 0
+    storage = library.get('contract_storage')
+    contracts = library.get('model_contracts')
+    if storage is None:
+        if contracts is not None: _invalid('Shared model contracts require their explicit storage encoding.')
+    else:
+        if storage != LIBRARY_CONTRACT_STORAGE or not isinstance(contracts, dict) or len(contracts) > MAX_LIBRARY_BINDINGS:
+            _invalid('Unsupported or oversized library model-contract storage.')
+        for identity, model in contracts.items():
+            if (not isinstance(identity, str) or not _HASH.fullmatch(identity)
+                    or not isinstance(model, dict) or not isinstance(model.get('name'), str)
+                    or not _NAME.fullmatch(model['name']) or identity != _digest(model)):
+                _invalid('Shared model contract differs from its exact content identity.')
+    ids, indexed, referenced, binding_count = set(), set(), set(), 0
     for candidate in candidates:
         if (not isinstance(candidate, dict) or not isinstance(candidate.get('candidate_id'), str)
                 or not _HASH.fullmatch(candidate['candidate_id']) or candidate['candidate_id'] in ids
@@ -426,19 +440,58 @@ def validate_pdk_library(library):
         for model in candidate['models']:
             if (not isinstance(model, dict) or not isinstance(model.get('name'), str)
                     or not _NAME.fullmatch(model['name'])): _invalid()
+            if storage is not None:
+                identity = model.get('contract_id')
+                if (set(model) != {'name', 'contract_id'} or not isinstance(identity, str)
+                        or identity not in contracts or contracts[identity]['name'] != model['name']):
+                    _invalid('Library candidate refers to an absent or mismatched model contract.')
+                referenced.add(identity)
+            elif 'contract_id' in model:
+                _invalid('An inline library model cannot contain an unresolved contract reference.')
             names.append(model['name'])
         if len(set(names)) != len(names) or sorted(names) != candidate['master_coverage']: _invalid()
         indexed.update(names); binding_count += len(names)
-    if (len(indexed) > 4096 or binding_count > 8192
+    if (len(indexed) > 4096 or binding_count > MAX_LIBRARY_BINDINGS
             or sorted(indexed) != coverage.get('indexed_model_names')
             or len(indexed) != coverage.get('indexed_model_count')):
         _invalid('Indexed model scope differs from the observed entries.')
+    if storage is not None and referenced != set(contracts):
+        _invalid('Shared model-contract storage contains unreferenced evidence.')
     for row in library['declarations']:
         if (not isinstance(row, dict) or not isinstance(row.get('name'), str) or not _NAME.fullmatch(row['name'])
                 or not isinstance(row.get('path'), str) or row['path'] not in files
                 or type(row.get('line')) is not int or row['line'] < 1
                 or 'section' not in row or row['section'] is not None and not isinstance(row['section'], str)): _invalid()
     return library
+
+
+def library_candidate_models(library, candidate):
+    """Resolve a candidate's model rows after ``validate_pdk_library``.
+
+    Both historical inline receipts and explicit shared-contract receipts keep
+    their original bytes. The returned dictionaries are the observed objects;
+    callers must not mutate them. This helper does not replace validation of the
+    complete receipt, its digest, dependency scope or coverage.
+    """
+    rows = candidate.get('models') if isinstance(candidate, dict) else None
+    if not isinstance(library, dict) or not isinstance(rows, list): _invalid()
+    if library.get('contract_storage') is None:
+        if library.get('model_contracts') is not None or any(
+                not isinstance(row, dict) or 'contract_id' in row for row in rows): _invalid()
+        return rows
+    if library.get('contract_storage') != LIBRARY_CONTRACT_STORAGE: _invalid()
+    contracts = library.get('model_contracts')
+    if not isinstance(contracts, dict): _invalid()
+    resolved = []
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != {'name', 'contract_id'}
+                or not isinstance(row.get('contract_id'), str)):
+            _invalid('Use exact named shared-model references.')
+        model = contracts.get(row['contract_id'])
+        if not isinstance(model, dict) or model.get('name') != row['name']:
+            _invalid('Shared model reference has no matching observed contract.')
+        resolved.append(model)
+    return resolved
 
 
 def pdk_library_page(library, *, offset=0, limit=64):
@@ -482,6 +535,7 @@ def audit_config_for_candidate(discovery, candidate_id, *, sections,
 _CONTRACT_HELPERS = r'''
 # Deliberately finite source grammar: one direct four-terminal MOS per wrapper.
 # Device-name spelling is never used as polarity or terminal evidence.
+import heapq
 contract_name=r'[A-Za-z_][A-Za-z0-9_.$:+-]*'
 contract_header=re.compile(r'(?i)^(?:inline\s+)?\.?subckt\s+('+contract_name+r')\s*(.*)$')
 contract_model=re.compile(r'(?i)^\.?model\s+('+contract_name+r')\s+('+contract_name+r')\b')
@@ -627,33 +681,82 @@ def resolve_primitive_models(exact,bins):
         return None,'conflicting_or_unknown_model_bins',bins
     return next(iter(polarities)),'consistent_explicit_mos_bins',bins
 
-def model_contracts_for_scopes(visited,unresolved):
-    wrappers,models,binned_models,spice_models={},{},{},{}
-    wrapper_keys,model_keys=set(),set()
-    sections_by_path={}
-    for path,section in visited: sections_by_path.setdefault(path,set()).add(section)
-    for path in sorted(sections_by_path):
-        data=parsed.get(path)
-        if data is None: continue
+contract_scope_index={}
+contract_result_cache={}
+def build_source_indexes():
+    # This runs only after every reachable source has been parsed. Index rows
+    # are immutable observations for this scan and never cross file hashes.
+    for path,data in sorted(parsed.items()):
+        buckets={};include_records=[];global_include_lines=[]
+        for ordinal,record in enumerate(data['records']):
+            section,line,kind,value=record
+            buckets.setdefault(section,[]).append((ordinal,record))
+            if kind=='include':
+                include_records.append(record)
+                if section is None:global_include_lines.append(line)
+        data['record_buckets']=buckets
+        data['include_records']=include_records
+        data['global_include_lines']=global_include_lines
         state=data['contract_state']
-        for source,target,keys in ((state['wrappers'],wrappers,wrapper_keys),(state['models'],models,model_keys)):
-            for row in source:
-                if row['section_key'] is None or row['section_key'] in sections_by_path[path]:
-                    key=(path,row['line'],row['section_key'],row.get('owner_line'))
-                    if key in keys: continue
-                    keys.add(key)
-                    item=dict(row,path=path,section=data['section_spellings'].get(row['section_key'],row['section_key']))
-                    target.setdefault(row['name'],[]).append(item)
-                    bin_match=contract_bin.match(row['name']) if target is models and row['spice_declaration'] else None
-                    if target is models and row['spice_declaration']:
-                        spice_models.setdefault(row['name'].lower(),[]).append(item)
-                    if bin_match: binned_models.setdefault(bin_match.group(1).lower(),[]).append(item)
+        data['global_scope_present']=bool(buckets.get(None) or any(
+            row['section_key'] is None for kind in ('models','wrappers','literals') for row in state[kind]))
+        for kind in ('wrappers','models','literals'):
+            for row in state[kind]:
+                scope=contract_scope_index.setdefault((path,row['section_key']),
+                    {'wrappers':{},'models':{},'spice_models':{},'binned_models':{},'literals':[]})
+                if kind=='literals':scope['literals'].append(row);continue
+                item=dict(row,path=path,section=data['section_spellings'].get(row['section_key'],row['section_key']))
+                scope[kind].setdefault(row['name'],[]).append(item)
+                if kind=='models' and row['spice_declaration']:
+                    scope['spice_models'].setdefault(row['name'].lower(),[]).append(item)
+                    match=contract_bin.match(row['name'])
+                    if match:scope['binned_models'].setdefault(match.group(1).lower(),[]).append(item)
+
+def scoped_records(data,section):
+    buckets=data['record_buckets']
+    rows=buckets.get(None,[]) if section is None else heapq.merge(buckets.get(None,[]),buckets.get(section,[]))
+    for ordinal,row in rows:yield row
+
+def active_contract_scopes(visited):
+    scopes=set(visited)
+    scopes.update((path,None) for path,section in visited)
+    return tuple(sorted((scope for scope in scopes if scope in contract_scope_index),key=lambda value:(value[0],value[1] or '')))
+
+def definition_identity(row):
+    return (row['path'],files[row['path']]['sha256'],row['line'],row['section_key'],row.get('owner_line'))
+
+def model_contracts_for_scopes(visited,unresolved):
+    active_scopes=active_contract_scopes(visited)
+    query_cache={}
+    def observed_rows(kind,name):
+        key=(kind,name)
+        if key not in query_cache:
+            rows={}
+            for scope in active_scopes:
+                for row in contract_scope_index[scope][kind].get(name,[]):rows[definition_identity(row)]=row
+            query_cache[key]=sorted(rows.values(),key=lambda row:(row['path'],row['line'],row['section_key'] or '',row.get('owner_line') or 0))
+        return query_cache[key]
     def exact_models(name):
-        return models.get(name,[])+[m for m in spice_models.get(name.lower(),[]) if m['name']!=name]
+        return observed_rows('models',name)+[m for m in observed_rows('spice_models',name.lower()) if m['name']!=name]
     output=[]
+    unknown_state=tuple(sorted(set(unresolved)))
     for name in discovery['required_masters']:
         evidence=[];polarity=None;roles=None;reason='definition_not_found'
-        matches=wrappers.get(name,[])+[r for r in exact_models(name) if r['owner_line'] is None]
+        matches=observed_rows('wrappers',name)+[r for r in exact_models(name) if r['owner_line'] is None]
+        model_matches=[];bin_matches=[]
+        if len(matches)==1:
+            matched=matches[0]
+            if 'instances' in matched and matched['closed'] and not matched['unsupported'] and matched['instance_count']==1:
+                call=matched['instances'][0]
+                model_matches=[m for m in exact_models(call['master']) if
+                    m['owner_line'] is None or m['path']==matched['path'] and m['owner_line']==matched['line']]
+                bin_matches=[m for m in observed_rows('binned_models',call['master'].lower()) if
+                    m['owner_line'] is None or m['path']==matched['path'] and m['owner_line']==matched['line']]
+        cache_key=(name,tuple(definition_identity(row) for row in matches),
+                   tuple(definition_identity(row) for row in model_matches),
+                   tuple(definition_identity(row) for row in bin_matches),unknown_state)
+        if cache_key in contract_result_cache:
+            output.append(contract_result_cache[cache_key]);continue
         if len(matches)>1: reason='multiple_active_model_definitions'
         elif len(matches)==1:
             row=matches[0]
@@ -663,10 +766,6 @@ def model_contracts_for_scopes(visited,unresolved):
                 if row['closed'] and not row['unsupported'] and row['instance_count']==1:
                     call=row['instances'][0]
                     evidence.append(dict(call,kind='direct_instance',path=row['path']))
-                    model_matches=[m for m in exact_models(call['master']) if
-                                   m['owner_line'] is None or m['path']==row['path'] and m['owner_line']==row['line']]
-                    bin_matches=[m for m in binned_models.get(call['master'].lower(),[]) if
-                                 m['owner_line'] is None or m['path']==row['path'] and m['owner_line']==row['line']]
                     primitive_polarity,primitive_reason,primitive_rows=resolve_primitive_models(model_matches,bin_matches)
                     reason=primitive_reason
                     if primitive_polarity:
@@ -685,12 +784,17 @@ def model_contracts_for_scopes(visited,unresolved):
                 reason=row['evidence_rule'] or 'unsupported_primitive_type'
                 evidence.append({k:row[k] for k in ('name','path','line','section','family','type_literal','evidence_rule')})
         verified=polarity is not None and roles is not None and not unresolved
-        output.append({'name':name,'polarity':polarity,'ordered_terminal_roles':roles,
+        resolved_contract={'name':name,'polarity':polarity,'ordered_terminal_roles':roles,
             'suggested_contract':{'polarity':polarity,'terminals':roles} if polarity and roles else None,
             'suggestion_basis':reason,'auto_prefill_allowed':verified,
             'evidence':evidence,'confidence':'verified' if verified else 'suggested' if polarity or roles else 'unknown',
             'reason':reason,'needs_confirmation':not verified,
-            'scope':'static source contract only; no simulator or process qualification'})
+            'scope':'static source contract only; no simulator or process qualification'}
+        # Only resolved immutable contract evidence is shared, never a candidate's
+        # mutable section/literal state. The key includes the exact active
+        # definition and primitive/bin evidence plus unresolved closure codes.
+        if len(contract_result_cache)<32768:contract_result_cache[cache_key]=resolved_contract
+        output.append(resolved_contract)
     return output
 '''
 
@@ -924,6 +1028,9 @@ while pending_files:
             issue('include_queue_limit',path,line);pending_files=[];break
 
 all_declarations, includes, tmi_refs, graph, graph_by_key = [], [], [], [], {}
+build_source_indexes()
+required_name_set=set(discovery['required_masters'])
+declaration_name_counts={}
 for path,data in sorted(parsed.items()):
     sections=[None]+sorted(data['sections'])
     for section in sections:
@@ -932,17 +1039,17 @@ for path,data in sorted(parsed.items()):
               'section':data['section_spellings'].get(section,section),'section_key':section,
               'master_coverage':[],'include_targets':[],'unknown_codes':[],'tmi_references':[]}
         graph.append(node);graph_by_key[(path,section)]=node
-        for current,line,kind,value in data['records']:
-            if current is not None and current!=section: continue
+        for current,line,kind,value in scoped_records(data,section):
             if kind=='master':
-                if value['name'] in discovery['required_masters']:
+                if value['name'] in required_name_set:
                     node['master_coverage'].append(value['name'])
                 key=(path,line,value['name'])
                 if key not in declaration_keys:
                     declaration_keys.add(key)
+                    declaration_name_counts[value['name']]=declaration_name_counts.get(value['name'],0)+1
                     all_declarations.append(dict(value,path=path,line=line,
                                                  section=data['section_spellings'].get(current,current),
-                                                 exact_name_match=value['name'] in discovery['required_masters']))
+                                                 exact_name_match=value['name'] in required_name_set))
             elif kind=='include':
                 dep=resolve_path(value['path'],os.path.dirname(path))
                 target_section=value['section'].lower() if value['section'] is not None else None
@@ -967,40 +1074,47 @@ for path,data in sorted(parsed.items()):
 # Platform directories are observed, not selected from the local architecture.
 incoming_by_path={}
 for source_path,data in sorted(parsed.items()):
-    for current,line,kind,value in data['records']:
-        if kind!='include': continue
+    for current,line,kind,value in data['include_records']:
         target=resolve_path(value['path'],os.path.dirname(source_path))
         if target is None: continue
         incoming_by_path.setdefault(target,[]).append({'from':source_path,
             'from_section':data['section_spellings'].get(current,current),'line':line,
             'to':target,'section':value['section'],'role':value['role']})
 
-def source_metadata_for_candidate(path,visited,contracts):
+source_static_metadata_cache={}
+literal_json_size_cache={}
+def static_source_metadata(path):
     data=parsed[path];incoming=incoming_by_path.get(path,[])
     observed=[None]+sorted(data['section_spellings'].values())
-    global_lines=[line for section,line,kind,value in data['records'] if section is None and kind=='include']
+    global_lines=data['global_include_lines']
     incoming_sample=[];incoming_bytes=0
     for row in incoming:
         extra=len(json.dumps(row,sort_keys=True,ensure_ascii=True).encode('utf-8'))
         if len(incoming_sample)>=8 or incoming_bytes+extra>1024: continue
         incoming_sample.append(row);incoming_bytes+=extra
     result={'observed_sections':observed,
-        'source_role_evidence':{'global_scope_present':bool(any(section is None for section,line,kind,value in data['records']) or
-            any(row['section_key'] is None for kind in ('models','wrappers','literals') for row in data['contract_state'][kind])),
+        'source_role_evidence':{'global_scope_present':data['global_scope_present'],
             'incoming_includes':incoming_sample,'incoming_includes_truncated':len(incoming_sample)<len(incoming),
             'incoming_include_count':len(incoming),
             'global_incoming_include_count':sum(1 for row in incoming if row['from_section'] is None),
             'incoming_evidence_scope':'bounded samples of observed include declarations; counts include omitted samples',
             'global_include_lines':global_lines[:64],'global_include_lines_truncated':len(global_lines)>64,
             'observed_section_count':len(data['sections'])},
-        'prelude_candidates':[],'nominal_temperature_evidence':[],
-        'nominal_voltage_evidence':[],'voltage_limit_evidence':[],'literal_evidence_truncated':False,
-        'literal_evidence_available_count':0,'literal_declaration_count':0,
+        'prelude_candidates':[],
         'literal_evidence_scope':'required-device declarations and separately labeled non-device context; source literals are not process qualification'}
     for section in observed:
         if section is not None and section.lower() in ('pre_simu','pre_sim','init','global'):
             result['prelude_candidates'].append({'path':path,'section':section,
                 'basis':'observed_prelude_section_label','confidence':'suggested','auto_prefill_allowed':False})
+    return result
+
+def source_metadata_for_candidate(path,visited,contracts):
+    if path not in source_static_metadata_cache:source_static_metadata_cache[path]=static_source_metadata(path)
+    # Shared fields describe only the immutable source file. Every scope-bound
+    # counter, truncation flag and literal collection starts fresh per candidate.
+    result=dict(source_static_metadata_cache[path],nominal_temperature_evidence=[],
+        nominal_voltage_evidence=[],voltage_limit_evidence=[],literal_evidence_truncated=False,
+        literal_evidence_available_count=0,literal_declaration_count=0)
     selected={}
     for source_path,section in visited: selected.setdefault(source_path,set()).add(section)
     primitive_bindings={};wrapper_bindings={}
@@ -1017,8 +1131,11 @@ def source_metadata_for_candidate(path,visited,contracts):
         if source is None: continue
         state=source['contract_state']
         result['literal_evidence_truncated']=result['literal_evidence_truncated'] or state['literals_truncated']
-        for row in state['literals']:
-            if row['section_key'] is not None and row['section_key'] not in selected[source_path]: continue
+        literal_rows=[]
+        for section in sorted(selected[source_path]|set([None]),key=lambda value:value or ''):
+            scope=contract_scope_index.get((source_path,section))
+            if scope is not None:literal_rows.extend(scope['literals'])
+        for row in sorted(literal_rows,key=lambda item:item['line']):
             bound=set()
             if row['model_name'] is not None:
                 bound=primitive_bindings.get((source_path,row['line'],row['model_name'],row['owner_line']),set())
@@ -1045,7 +1162,11 @@ def source_metadata_for_candidate(path,visited,contracts):
         field=group['field'];item=group['item'];lines=sorted(group['lines'])
         item.update(declaration_count=len(lines),declaration_lines=lines[:16],declaration_locations_truncated=len(lines)>16)
         result['literal_declaration_count']+=len(lines)
-        extra=len(json.dumps(item,sort_keys=True,ensure_ascii=True).encode('utf-8'))
+        size_key=tuple((key,tuple(value) if isinstance(value,list) else value) for key,value in sorted(item.items()))
+        extra=literal_json_size_cache.get(size_key)
+        if extra is None:
+            extra=len(json.dumps(item,sort_keys=True,ensure_ascii=True).encode('utf-8'))
+            if len(literal_json_size_cache)<8192:literal_json_size_cache[size_key]=extra
         if literal_count>=32 or literal_bytes+extra>4096: result['literal_evidence_truncated']=True;continue
         result[field].append(item);literal_count+=1;literal_bytes+=extra
     return result
@@ -1078,7 +1199,8 @@ for row in tmi_refs:
 
 entry_candidates, ambiguities = [], []
 platform_signatures={directory:stable(options) for directory,options in platform_cache.items()}
-for node in graph:
+entry_nodes=sorted(graph,key=lambda node:(0 if node['include_targets'] else 1,node['path'],node['section_key'] or ''))
+for node in entry_nodes:
     pending=[(node['path'],node['section_key'])]
     visited=set();covered=set();unresolved=[];candidate_tmi=[];candidate_tmi_by_key={}
     while pending:
@@ -1145,9 +1267,9 @@ complete=[c for c in entry_candidates if not c['missing_masters']]
 if len(complete)>1: ambiguities.append({'code':'multiple_entry_or_section_candidates','candidate_ids':[c['candidate_id'] for c in complete]})
 if not complete and entry_candidates: ambiguities.append({'code':'masters_split_across_sections_or_files','requires':'explicit_entry_and_section_combination'})
 for master in discovery['required_masters']:
-    matches=[d for d in all_declarations if d['name']==master]
-    if len(matches)>1: ambiguities.append({'code':'multiple_master_definitions','master':master,'definition_count':len(matches)})
-missing=sorted(set(discovery['required_masters'])-set(d['name'] for d in all_declarations))
+    count=declaration_name_counts.get(master,0)
+    if count>1: ambiguities.append({'code':'multiple_master_definitions','master':master,'definition_count':count})
+missing=sorted(set(discovery['required_masters'])-set(declaration_name_counts))
 if missing: ambiguities.append({'code':'masters_not_found','masters':missing})
 if any(len(p)>1 for p in platform_cache.values()): ambiguities.append({'code':'multiple_tmi_platforms','requires':'simulator_platform_evidence'})
 if any(n['unknown_codes'] for n in graph): issue('unsupported_scanned_scope')
@@ -1160,6 +1282,7 @@ result={'schema':'spiceowl.pdk-discovery.v1','source_sha256':discovery['source_s
         'search_policy':{'candidate_extensions':sorted(extensions),'hidden_directories_scanned':False,
                          'explicit_include_extensions_restricted':False,'symlinks':'within_authorized_roots_only',
                          'directory_order':'root_round_robin_preferred_subtree_bfs',
+                         'entry_candidate_order':'include_targets_first_then_path_section',
                          'priority_basis':'generic_model_spectre_spice_directory_names_and_explicit_hints'},
         'traversal':{'effective_roots':effective_roots,'requested_root_count':len(roots),
                      'directories_scanned':len(walked),'pending_directories':pending_directory_count,
@@ -1269,6 +1392,24 @@ result.update(schema='spiceowl.pdk-library.v1',mode='full_library',
     scope_note='Full-library attempt within the declared roots and finite parser/search policy; not process qualification.')
 original_candidate_count=len(result['entry_candidates'])
 omitted_candidates=0
+# Model evidence is content-addressed only after its active-scope contract has
+# been computed. Equal names alone never establish equal contracts. Keep strong
+# references in the identity cache so Python cannot recycle an object's id.
+library_contracts={};library_contract_ids={}
+for candidate in result['entry_candidates']:
+    references=[]
+    for model in candidate['models']:
+        cached=library_contract_ids.get(id(model))
+        if cached is None:
+            identity=stable(model)
+            library_contract_ids[id(model)]=(model,identity)
+        else:
+            identity=cached[1]
+        library_contracts.setdefault(identity,model)
+        references.append({'name':model['name'],'contract_id':identity})
+    candidate['models']=references
+result['contract_storage']='shared-model-contracts.v1'
+result['model_contracts']=library_contracts
 def library_coverage():
     indexed=sorted(set(model['name'] for candidate in result['entry_candidates'] for model in candidate['models']))
     unindexed=sorted(set(library_all_names)-set(indexed))
@@ -1283,14 +1424,37 @@ def library_coverage():
         'entry_scope_truncated':entry_limits,'coverage_basis':'observed declarations and stored candidate closures'}
     result['status']='complete' if complete else 'partial'
 library_coverage()
-if len(json.dumps(result,sort_keys=True).encode('utf-8'))>16744448:
+encoded=json.dumps(result,sort_keys=True,separators=(',',':')).encode('utf-8')
+if len(encoded)>16744448:
     result['detail_omissions']=[{'field':key,'observed_count':len(result.get(key,[])),'reason':'library_response_limit'}
         for key in ('section_graph','includes')]
     result['section_graph']=[];result['includes']=[]
-while result['entry_candidates'] and len(json.dumps(result,sort_keys=True).encode('utf-8'))>16744448:
-    result['entry_candidates'].pop();omitted_candidates+=1;library_coverage()
-if len(json.dumps(result,sort_keys=True).encode('utf-8'))>16744448:
-    raise ValueError('library_metadata_response_limit: narrow the observed root scope')
+    encoded=json.dumps(result,sort_keys=True,separators=(',',':')).encode('utf-8')
+if len(encoded)>16744448:
+    # Keep the largest fitting prefix of the priority-ordered entries. A
+    # candidate is always retained with all of its referenced evidence. Binary
+    # search avoids serializing a near-limit receipt once for every removed row.
+    library_entries=list(result['entry_candidates'])
+    low,high,best=0,len(library_entries)-1,None
+    while low<=high:
+        count=(low+high)//2
+        result['entry_candidates']=library_entries[:count]
+        referenced=set(row['contract_id'] for candidate in result['entry_candidates'] for row in candidate['models'])
+        result['model_contracts']={identity:library_contracts[identity] for identity in sorted(referenced)}
+        omitted_candidates=original_candidate_count-count;library_coverage()
+        size=len(json.dumps(result,sort_keys=True,separators=(',',':')).encode('utf-8'))
+        if size<=16744448:
+            best=count;low=count+1
+        else:
+            high=count-1
+    if best is None:
+        raise ValueError('library_metadata_response_limit: narrow the observed root scope')
+    result['entry_candidates']=library_entries[:best]
+    referenced=set(row['contract_id'] for candidate in result['entry_candidates'] for row in candidate['models'])
+    result['model_contracts']={identity:library_contracts[identity] for identity in sorted(referenced)}
+    omitted_candidates=original_candidate_count-best;library_coverage()
+    if len(json.dumps(result,sort_keys=True,separators=(',',':')).encode('utf-8'))>16744448:
+        raise ValueError('library_metadata_response_limit: narrow the observed root scope')
 result['library_id']=stable(result)
-print(json.dumps(result,sort_keys=True))
+print(json.dumps(result,sort_keys=True,separators=(',',':')))
 '''

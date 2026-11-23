@@ -383,7 +383,7 @@ class PdkLut:
 
     def put_library(self, library, *, server_identity, observed_at=None):
         """Index one explicit library attempt; never upgrade filtered evidence."""
-        from .pdk_discovery import validate_pdk_library
+        from .pdk_discovery import library_candidate_models, validate_pdk_library
         from .recommendations import _corner_class
         if self.read_only: _invalid('A read-only PDK cache cannot store observations.')
         validate_pdk_library(library)
@@ -408,23 +408,62 @@ class PdkLut:
             metadata['root_resolutions'] = [{'requested_root': logical, 'canonical_root': canonical}
                 for logical, canonical in zip(library['requested_roots'], library['roots'])]
             scope_keys.add(_digest({'server_identity': identity, 'roots': _roots(library['requested_roots']), 'mode': 'full_library'}))
+        # Build the declaration index once. Each active scope keeps original
+        # receipt ordering, including globals from every dependency file.
+        declarations = library.get('declarations', [])
+        declaration_index = {}
+        for index, row in enumerate(declarations):
+            declaration_index.setdefault((row['path'], row['section']), []).append(index)
+        active_scope_cache, model_json_cache, declaration_json_cache = {}, {}, {}
+        metadata_json, library_json = _json(metadata), _json(library)
+        payload_bytes = len(metadata_json) + len(library_json)
+
+        def account_payload(*encoded):
+            nonlocal payload_bytes
+            # _json uses ensure_ascii=True, so character and UTF-8 byte counts
+            # agree. This is only a lower bound: SQLite enforces actual pages.
+            payload_bytes += sum(map(len, encoded))
+            if payload_bytes > MAX_DATABASE_BYTES:
+                raise DomainError('The indexed library exceeds the bounded PDK database payload; previous observations were retained.',
+                                  'pdk_lut_storage')
+
+        account_payload()
         entries, devices = [], []
         for candidate in library['entry_candidates']:
-            scopes = {(row['path'], row['section']) for row in candidate['dependency_scopes']}
+            scopes = frozenset((row['path'], row['section']) for row in candidate['dependency_scopes']) | frozenset(
+                (path, None) for path in candidate['dependency_paths'])
+            if scopes not in active_scope_cache:
+                selected = sorted(index for scope in scopes for index in declaration_index.get(scope, ()))
+                by_name = {}
+                for index in selected:
+                    by_name.setdefault(declarations[index]['name'], []).append(index)
+                active_scope_cache[scopes] = ([declarations[index] for index in selected],
+                                             {name: tuple(indices) for name, indices in by_name.items()})
+            active_declarations, by_name = active_scope_cache[scopes]
             common = {key: value for key, value in candidate.items() if key != 'models'}
-            common['library_declarations'] = [row for row in library.get('declarations', [])
-                if (row['path'], row['section']) in scopes or row['section'] is None and row['path'] in candidate['dependency_paths']]
+            common['library_declarations'] = active_declarations
             priority = (100 if candidate.get('entry_role') == 'include_entry_candidate' else 0)
             priority += {'typical': 25, 'statistical': -25, 'extreme': -10, 'unspecified': 0}[_corner_class(candidate['section_candidates'])]
-            entries.append((cache_id, candidate['candidate_id'], priority, _json(common)))
-            for model in candidate['models']:
-                declarations = [row for row in library.get('declarations', []) if row['name'] == model['name']
-                    and ((row['path'], row['section']) in scopes or row['section'] is None and row['path'] in candidate['dependency_paths'])]
-                devices.append((cache_id, model['name'], candidate['candidate_id'], _json(model), _json(declarations)))
+            common_json = _json(common)
+            account_payload(common_json)
+            entries.append((cache_id, candidate['candidate_id'], priority, common_json))
+            for model in library_candidate_models(library, candidate):
+                key = id(model)
+                if key not in model_json_cache:
+                    # Retain the object along with its JSON: a resolver that
+                    # creates copies cannot cause Python id reuse to mix data.
+                    model_json_cache[key] = (model, _json(model))
+                model_json = model_json_cache[key][1]
+                selected = by_name.get(model['name'], ())
+                if selected not in declaration_json_cache:
+                    declaration_json_cache[selected] = _json([declarations[index] for index in selected])
+                declarations_json = declaration_json_cache[selected]
+                account_payload(model_json, declarations_json)
+                devices.append((cache_id, model['name'], candidate['candidate_id'], model_json, declarations_json))
         try:
             with self.connection:
                 self.connection.execute('INSERT OR REPLACE INTO library_observations VALUES (?,?,?,?,?,?,?)',
-                    (cache_id, scope_key, library['library_id'], fingerprint, observed, _json(metadata), _json(library)))
+                    (cache_id, scope_key, library['library_id'], fingerprint, observed, metadata_json, library_json))
                 self.connection.execute('DELETE FROM library_entries WHERE cache_id=?', (cache_id,))
                 self.connection.execute('DELETE FROM library_devices WHERE cache_id=?', (cache_id,))
                 self.connection.execute('DELETE FROM library_root_scopes WHERE cache_id=?', (cache_id,))

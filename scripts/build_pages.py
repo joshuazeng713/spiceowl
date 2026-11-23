@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 ASSETS = ("index.html", "app.js", "app.css", "owl.svg", "demo.js")
 OUTPUT_FILES = frozenset((*ASSETS, "demo-data.js", "build.json", ".nojekyll", "LICENSE.txt"))
-REPOSITORY = "https://github.com/joshuazeng713/spiceowl"
+REPOSITORY = "https://github.com/spiceowl-dev/spiceowl"
 CONNECTION_SCENARIOS = ("success", "inference_denied", "disconnect", "permission_denied")
 
 

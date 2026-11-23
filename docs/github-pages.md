@@ -1,6 +1,6 @@
 # Interactive GitHub Pages demo
 
-[Open the public demo](https://joshuazeng713.github.io/spiceowl/).
+[Open the public demo](https://spiceowl-dev.github.io/spiceowl/).
 
 The hosted site reuses the local console's HTML, CSS and application code. A browser-only adapter replaces the local HTTP API in the published build. Its four runs, evidence and diagnostic responses are authored synthetic fixtures. The build computes run transitions and proposals using the existing Python reducers and validators in a fresh temporary workspace.
 

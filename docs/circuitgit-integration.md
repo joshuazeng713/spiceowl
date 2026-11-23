@@ -1,6 +1,6 @@
 # CircuitGit external integration
 
-Integration profiles: **`spiceowl.circuitgit-library-context.v1`**, **`spiceowl.resource-selection.v1`**, and the optional **`spiceowl.live-client.v1`** described in [standalone runtime](standalone-runtime.md). Supervision contract revision: **1.2.0**, identified by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json). SpiceOwl remains independently maintained in [its own repository](https://github.com/joshuazeng713/spiceowl). CircuitGit should reference a reviewed SpiceOwl commit and these documents; it does not need to vendor the SpiceOwl implementation.
+Integration profiles: **`spiceowl.circuitgit-library-context.v1`**, **`spiceowl.resource-selection.v1`**, and the optional **`spiceowl.live-client.v1`** described in [standalone runtime](standalone-runtime.md). Supervision contract revision: **1.2.0**, identified by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json). SpiceOwl remains independently maintained in [its own repository](https://github.com/spiceowl-dev/spiceowl). CircuitGit should reference a reviewed SpiceOwl commit and these documents; it does not need to vendor the SpiceOwl implementation.
 
 ## Compatibility and ownership
 

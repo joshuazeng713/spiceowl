@@ -26,7 +26,7 @@ spiceowl = "spiceowl.cli.main:main"
 spiceowl-adctools = "spiceowl.adctools.__main__:main"
 
 [project.urls]
-Repository = "https://github.com/joshuazeng713/spiceowl"
+Repository = "https://github.com/spiceowl-dev/spiceowl"
 
 [tool.setuptools.packages.find]
 where = ["src"]

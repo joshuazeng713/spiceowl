@@ -76,13 +76,18 @@ def _dimension(literal, language):
             "evaluated_expression": False}
 
 
-def inspect_netlist(source, *, source_id="input.scs"):
+def inspect_netlist(source, *, source_id="input.scs", mode="model-discovery", support_files=None):
     """Inspect supplied flat or subcircuit Spectre/SPICE text, without IO.
 
     Ordered instance nodes are evidence, not a guessed d/g/s/b mapping. Numeric
     W/L literals are reported in metres without applying a model scale factor.
     Device-name spelling never supplies polarity or process/VT qualification.
     """
+    if mode == "agent-tb":
+        from spiceowl.onboarding.agent_tb import inspect_agent_source
+        return inspect_agent_source(source, source_id=source_id, support_files=support_files)
+    if mode != "model-discovery" or support_files is not None:
+        _invalid("Select explicit agent-tb mode when supplying support files.")
     if type(source) is str:
         try:
             source = source.encode("utf-8")

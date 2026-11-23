@@ -88,6 +88,10 @@ def measure_psf_ascii(text, recipe, *, execution_state='unknown', exit_code=None
         result['execution'].update(state=execution_state, exit_code=exit_code)
         spec = validate_recipe(recipe)
         result['recipe_sha256'] = recipe['recipe_sha256']
+        if spec.get('recipe') == 'agent-testbench':
+            result['missing'] = [{'field': 'postprocess', 'code': 'agent_testbench_measurement_not_implemented',
+                'message': 'Authored testbench objectives require their explicit postprocessor; inverter measurements do not apply.'}]
+            return result
     except ExperimentIssue as issue:
         result['missing'] = [issue.record()]
         return result

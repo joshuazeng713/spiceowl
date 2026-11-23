@@ -18,6 +18,8 @@ The paired CircuitGit development branch also provides a [fresh simulation intak
 
 [Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired workbench and MCP tools return exact next actions; missing evidence and uncertain submissions remain explicit.
 
+[Agent-authored testbenches](docs/agent-testbench.md) add a finite Spectre source/TB compiler that preserves authored bytes and explicit experiment intent for the paired CircuitGit review flow. A private [PDK lookup table](docs/pdk-lut.md) reuses bounded observations with visible age and scope; execution still requires a fresh dependency audit. Optional [ADC analysis tools](docs/adctools.md), installed with `pip install '.[adctools]'`, provide eight named Python/CLI operations and actual pinned ADCToolbox integration. Analysis uses explicit units, frequency and measurement rules; it does not infer a scientific pass. See the [agent reproducibility guide](docs/agent-reproducibility.md) for the deterministic steps and remaining limits.
+
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
 *Actual prototype interface with authored synthetic observations.*
@@ -37,7 +39,7 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Native Codex Q&A, fake agent/API management, MCP queries and SSH host/resource checks implemented |
 | Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
-| Validate | Check inputs, required signals, measurement windows, and result completeness | Registered inverter and prepared-transient recipes with frozen conditions, PSF ASCII coverage and explicit signal-window checks |
+| Validate | Check inputs, required signals, measurement windows, and result completeness | Frozen inverter/prepared-transient recipes, finite authored-TB validation, and optional named ADC algorithms; general TB intent remains explicit |
 | Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; automatic restart, migration and parameter repair are not implemented |
 | Diagnose | Explain evidence and propose actions | Deterministic Spectre failure classification; native agent Q&A and synthetic diagnosis remain separate |
 | Report | Separate execution outcome, measurement validity, and circuit performance | Five independent experiment dimensions: execution, measurement, performance, operating qualification and dependency provenance |
@@ -99,6 +101,8 @@ spiceowl/
 │   ├── adapters/              # Execution and simulator integrations
 │   ├── integrations/          # CircuitGit client/pool, diagnostics and PSF ASCII parsing
 │   ├── experiments/           # Source extraction, frozen recipes and deterministic measurements
+│   ├── onboarding/            # Authored-TB validation, model discovery and private observation LUT
+│   ├── adctools/              # Optional explicit ADC algorithms and pinned upstream adapters
 │   ├── monitoring/            # Durable observation of existing real runs
 │   ├── validation/            # Input and measurement acceptance checks
 │   ├── recovery/              # Policy evaluation and action proposals

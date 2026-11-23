@@ -2,7 +2,14 @@
 
 `spiceowl workflow` runs a registered experiment through `prepare → run → inspect`. The sequence and scientific checks work without an LLM. An agent can call the same commands and explain their results; it does not have to invent a netlist, infer model terminals, choose measurement criteria or interpret a zero exit code as scientific success.
 
-This alpha implements two explicit recipe types: `inverter-tran` for a selected, verified CMOS inverter, and `prepared-transient` for a registered cell or cutout with explicit signal windows. SpiceOwl compiles supplied source bytes and evaluates PSF ASCII. CircuitGit owns the committed source, private registration, immutable plan, remote execution and native collection. The current command route uses standalone Spectre. The existing [live console](standalone-runtime.md), [passive IC cache](ic-workbench.md) and read-only MCP retain their documented operations.
+The automatic transient measurement path implements `inverter-tran` for a selected, verified CMOS inverter, and `prepared-transient` for a registered cell or cutout with explicit signal windows. SpiceOwl compiles supplied source bytes and evaluates PSF ASCII. CircuitGit owns the committed source, private registration, immutable plan, remote execution and native collection. The current command route uses standalone Spectre. The existing [live console](standalone-runtime.md), [passive IC cache](ic-workbench.md) and read-only MCP retain their documented operations.
+
+The additional [`agent-testbench` recipe](agent-testbench.md) compiles a complete
+authored TB and explicit criteria for the paired CircuitGit review flow. It does
+not inherit the two transient recipes' scientific measurements. Supported saved
+data can be measured with an explicitly configured [ADC algorithm](adctools.md);
+unsupported postprocessing remains unknown. See [agent reproducibility](agent-reproducibility.md)
+for how fixed tool calls differ from designing a new experiment.
 
 ## What must be configured first
 

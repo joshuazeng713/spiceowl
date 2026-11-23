@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 from spiceowl.domain.common import DomainError
 from spiceowl.onboarding.pdk_discovery import (build_pdk_library_script,
-    validate_pdk_library, pdk_library_page, profile_suggestions, audit_config_for_candidate)
+    validate_pdk_library, pdk_library_page, profile_suggestions, audit_config_for_candidate,
+    library_candidate_models)
 from spiceowl.onboarding.pdk_lut import PdkLut
 from tests.test_pdk_lut import IDENTITY, MODELS, SOURCE, scan
 from spiceowl.onboarding.pdk_discovery import inspect_netlist
@@ -74,7 +75,8 @@ class PdkLibraryTests(unittest.TestCase):
             observed = raw[candidate['library_candidate_id']]
             self.assertEqual(candidate['entry_sha256'], observed['entry_sha256'])
             for model in candidate['models']:
-                self.assertEqual(model, next(row for row in observed['models'] if row['name'] == model['name']))
+                self.assertEqual(model, next(row for row in library_candidate_models(self.library, observed)
+                                             if row['name'] == model['name']))
                 self.assertEqual(model['confidence'], 'verified')
                 self.assertEqual(model['ordered_terminal_roles'], ['d', 'g', 's', 'b'])
         self.assertEqual(result['discovery']['source_sha256'], 'a' * 64)

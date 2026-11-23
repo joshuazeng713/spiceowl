@@ -16,9 +16,9 @@
 
 > **早期 Alpha：通过可选 CircuitGit 连接运行真实的独立 Spectre 仿真。** 本地 CLI 和单独的真实仿真面板可以检查已授权的服务器池，经 CircuitGit 原有 Runner 提交已固定 Git 版本的输入、后台观察已有任务，并显式收集结果。SpiceOwl 提供共用的监控器、Spectre 诊断、PSF ASCII 解析器和签名客户端。合成演示继续保留；公开演示不执行仿真。自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[原生问答指南](docs/native-agent.md)。
 
-[引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。配套 CircuitGit 工作台和 MCP 工具返回明确的下一步动作；新 intake 使用自己的网表与新发现，缺失证据和提交结果不确定的状态会明确保留。
+[引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。配套 CircuitGit 工作台和 MCP 工具返回明确的下一步动作；新 intake 使用自己的网表及明确绑定来源的观测，缺失证据和提交结果不确定的状态会明确保留。
 
-[Agent 编写的测试平台](docs/agent-testbench.md)提供有限语法的 Spectre 源码／TB 编译器，保留原始字节和明确实验目的，供配套 CircuitGit 审阅流程使用。私有 [PDK 查找表](docs/pdk-lut.md)复用有范围和时间记录的观测，执行前仍须重新核验依赖。安装 `pip install '.[adctools]'` 后，可使用八项具名 [ADC 分析工具](docs/adctools.md)的 Python／CLI 接口及固定版本的真实 ADCToolbox 集成。分析必须明确单位、频率和测量规则，不会自行推断指标达标。确定性步骤与现有限制见[Agent 可复现流程](docs/agent-reproducibility.md)。
+[Agent 编写的测试平台](docs/agent-testbench.md)保留 Spectre 源码、经过审阅的相对路径 Verilog-A 辅助文件及标准头文件依赖闭包。私有[单器件 PDK 索引](docs/pdk-lut.md)让不同电路的器件组合复用同一次全库观测，保留覆盖范围和时间；执行前仍须重新核验依赖。安装 `pip install '.[adctools]'` 后，可使用十项具名[分析工具](docs/adctools.md)的 Python／CLI 接口、固定版本的真实 ADCToolbox 集成及[原生 AC/DC 解析与测量](docs/ac-dc-results.md)。增益和环路裕度须明确单位、参考信号与反馈定义，DC region 编码须来自明确模型约定。确定性步骤与限制见[Agent 可复现流程](docs/agent-reproducibility.md)。
 
 ![SpiceOwl 本地控制台的合成演示任务](docs/images/local-console.png)
 
@@ -99,6 +99,11 @@ spiceowl/
 当前[独立仿真入口](docs/standalone-runtime.md)建立在 **服务器池、仿真来源计划和原生问答** 之上，基础接口见 [P0.3 约定](docs/contracts/p03-pool-agent.md)；[P0.2 约定](docs/contracts/p02-connectivity.md)记录 SSH/MCP 基础。更广的[整合实施方案](docs/design/integration-plan.md)还计划加入独立 API-key 路线与 ACP。[三个专题设计](docs/design/README.md)通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
 
 ## 从哪里开始
+
+开发者下载仓库后，执行 `python3 scripts/setup_dev.py` 即可安装固定版本的完整
+Python 开发环境、MCP 和数值依赖并自检；缺少合适的 Python 时会在项目内下载。
+随后运行 `.venv/bin/spiceowl serve --demo`。加 `--serve-demo` 可合并安装与启动。
+环境要求、重复安装和故障处理见[开发者环境说明](docs/developer-setup.md)。
 
 在 macOS 或 Linux 上使用 Python 3.11 及以上版本：
 

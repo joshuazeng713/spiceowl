@@ -2,7 +2,8 @@
 from .common import AnalysisError, SCHEMA
 
 OPERATIONS = ('spec_analyze', 'coherent_fft', 'sine_fit3', 'sine_fit4',
-              'weight_calibrate', 'reconstruct_codes', 'histogram_linearity', 'tran_metrics')
+              'weight_calibrate', 'reconstruct_codes', 'histogram_linearity', 'tran_metrics',
+              'ac_metrics', 'dc_op_metrics')
 
 
 def _backend(value):
@@ -51,8 +52,9 @@ def weight_calibrate(decisions, reference=None, *, backend, **kwargs):
 def _local_only(name, backend, *args, **kwargs):
     from .common import require
     require(backend == 'spiceowl', 'unsupported_backend', name + ' is the explicit SpiceOwl implementation; no upstream substitute is used.')
-    from . import calibration, histogram, transient
-    modules = {'reconstruct_codes': calibration, 'histogram_linearity': histogram, 'tran_metrics': transient}
+    from . import calibration, histogram, transient, acdc
+    modules = {'reconstruct_codes': calibration, 'histogram_linearity': histogram, 'tran_metrics': transient,
+               'ac_metrics': acdc, 'dc_op_metrics': acdc}
     return getattr(modules[name], name)(*args, **kwargs)
 
 
@@ -66,6 +68,14 @@ def histogram_linearity(codes, *, backend, **kwargs):
 
 def tran_metrics(time_s, values, *, backend, **kwargs):
     return _local_only('tran_metrics', backend, time_s, values, **kwargs)
+
+
+def ac_metrics(frequency_hz, response_real, response_imag, *, backend, **kwargs):
+    return _local_only('ac_metrics', backend, frequency_hz, response_real, response_imag, **kwargs)
+
+
+def dc_op_metrics(devices, *, backend, **kwargs):
+    return _local_only('dc_op_metrics', backend, devices, **kwargs)
 
 
 def analyze(operation, arguments):

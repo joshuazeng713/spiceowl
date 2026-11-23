@@ -13,7 +13,7 @@ No weak-model or other LLM evaluation is claimed here.
 | Path | Available evidence | Boundary |
 | --- | --- | --- |
 | Registered `inverter-tran` / `prepared-transient` | `workflow prepare/run/inspect/execute`, frozen recipe compiler, PSF ASCII measurements, offline workflow tests | Requires a compatible CircuitGit service, registered recipe, explicit grant and working remote dependencies |
-| Authored `agent-testbench` | Local source inventory, bounded static validator, exact-byte compiler and regression tests | Paired execution/postprocessing integration is still being completed; static readiness and recipe registration alone do not establish end-to-end support |
+| Authored `agent-testbench` | Local inventory, bounded static validator, exact-byte compiler and paired CircuitGit human-reviewed execution | Integration is published; supported result types and explicit postprocessing still bound the scientific conclusion. A generic no-LLM driver or weak-model benchmark has not been demonstrated |
 | `spiceowl.adctools` | Offline JSON/CSV/Python analysis, explicit backend selection and synthetic mathematical tests | Caller owns dataset identity, experimental preconditions and specification comparison |
 
 Use [workflow.md](workflow.md) for the registered route,

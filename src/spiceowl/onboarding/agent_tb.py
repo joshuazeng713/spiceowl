@@ -38,6 +38,16 @@ FORBIDDEN_PARAMETERS = {'file', 'filename', 'path', 'include', 'ahdl', 'command'
     'cmd', 'exec', 'system', 'shell', 'script', 'readns', 'write', 'writefinal',
     'readic', 'icfile', 'nodesetfile', 'rawfile', 'checkpoint', 'restart'}
 ANALYSES = {'tran', 'ac', 'dc'}
+VA_STANDARD_INCLUDES = {'constants.vams', 'disciplines.vams'}
+VA_ALIAS = re.compile(r'[A-Z][A-Z0-9_]{0,63}\Z')
+VA_IDENTIFIER = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,127}\Z')
+VA_FUNCTIONS = {'V', 'I', 'transition', 'cross', 'timer', 'above', 'initial_step',
+    'final_step', 'ddt', 'idt', 'abs', 'min', 'max', 'sqrt', 'pow', 'exp', 'ln',
+    'log', 'log10', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'sinh',
+    'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'floor', 'ceil', 'limexp', 'hypot', '$vt'}
+VA_CONSTANTS = {'M_E', 'M_LOG2E', 'M_LOG10E', 'M_LN2', 'M_LN10', 'M_PI',
+    'M_TWO_PI', 'M_PI_2', 'M_PI_4', 'M_1_PI', 'M_2_PI', 'M_2_SQRTPI',
+    'M_SQRT2', 'M_SQRT1_2', 'P_Q', 'P_C', 'P_K', 'P_H', 'P_EPS0', 'P_U0', 'P_CELSIUS0'}
 
 
 def _invalid(message):
@@ -112,6 +122,8 @@ def _documents(source, support_files, testbench=None, source_id='dut.scs'):
     for path, value in support_files.items():
         if not _relative(path) or path.lower() in seen:
             _invalid('Support paths must be distinct relative files; managed filenames cannot be replaced.')
+        if posixpath.basename(path).lower() in VA_STANDARD_INCLUDES:
+            _invalid('Standard Verilog-A headers are controlled external dependencies, not supplied support files.')
         seen.add(path.lower())
         documents[path] = _bytes(value)
     if sum(map(len, documents.values())) > MAX_TOTAL_BYTES:
@@ -272,6 +284,289 @@ def _parameters(text, path, line, issues):
     return result
 
 
+class _VerilogAGap(Exception):
+    """Stop one bounded file at its first unsupported construct."""
+
+
+def _va_tokens(raw, path, issues):
+    """Lex original UTF-8 without expanding macros, includes or executable code."""
+    text = raw.decode('utf-8')
+    tokens, position, line = [], 0, 1
+    pattern = re.compile(r'`[A-Za-z_][A-Za-z0-9_]*|\$?[A-Za-z_][A-Za-z0-9_]*|'
+        r'(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:meg|[afpnumkKMGTP])?|'
+        r'<\+|<=|>=|==|!=|&&|\|\||<<|>>|\*\*|[()\[\],;:@?+*/%<>=!~&|^\-]')
+    while position < len(text):
+        if text[position].isspace():
+            line += text[position] == '\n'
+            position += 1
+            continue
+        if text.startswith('//', position):
+            end = text.find('\n', position)
+            position = len(text) if end < 0 else end
+            continue
+        if text.startswith('/*', position):
+            end = text.find('*/', position + 2)
+            if end < 0:
+                _issue(issues, 'veriloga_unterminated_comment', path, line)
+                return []
+            line += text[position:end + 2].count('\n')
+            position = end + 2
+            continue
+        if text.startswith('`include', position) and not re.match(r'\w', text[position + 8:position + 9]):
+            end = text.find('\n', position)
+            end = len(text) if end < 0 else end
+            directive = text[position:end]
+            match = re.fullmatch(r'`include\s+"([^"\\\r\n]+)"\s*(?://[^\n]*)?', directive)
+            if match is None:
+                _issue(issues, 'veriloga_external_or_dynamic_include', path, line)
+                return []
+            tokens.append(('@include:' + match[1], line))
+            position = end
+            continue
+        match = pattern.match(text, position)
+        if match is None:
+            _issue(issues, 'veriloga_unsupported_token_or_string', path, line)
+            return []
+        tokens.append((match[0], line))
+        if len(tokens) > MAX_STATEMENTS * 8:
+            _issue(issues, 'veriloga_token_limit', path, line)
+            return []
+        position = match.end()
+    return tokens
+
+
+class _VerilogAParser:
+    """Finite scalar behavioral subset; not a compiler or execution sandbox."""
+    precedence = {'||': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6,
+        '<': 7, '>': 7, '<=': 7, '>=': 7, '<<': 8, '>>': 8,
+        '+': 9, '-': 9, '*': 10, '/': 10, '%': 10, '**': 11}
+
+    def __init__(self, raw, path, issues):
+        self.tokens = _va_tokens(raw, path, issues)
+        self.path, self.issues, self.index = path, issues, 0
+        self.symbols, self.writable, self.nodes = set(), set(), set()
+        self.constant_macros = set()
+        self.result = {'includes': [], 'instances': [], 'interfaces': [], 'models': [],
+                       'analyses': [], 'saves': [], 'language': 'veriloga', 'standard_includes': []}
+
+    def peek(self):
+        return self.tokens[self.index][0] if self.index < len(self.tokens) else ''
+
+    def line(self):
+        return self.tokens[min(self.index, len(self.tokens) - 1)][1] if self.tokens else 1
+
+    def gap(self, code='veriloga_unsupported_syntax'):
+        _issue(self.issues, code, self.path, self.line())
+        raise _VerilogAGap()
+
+    def take(self, expected=None):
+        value = self.peek()
+        if not value or expected is not None and value != expected:
+            self.gap()
+        self.index += 1
+        return value
+
+    def identifier(self):
+        value = self.take()
+        if not VA_IDENTIFIER.fullmatch(value):
+            self.gap('veriloga_unsupported_identifier')
+        return value
+
+    def expression(self, minimum=0, depth=0):
+        if depth > 64:
+            self.gap('veriloga_expression_depth_limit')
+        token = self.take()
+        if token in ('+', '-', '!', '~'):
+            self.expression(12, depth + 1)
+        elif token == '(':
+            self.expression(depth=depth + 1)
+            self.take(')')
+        elif NUMBER.fullmatch(token):
+            numeric = re.sub(r'(?:meg|[afpnumkKMGTP])$', '', token)
+            if not math.isfinite(float(numeric)):
+                self.gap('veriloga_nonfinite_literal')
+        elif token.startswith('`'):
+            if token[1:] not in VA_CONSTANTS:
+                self.gap('veriloga_unsupported_preprocessor')
+            self.constant_macros.add(token[1:])
+        elif self.peek() == '(':
+            if token not in VA_FUNCTIONS:
+                self.gap('veriloga_unknown_function_or_system_task')
+            self.take('(')
+            if self.peek() != ')':
+                self.expression(depth=depth + 1)
+                while self.peek() == ',':
+                    self.take(',')
+                    self.expression(depth=depth + 1)
+            self.take(')')
+        elif token not in self.symbols and token not in ('inf', '$abstime', '$temperature', 'initial_step', 'final_step'):
+            self.gap('veriloga_unresolved_symbol_or_system_task')
+        while self.peek() in self.precedence and self.precedence[self.peek()] >= minimum:
+            operator = self.take()
+            priority = self.precedence[operator]
+            self.expression(priority if operator == '**' else priority + 1, depth + 1)
+        if minimum == 0 and self.peek() == '?':
+            self.take('?')
+            self.expression(depth=depth + 1)
+            self.take(':')
+            self.expression(depth=depth + 1)
+
+    def declaration(self, parameter=False):
+        if parameter and self.peek() in ('real', 'integer'):
+            self.take()
+        while True:
+            name = self.identifier()
+            if name in self.symbols:
+                self.gap('veriloga_duplicate_symbol')
+            if self.peek() == '=':
+                self.take('=')
+                self.expression()
+            elif parameter:
+                self.gap('veriloga_parameter_value_missing')
+            self.symbols.add(name)
+            if not parameter:
+                self.writable.add(name)
+            while parameter and self.peek() in ('from', 'exclude'):
+                self.take()
+                if self.peek() in ('[', '('):
+                    self.take()
+                    self.expression()
+                    self.take(':')
+                    self.expression()
+                    if self.peek() not in (']', ')'):
+                        self.gap()
+                    self.take()
+                else:
+                    self.expression()
+            if self.peek() != ',':
+                break
+            self.take(',')
+        self.take(';')
+
+    def statement(self, depth=0):
+        if depth > 64:
+            self.gap('veriloga_statement_depth_limit')
+        token = self.take()
+        if token == 'begin':
+            if self.peek() == ':':
+                self.take(':')
+                self.identifier()
+            while self.peek() and self.peek() != 'end':
+                self.statement(depth + 1)
+            self.take('end')
+        elif token == 'if':
+            self.take('(')
+            self.expression()
+            self.take(')')
+            self.statement(depth + 1)
+            if self.peek() == 'else':
+                self.take('else')
+                self.statement(depth + 1)
+        elif token == '@':
+            self.take('(')
+            self.expression()
+            while self.peek() == 'or':
+                self.take('or')
+                self.expression()
+            self.take(')')
+            self.statement(depth + 1)
+        elif token in ('V', 'I'):
+            self.take('(')
+            node = self.take()
+            if node not in self.nodes:
+                self.gap('veriloga_unknown_contribution_node')
+            if self.peek() == ',':
+                self.take(',')
+                if self.take() not in self.nodes:
+                    self.gap('veriloga_unknown_contribution_node')
+            self.take(')')
+            self.take('<+')
+            self.expression()
+            self.take(';')
+        elif token in self.writable:
+            self.take('=')
+            self.expression()
+            self.take(';')
+        elif token in ('real', 'integer'):
+            self.declaration()
+        elif token != ';':
+            self.gap('veriloga_unsupported_statement_or_write_task')
+
+    def module(self):
+        line = self.line()
+        self.take('module')
+        name = self.identifier()
+        self.take('(')
+        ports = [self.identifier()]
+        while self.peek() == ',':
+            self.take(',')
+            ports.append(self.identifier())
+        self.take(')')
+        self.take(';')
+        if len(set(ports)) != len(ports) or len(ports) > MAX_TERMINALS:
+            self.gap('veriloga_unsupported_module_interface')
+        self.symbols, self.writable, self.nodes = set(ports), set(), set()
+        directions, analog_count = {}, 0
+        while self.peek() and self.peek() != 'endmodule':
+            token = self.take()
+            if token in ('input', 'output', 'inout', 'electrical'):
+                names = [self.identifier()]
+                while self.peek() == ',':
+                    self.take(',')
+                    names.append(self.identifier())
+                self.take(';')
+                for item in names:
+                    if token == 'electrical':
+                        if item in self.nodes or item in self.symbols - set(ports):
+                            self.gap('veriloga_duplicate_symbol')
+                        self.nodes.add(item)
+                        self.symbols.add(item)
+                    elif item not in ports or item in directions:
+                        self.gap('veriloga_unsupported_module_interface')
+                    else:
+                        directions[item] = token
+            elif token in ('parameter', 'localparam', 'real', 'integer'):
+                self.declaration(token in ('parameter', 'localparam'))
+            elif token == 'analog':
+                analog_count += 1
+                self.statement()
+            else:
+                self.gap('veriloga_unsupported_module_item')
+        self.take('endmodule')
+        if not set(ports) <= self.nodes or not analog_count:
+            self.gap('veriloga_electrical_ports_or_analog_body_missing')
+        self.result['interfaces'].append({'name': name, 'ports': ports, 'path': self.path,
+            'line': line, 'scope': [], 'kind': 'veriloga_module', 'directions': directions})
+
+    def parse(self):
+        try:
+            while self.peek():
+                token, line = self.peek(), self.line()
+                if token.startswith('@include:'):
+                    reference = self.take()[len('@include:'):]
+                    if not _relative(reference):
+                        self.gap('veriloga_external_or_dynamic_include')
+                    if reference in VA_STANDARD_INCLUDES:
+                        row = {'from': self.path, 'line': line, 'reference': reference,
+                               'target': reference, 'kind': 'veriloga_standard_include', 'external': True}
+                        self.result['standard_includes'].append(row)
+                    elif reference.endswith(('.va', '.vams')):
+                        row = {'from': self.path, 'line': line, 'reference': reference,
+                               'target': posixpath.join(posixpath.dirname(self.path), reference),
+                               'kind': 'veriloga_include'}
+                    else:
+                        self.gap('veriloga_unsupported_include_kind')
+                    self.result['includes'].append(row)
+                elif token == 'module':
+                    self.module()
+                else:
+                    self.gap('veriloga_unsupported_top_level_or_preprocessor')
+        except _VerilogAGap:
+            pass
+        self.result['constant_macros'] = sorted(self.constant_macros)
+        return self.result
+
+
 def _parse(raw, path, issues):
     result = {'includes': [], 'instances': [], 'interfaces': [], 'models': [], 'analyses': [], 'saves': []}
     stack, instances, count = [], set(), 0
@@ -285,17 +580,23 @@ def _parse(raw, path, issues):
         if re.match(r'simulator\b', text, re.I):
             _issue(issues, 'unsupported_language', path, line)
             continue
-        if re.match(r'include\b', text, re.I):
+        if re.match(r'(?:include|ahdl_include)\b', text, re.I):
             if stack:
                 _issue(issues, 'scoped_include_unsupported', path, line)
-            match = re.fullmatch(r'include\s+"([^"\r\n]+)"', text, re.I)
-            if match is None or not _relative(match[1]):
+            match = re.fullmatch(r'(include|ahdl_include)\s+"([^"\r\n]+)"', text, re.I)
+            if match is None or not _relative(match[2]):
                 _issue(issues, 'external_or_dynamic_include', path, line)
             else:
-                target = posixpath.join(posixpath.dirname(path), match[1])
-                result['includes'].append({'from': path, 'line': line, 'reference': match[1], 'target': target})
+                kind, reference = match[1].lower(), match[2]
+                if kind == 'ahdl_include' and not reference.endswith('.va'):
+                    _issue(issues, 'unsupported_ahdl_include_kind', path, line)
+                elif kind == 'include' and reference.endswith(('.va', '.vams')):
+                    _issue(issues, 'veriloga_requires_ahdl_include', path, line)
+                else:
+                    target = posixpath.join(posixpath.dirname(path), reference)
+                    result['includes'].append({'from': path, 'line': line, 'reference': reference, 'target': target, 'kind': kind})
             continue
-        if any(char in text for char in '`;{}!') or re.match(r'(?:ahdl_include|\.include|\.lib|shell|system|exec|if|else|alter|foreach)\b', text, re.I):
+        if any(char in text for char in '`;{}!') or re.match(r'(?:\.include|\.lib|shell|system|exec|if|else|alter|foreach)\b', text, re.I):
             _issue(issues, 'unsupported_executable_or_dynamic_statement', path, line)
             continue
         header = re.fullmatch(r'(?:inline\s+)?subckt\s+([^\s(]+)\s*(.*)', text, re.I)
@@ -390,7 +691,12 @@ def _parse(raw, path, issues):
 
 def _inventory(documents, entry, allow_pdk):
     issues, parsed, edges, visited, visiting = [], {}, [], set(), set()
-    def visit(path):
+    languages = {}
+    def visit(path, language='spectre'):
+        if path in languages and languages[path] != language:
+            _issue(issues, 'include_language_mismatch', path)
+            return
+        languages[path] = language
         if path in visiting:
             _issue(issues, 'include_cycle', path)
             return
@@ -403,17 +709,37 @@ def _inventory(documents, entry, allow_pdk):
             _issue(issues, 'support_file_missing', path)
             return
         visiting.add(path)
-        data = _parse(documents[path], path, issues)
+        data = (_VerilogAParser(documents[path], path, issues).parse() if language == 'veriloga'
+                else _parse(documents[path], path, issues))
         parsed[path] = data
         for edge in data['includes']:
             edges.append(edge)
-            visit(edge['target'])
+            if not edge.get('external'):
+                visit(edge['target'], 'veriloga' if edge.get('kind') in ('ahdl_include', 'veriloga_include') else 'spectre')
         visiting.remove(path)
         visited.add(path)
     visit(entry)
     for path in sorted(set(documents) - visited):
         _issue(issues, 'unreferenced_supplied_file', path)
     interfaces = [row for data in parsed.values() for row in data['interfaces']]
+    modules = [row for row in interfaces if row.get('kind') == 'veriloga_module']
+    external = [edge for edge in edges if edge.get('external')]
+    # Separate ahdl_include entries are separate compiler inputs: a standard
+    # include in another entry cannot establish this entry's dependency closure.
+    for root in sorted({edge['target'] for edge in edges if edge.get('kind') == 'ahdl_include'}):
+        closure, pending = set(), [root]
+        while pending:
+            path = pending.pop()
+            if path in closure:
+                continue
+            closure.add(path)
+            pending.extend(edge['target'] for edge in edges if edge['from'] == path and edge.get('kind') == 'veriloga_include')
+        standards = {row['reference'] for row in external if row['from'] in closure}
+        data = [parsed[path] for path in closure if path in parsed]
+        if any(row['interfaces'] for row in data) and 'disciplines.vams' not in standards:
+            _issue(issues, 'veriloga_disciplines_dependency_missing', root)
+        if any(row.get('constant_macros') for row in data) and 'constants.vams' not in standards:
+            _issue(issues, 'veriloga_constants_dependency_missing', root)
     models = [row for data in parsed.values() for row in data['models']]
     instances = [row for data in parsed.values() for row in data['instances']]
     declarations = interfaces + models
@@ -445,7 +771,8 @@ def _inventory(documents, entry, allow_pdk):
         if len(visible) > 1:
             _issue(issues, 'ambiguous_master_reference', instance['path'], instance['line'], master=instance['master'])
         if len(visible) == 1 and 'ports' in visible[0] and len(visible[0]['ports']) != instance['port_count']:
-            _issue(issues, 'subcircuit_port_count_mismatch', instance['path'], instance['line'], master=instance['master'])
+            code = 'veriloga_module_port_count_mismatch' if visible[0].get('kind') == 'veriloga_module' else 'subcircuit_port_count_mismatch'
+            _issue(issues, code, instance['path'], instance['line'], master=instance['master'])
         if len(visible) == 1 and 'ports' in visible[0] and instance['scope']:
             owner = (instance['path'], tuple(instance['scope']))
             child = (visible[0]['path'], tuple(visible[0]['scope'] + [visible[0]['name']]))
@@ -466,7 +793,8 @@ def _inventory(documents, entry, allow_pdk):
     for node in hierarchy:
         check_hierarchy(node, set())
     return {'issues': issues, 'documents': parsed, 'visited': sorted(visited), 'includes': edges,
-            'instances': instances, 'interfaces': interfaces, 'required_masters': sorted(required)}
+            'instances': instances, 'interfaces': interfaces, 'required_masters': sorted(required),
+            'veriloga_modules': modules, 'veriloga_external_dependencies': external}
 
 
 def _requirements(raw, source_id, inventory):
@@ -474,6 +802,8 @@ def _requirements(raw, source_id, inventory):
         'source_sha256': _sha(raw), 'status': 'partial' if inventory['issues'] else 'parsed',
         'instances': inventory['instances'], 'interfaces': inventory['interfaces'],
         'required_masters': inventory['required_masters'], 'includes': inventory['includes'],
+        'veriloga_modules': inventory['veriloga_modules'],
+        'veriloga_external_dependencies': inventory['veriloga_external_dependencies'],
         'issues': inventory['issues'], 'confirmation_required': ['authored_testbench_and_objectives'],
         'dimensions_scope': 'generic source inventory only; no parameter evaluation or terminal-role inference'}
 
@@ -487,7 +817,7 @@ def inspect_agent_source(source, *, source_id='dut.scs', support_files=None):
 
 def _binding(value):
     required = {'discovery_id', 'candidate_id', 'sections', 'model_names', 'pdk_sha256'}
-    optional = {'entry_sha256', 'tmi_candidate_id', 'audit_sha256'}
+    optional = {'entry_sha256', 'tmi_candidate_id', 'audit_sha256', 'veriloga_standard_includes', 'veriloga_header_closure'}
     if type(value) is not dict or not required <= set(value) or set(value) - required - optional:
         _invalid('Supply the explicit selected PDK binding fields.')
     for field in ('discovery_id', 'candidate_id'):
@@ -509,7 +839,82 @@ def _binding(value):
     if value.get('tmi_candidate_id') is not None and (type(value['tmi_candidate_id']) is not str or
             not re.fullmatch(r'[A-Za-z0-9_:+.-]{1,160}', value['tmi_candidate_id'])):
         _invalid('Use an observed opaque TMI candidate identity.')
+    if 'veriloga_standard_includes' in value:
+        rows = value['veriloga_standard_includes']
+        if type(rows) is not list or len(rows) > len(VA_STANDARD_INCLUDES):
+            _invalid('Bind only the bounded standard Verilog-A include inventory.')
+        for row in rows:
+            if (type(row) is not dict or set(row) != {'name', 'alias', 'sha256'} or
+                    type(row['name']) is not str or row['name'] not in VA_STANDARD_INCLUDES or
+                    type(row['alias']) is not str or not VA_ALIAS.fullmatch(row['alias']) or
+                    type(row['sha256']) is not str or not HASH.fullmatch(row['sha256'])):
+                _invalid('Standard Verilog-A includes require a known name, registered alias and exact observed SHA-256; never a raw path.')
+        if len({row['name'] for row in rows}) != len(rows) or len({row['alias'] for row in rows}) != len(rows):
+            _invalid('Standard Verilog-A include names and aliases must be unique.')
+    if 'veriloga_header_closure' in value:
+        closure = value['veriloga_header_closure']
+        if (type(closure) is not dict or set(closure) != {'inventory_sha256', 'files', 'includes'} or
+                type(closure['inventory_sha256']) is not str or not HASH.fullmatch(closure['inventory_sha256']) or
+                type(closure['files']) is not list or not 1 <= len(closure['files']) <= MAX_FILES or
+                type(closure['includes']) is not list or len(closure['includes']) > MAX_FILES * 8):
+            _invalid('Standard header closure needs an observed inventory digest and bounded explicit files/includes.')
+        for row in closure['files']:
+            if (type(row) is not dict or set(row) != {'name', 'alias', 'sha256'} or not _relative(row['name']) or
+                    row['name'].lower() in ('dut.scs', 'tb.scs', 'pdk.scs') or
+                    type(row['alias']) is not str or not VA_ALIAS.fullmatch(row['alias']) or
+                    type(row['sha256']) is not str or not HASH.fullmatch(row['sha256'])):
+                _invalid('Header closure files require distinct relative names, controlled aliases and SHA-256; no raw paths.')
+        for row in closure['includes']:
+            if (type(row) is not dict or not {'from', 'reference', 'target'} <= set(row) or
+                    set(row) - {'from', 'reference', 'target', 'line'} or
+                    any(not _relative(row[field]) for field in ('from', 'reference', 'target')) or
+                    'line' in row and (type(row['line']) is not int or row['line'] < 1)):
+                _invalid('Header closure edges must use literal relative references and bounded source locations.')
     return json.loads(_canonical(value))
+
+
+def _check_header_closure(binding, required_standards, issues):
+    entries = {row['name']: row for row in binding.get('veriloga_standard_includes', [])}
+    closure = binding.get('veriloga_header_closure')
+    if required_standards and closure is None:
+        _issue(issues, 'veriloga_header_closure_missing')
+        return
+    if closure is None:
+        return
+    if not entries:
+        _issue(issues, 'veriloga_header_closure_unused')
+    files = closure['files']
+    by_name = {row['name']: row for row in files}
+    if len({row['name'].lower() for row in files}) != len(files) or len({row['alias'] for row in files}) != len(files):
+        _issue(issues, 'veriloga_header_closure_ambiguous_file')
+    for name, entry in entries.items():
+        if by_name.get(name) != entry:
+            _issue(issues, 'veriloga_standard_header_closure_mismatch', name)
+    graph = {name: set() for name in by_name}
+    for edge in closure['includes']:
+        if edge['from'] not in graph or edge['target'] not in graph:
+            _issue(issues, 'veriloga_header_closure_file_missing', edge['from'])
+            continue
+        if posixpath.join(posixpath.dirname(edge['from']), edge['reference']) != edge['target']:
+            _issue(issues, 'veriloga_header_closure_resolution_mismatch', edge['from'])
+            continue
+        graph[edge['from']].add(edge['target'])
+    visited, active = set(), set()
+    def visit(name):
+        if name in active:
+            _issue(issues, 'veriloga_header_closure_cycle', name)
+            return
+        if name in visited or name not in graph:
+            return
+        active.add(name)
+        for target in sorted(graph[name]):
+            visit(target)
+        active.remove(name)
+        visited.add(name)
+    for name in sorted(entries):
+        visit(name)
+    for name in sorted(set(graph) - visited):
+        _issue(issues, 'veriloga_header_closure_file_unused', name)
 
 
 def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_binding):
@@ -528,6 +933,17 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
     binding = _binding(pdk_binding)
     inventory = _inventory(documents, 'tb.scs', allow_pdk=True)
     issues = inventory['issues']
+    standard_bindings = {row['name']: row for row in binding.get('veriloga_standard_includes', [])}
+    required_standards = {row['reference'] for row in inventory['veriloga_external_dependencies']}
+    for name in sorted(required_standards - set(standard_bindings)):
+        _issue(issues, 'veriloga_standard_include_binding_missing', name)
+    for name in sorted(set(standard_bindings) - required_standards):
+        _issue(issues, 'veriloga_standard_include_binding_unused', name)
+    _check_header_closure(binding, required_standards, issues)
+    external_dependencies = [{**row, 'binding': standard_bindings.get(row['reference']),
+        'verification': 'requires_runner_dependency_audit',
+        'resolution_policy': 'runner_audited_staged_standard_include'}
+        for row in inventory['veriloga_external_dependencies']]
     if 'dut.scs' not in inventory['visited']:
         _issue(issues, 'managed_dut_not_included', 'tb.scs')
     if inventory['required_masters'] and 'pdk.scs' not in inventory['visited']:
@@ -540,11 +956,21 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
         _issue(issues, 'supported_analysis_missing', 'tb.scs')
     if not saves:
         _issue(issues, 'explicit_save_missing', 'tb.scs')
+    support = {path: raw for path, raw in documents.items() if path not in ('dut.scs', 'tb.scs')}
+    declared_helpers = set()
     # A declared interface is checked against authored bytes; no interface is
     # inferred when the caller deliberately supplies a flat DUT.
     if criteria.get('schema') == 'ic.agent_testbench.v1':
         if type(criteria.get('text')) is not str or criteria['text'].encode('utf-8') != documents['tb.scs']:
             _issue(issues, 'authored_testbench_mismatch', 'tb.scs')
+        if 'helper_files' in criteria:
+            helpers = criteria['helper_files']
+            if (type(helpers) is not dict or not set(helpers) <= set(support) or
+                    any(type(text) is not str or text.encode('utf-8') != support[path]
+                        for path, text in helpers.items() if path in support)):
+                _issue(issues, 'authored_helper_files_mismatch', 'tb.scs')
+            if type(helpers) is dict:
+                declared_helpers = set(helpers)
         interface = criteria.get('interface')
         if type(interface) is not dict or set(interface) != {'subckt', 'instance', 'port_bindings'}:
             _issue(issues, 'authored_interface_missing', 'tb.scs')
@@ -556,16 +982,35 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
                 _issue(issues, 'authored_interface_not_resolved', 'tb.scs')
             elif dict(zip(matches[0]['ports'], calls[0]['ordered_nets'])) != interface['port_bindings']:
                 _issue(issues, 'authored_port_bindings_mismatch', 'tb.scs')
+    # The compiler accepts a flat union, but its two origins remain distinct:
+    # reviewed authored helpers and the original DUT's own include closure.
+    dut_closure, pending = set(), ['dut.scs']
+    while pending:
+        path = pending.pop()
+        if path in dut_closure:
+            continue
+        dut_closure.add(path)
+        pending.extend(edge['target'] for edge in inventory['includes']
+                       if edge['from'] == path and not edge.get('external'))
+    for path in sorted(set(support) - declared_helpers - dut_closure):
+        _issue(issues, 'undeclared_testbench_support_file', path)
     manifest = {'schema': MANIFEST_SCHEMA, 'mode': 'agent-tb', 'entrypoint': 'tb.scs',
         'source_sha256': _sha(documents['dut.scs']), 'tb_sha256': _sha(documents['tb.scs']),
         'files': [{'path': path, 'sha256': _sha(raw), 'bytes': len(raw),
                    'role': 'dut' if path == 'dut.scs' else 'testbench' if path == 'tb.scs' else 'support',
+                   **({'support_role': 'authored_helper' if path in declared_helpers else 'dut_support'} if path in support else {}),
                    'reachable': path in inventory['visited']} for path, raw in sorted(documents.items())],
+        'authored_helper_paths': sorted(declared_helpers),
+        'dut_support_paths': sorted(set(support) - declared_helpers),
         'managed_pdk': {'path': 'pdk.scs', 'sha256': binding['pdk_sha256'],
                         'scope': 'caller-generated wrapper bytes; not the entire PDK'},
         'criteria_sha256': _sha(criteria_raw), 'pdk_binding': binding,
         'pdk_binding_sha256': _sha(_canonical(binding)), 'dependency_closure': inventory['includes'],
         'required_masters': inventory['required_masters'],
+        'veriloga_modules': inventory['veriloga_modules'],
+        'veriloga_external_dependencies': external_dependencies,
+        'veriloga_header_closure': binding.get('veriloga_header_closure'),
+        'static_check_scope': 'bounded syntax and source identity only; not a Verilog-A compiler or execution sandbox',
         'scientific_intent_inferred': False, 'source_rewritten': False,
         'simulation_verified': False, 'human_review_required': True}
     manifest['manifest_sha256'] = _sha(_canonical(manifest))
@@ -573,4 +1018,4 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
         'status': 'blocked' if issues else 'static_ready', 'missing': issues,
         'manifest': manifest, 'requirements': _requirements(documents['dut.scs'], 'dut.scs', inventory),
         'analyses': analyses, 'saves': saves, 'execution_authorized': False,
-        'supported_scope': 'finite Spectre statements; tran/ac/dc, explicit save and supplied relative includes; no AHDL, scripts or dynamic topology'}
+        'supported_scope': 'finite Spectre and scalar Verilog-A syntax; supplied relative includes and explicitly bound standard headers; no scripts, dynamic includes or compiler/sandbox claim'}

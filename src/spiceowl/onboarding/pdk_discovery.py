@@ -24,6 +24,8 @@ REQUIREMENTS_SCHEMA = "spiceowl.netlist-model-requirements.v1"
 DISCOVERY_SCHEMA = "spiceowl.pdk-discovery.v1"
 MAX_SOURCE_BYTES = 1024 * 1024
 MAX_RESULT_BYTES = 2 * 1024 * 1024
+LIBRARY_SCHEMA = 'spiceowl.pdk-library.v1'
+MAX_LIBRARY_RESULT_BYTES = 16 * 1024 * 1024
 DIRECTORY_SNAPSHOT_PREFIX = "SPICEOWL_DISCOVERY_DIRECTORY_SNAPSHOT "
 MAX_DIRECTORY_SNAPSHOT_BYTES = 64 * 1024
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.$:+-]{0,127}\Z")
@@ -316,6 +318,128 @@ def profile_suggestions(discovery):
             "state": "requires_confirmation" if suggestions else "missing",
             "candidates": suggestions, "selected_candidate_id": None,
             "search_complete": data["search_complete"], "ambiguities": data["ambiguities"]}
+
+
+def build_pdk_library_script(*, roots, cds_libs=None, search_hints=None, limits=None):
+    """Read a bounded PDK root inventory once, independently of any circuit.
+
+    This explicit mode uses the same finite parser and include-closure guards
+    as filtered discovery. It emits a separate library receipt, capped at
+    16 MiB. Missing or truncated declarations are never inferred to be covered.
+    """
+    request_hash = _digest({'mode': 'full_library', 'roots': roots,
+                            'cds_libs': cds_libs, 'search_hints': search_hints, 'limits': limits})
+    script = build_pdk_discovery_script(required_masters=['__library_inventory__'], roots=roots,
+        source_sha256=request_hash, cds_libs=cds_libs, search_hints=search_hints, limits=limits)
+    for old, new in (
+            ("if name is not None and name.lower() in required:", "if name is not None:"),
+            ("if model and model.group(1).lower() in required and not contract_state['stack']:",
+             "if model and not contract_state['stack']:"),
+            ("if name.lower() in required: state['wrappers'].append(row)", "state['wrappers'].append(row)"),
+            ("if state['stack'] and state['stack'][-1]['name'].lower() not in required: return", "# Observe every wrapper literal within the finite library policy."),
+            ("if row['name'].lower() not in required: return", "# Observe every wrapper instance within the finite library policy.")):
+        if script.count(old) != 1: _invalid('The installed parser cannot expose a full-library declaration inventory.')
+        script = script.replace(old, new, 1)
+    # These narrow seams deliberately fail closed if the shared parser changes.
+    start = script.find("snapshot_codes=['model_scan_not_started']")
+    stop = script.find('for path in sorted(file_candidates[:limits[', start)
+    if start < 0 or stop < start: _invalid('The installed scanner has no supported library inventory seam.')
+    script = script[:start] + script[stop:]
+    before_graph = 'all_declarations, includes, tmi_refs, graph, graph_by_key = [], [], [], [], {}'
+    inject = ("library_all_names=sorted(set(value['name'] for data in parsed.values() "
+              "for current,line,kind,value in data['records'] if kind=='master'))\n"
+              "library_names=library_all_names[:4096]\n"
+              "if len(library_all_names)>4096: issue('library_model_name_limit')\n"
+              "discovery['required_masters']=library_names\n" + before_graph)
+    if script.count(before_graph) != 1: _invalid('The installed scanner cannot inventory library models.')
+    script = script.replace(before_graph, inject, 1)
+    marker = "    candidate={'entry_path':path,'entry_sha256':files[path]['sha256'],"
+    replacement = ("    if sum(len(c['models']) for c in entry_candidates)+len(covered)>8192:\n"
+                   "        issue('library_binding_limit');break\n"
+                   "    discovery['required_masters']=sorted(covered)\n" + marker)
+    if script.count(marker) != 1: _invalid('The installed scanner cannot preserve library entry scope.')
+    script = script.replace(marker, replacement, 1)
+    marker = "complete=[c for c in entry_candidates if not c['missing_masters']]"
+    if script.count(marker) != 1: _invalid('The installed scanner cannot finalize library scope.')
+    script = script.replace(marker, "discovery['required_masters']=library_names\n" + marker, 1)
+    marker = "encoded=json.dumps(result,sort_keys=True,ensure_ascii=True)"
+    if script.count(marker) != 1: _invalid('The installed scanner cannot serialize a bounded library receipt.')
+    script = script.split(marker, 1)[0]
+    return script + _LIBRARY_SERIALIZER
+
+
+def validate_pdk_library(library):
+    """Validate an independent full-library observation without reading paths."""
+    if (not isinstance(library, dict) or library.get('schema') != LIBRARY_SCHEMA
+            or library.get('mode') != 'full_library'):
+        _invalid('Use an explicit full-library receipt, never a filtered scan relabeled as an inventory.')
+    try: raw = json.dumps(library, allow_nan=False).encode()
+    except (ValueError, TypeError, UnicodeError, RecursionError): _invalid()
+    if len(raw) > MAX_LIBRARY_RESULT_BYTES or library.get('library_id') != _digest(
+            {key: value for key, value in library.items() if key != 'library_id'}):
+        _invalid('Library receipt exceeds its bound or differs from its digest.')
+    coverage = library.get('coverage')
+    candidates = library.get('entry_candidates')
+    if (not isinstance(coverage, dict) or coverage.get('kind') != 'full_library_attempt'
+            or not isinstance(candidates, list) or len(candidates) > 256
+            or not isinstance(library.get('roots'), list) or not 1 <= len(library['roots']) <= 8
+            or not isinstance(library.get('files'), list) or len(library['files']) > 256
+            or not isinstance(library.get('declarations'), list)
+            or not isinstance(library.get('audit_limits'), dict)
+            or type(library.get('search_complete')) is not bool
+            or coverage.get('whole_pdk_qualified') is not False): _invalid()
+    for root in library['roots']:
+        if _path(root) == '/': _invalid()
+    files = {}
+    for row in library['files']:
+        if (not isinstance(row, dict) or not isinstance(row.get('sha256'), str)
+                or not _HASH.fullmatch(row['sha256'])): _invalid()
+        path = _path(row.get('path'))
+        if path in files: _invalid('Duplicate observed file identities are unsupported.')
+        files[path] = row['sha256']
+    ids, indexed, binding_count = set(), set(), 0
+    for candidate in candidates:
+        if (not isinstance(candidate, dict) or not isinstance(candidate.get('candidate_id'), str)
+                or not _HASH.fullmatch(candidate['candidate_id']) or candidate['candidate_id'] in ids
+                or not isinstance(candidate.get('models'), list) or len(candidate['models']) > 4096
+                or any(not isinstance(candidate.get(key), list) for key in ('dependency_paths', 'dependency_scopes',
+                    'section_candidates', 'available_sections', 'master_coverage', 'unknown_codes', 'tmi_candidates'))
+                or type(candidate.get('coverage_complete')) is not bool
+                or candidate.get('entry_role') not in ('include_entry_candidate', 'definition_only')): _invalid()
+        ids.add(candidate['candidate_id'])
+        if files.get(_path(candidate.get('entry_path'))) != candidate.get('entry_sha256'): _invalid()
+        if any(not isinstance(path, str) or path not in files for path in candidate['dependency_paths']): _invalid()
+        for scope in candidate['dependency_scopes']:
+            if (not isinstance(scope, dict) or not isinstance(scope.get('path'), str) or scope['path'] not in files
+                    or 'section' not in scope or scope['section'] is not None and not isinstance(scope['section'], str)): _invalid()
+        names = []
+        for model in candidate['models']:
+            if (not isinstance(model, dict) or not isinstance(model.get('name'), str)
+                    or not _NAME.fullmatch(model['name'])): _invalid()
+            names.append(model['name'])
+        if len(set(names)) != len(names) or sorted(names) != candidate['master_coverage']: _invalid()
+        indexed.update(names); binding_count += len(names)
+    if (len(indexed) > 4096 or binding_count > 8192
+            or sorted(indexed) != coverage.get('indexed_model_names')
+            or len(indexed) != coverage.get('indexed_model_count')):
+        _invalid('Indexed model scope differs from the observed entries.')
+    for row in library['declarations']:
+        if (not isinstance(row, dict) or not isinstance(row.get('name'), str) or not _NAME.fullmatch(row['name'])
+                or not isinstance(row.get('path'), str) or row['path'] not in files
+                or type(row.get('line')) is not int or row['line'] < 1
+                or 'section' not in row or row['section'] is not None and not isinstance(row['section'], str)): _invalid()
+    return library
+
+
+def pdk_library_page(library, *, offset=0, limit=64):
+    """Page one immutable receipt's actual indexed names; never scan again."""
+    validate_pdk_library(library)
+    if type(offset) is not int or not 0 <= offset <= 4096 or type(limit) is not int or not 1 <= limit <= 256: _invalid()
+    names = library['coverage']['indexed_model_names']; selected = names[offset:offset + limit]
+    return {'schema': 'spiceowl.pdk-library-page.v1', 'library_id': library['library_id'],
+        'model_names': selected, 'total': len(names), 'next_offset': offset + len(selected) if offset + len(selected) < len(names) else None,
+        'coverage': {'complete_within_policy': library['coverage']['complete_within_policy'],
+                     'whole_pdk_qualified': False}, 'ready_to_run': False}
 
 
 def audit_config_for_candidate(discovery, candidate_id, *, sections,
@@ -1121,5 +1245,41 @@ if len(encoded.encode('utf-8'))>2000000:
             result['directory_suggestions_truncated']=True;continue
         result['directory_suggestions'].append(row);used+=extra
 result['discovery_id']=stable(result)
+print(json.dumps(result,sort_keys=True))
+'''
+
+
+_LIBRARY_SERIALIZER = r'''
+result.pop('source_sha256',None)
+result.pop('required_masters',None)
+result.update(schema='spiceowl.pdk-library.v1',mode='full_library',
+    selection_made=False,profile_registered=False,
+    cache_scope='observed per-device library metadata; never launch freshness',
+    scope_note='Full-library attempt within the declared roots and finite parser/search policy; not process qualification.')
+original_candidate_count=len(result['entry_candidates'])
+omitted_candidates=0
+def library_coverage():
+    indexed=sorted(set(model['name'] for candidate in result['entry_candidates'] for model in candidate['models']))
+    unindexed=sorted(set(library_all_names)-set(indexed))
+    entry_limits=any('library_entry_model_limit' in candidate['unknown_codes'] for candidate in result['entry_candidates'])
+    complete=result['search_complete'] and not unindexed and not omitted_candidates and not entry_limits
+    result['coverage']={'kind':'full_library_attempt','complete_within_policy':bool(complete),
+        'whole_pdk_qualified':False,'observed_model_names':library_all_names[:4096],
+        'observed_model_count':len(library_all_names),'observed_names_truncated':len(library_all_names)>4096,
+        'indexed_model_names':indexed,'indexed_model_count':len(indexed),
+        'unindexed_model_names':unindexed[:4096],'unindexed_model_count':len(unindexed),
+        'observed_entry_count':original_candidate_count,'omitted_entry_count':omitted_candidates,
+        'entry_scope_truncated':entry_limits,'coverage_basis':'observed declarations and stored candidate closures'}
+    result['status']='complete' if complete else 'partial'
+library_coverage()
+if len(json.dumps(result,sort_keys=True).encode('utf-8'))>16744448:
+    result['detail_omissions']=[{'field':key,'observed_count':len(result.get(key,[])),'reason':'library_response_limit'}
+        for key in ('section_graph','includes')]
+    result['section_graph']=[];result['includes']=[]
+while result['entry_candidates'] and len(json.dumps(result,sort_keys=True).encode('utf-8'))>16744448:
+    result['entry_candidates'].pop();omitted_candidates+=1;library_coverage()
+if len(json.dumps(result,sort_keys=True).encode('utf-8'))>16744448:
+    raise ValueError('library_metadata_response_limit: narrow the observed root scope')
+result['library_id']=stable(result)
 print(json.dumps(result,sort_keys=True))
 '''

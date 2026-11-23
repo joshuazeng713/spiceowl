@@ -1,0 +1,4 @@
+# Build frontend versions for the reproducible developer profile.
+pip==25.3
+setuptools==80.9.0
+wheel==0.45.1

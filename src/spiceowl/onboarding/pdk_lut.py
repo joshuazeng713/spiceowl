@@ -117,7 +117,7 @@ class PdkLut:
         self.connection = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, timeout=5) if read_only else sqlite3.connect(self.path, timeout=5)
         self.connection.row_factory = sqlite3.Row
         version = self.connection.execute('PRAGMA user_version').fetchone()[0]
-        if version not in ((1, 2) if read_only else (0, 1, 2)):
+        if version not in ((1, 2, 3) if read_only else (0, 1, 2, 3)):
             self.connection.close(); _invalid('Unsupported PDK cache schema version.')
         self.index_version = version
         page_size = self.connection.execute('PRAGMA page_size').fetchone()[0]
@@ -127,7 +127,7 @@ class PdkLut:
         if read_only:
             return
         self.connection.execute('PRAGMA max_page_count=' + str(MAX_DATABASE_BYTES // page_size))
-        if version == 2:
+        if version == 3:
             return
         with self.connection:
             self.connection.executescript('''
@@ -154,9 +154,27 @@ class PdkLut:
                     PRIMARY KEY(cache_id, candidate_id)
                 );
                 CREATE INDEX IF NOT EXISTS binding_rank ON ranked_bindings(cache_id, rank);
-                PRAGMA user_version=2;
+                CREATE TABLE IF NOT EXISTS library_observations (
+                    cache_id TEXT PRIMARY KEY, scope_key TEXT NOT NULL,
+                    library_id TEXT NOT NULL,
+                    content_fingerprint TEXT NOT NULL, observed_at REAL NOT NULL,
+                    metadata TEXT NOT NULL, library TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS library_scope ON library_observations(scope_key, observed_at DESC);
+                CREATE TABLE IF NOT EXISTS library_entries (
+                    cache_id TEXT NOT NULL, candidate_id TEXT NOT NULL,
+                    priority INTEGER NOT NULL, candidate TEXT NOT NULL,
+                    PRIMARY KEY(cache_id,candidate_id)
+                );
+                CREATE TABLE IF NOT EXISTS library_devices (
+                    cache_id TEXT NOT NULL, model_name TEXT NOT NULL, candidate_id TEXT NOT NULL,
+                    model TEXT NOT NULL, declarations TEXT NOT NULL,
+                    PRIMARY KEY(cache_id,model_name,candidate_id)
+                );
+                CREATE INDEX IF NOT EXISTS library_model_names ON library_devices(cache_id,model_name);
+                PRAGMA user_version=3;
             ''')
-        self.index_version = 2
+        self.index_version = 3
 
     def close(self):
         self.connection.close()
@@ -347,6 +365,243 @@ class PdkLut:
         if len(_json(result).encode()) > MAX_QUERY_BYTES:
             raise DomainError('One complete best binding exceeds the query budget; inspect the original private observation.', 'pdk_lut_query_size')
         return result
+
+
+    def put_library(self, library, *, server_identity, observed_at=None):
+        """Index one explicit library attempt; never upgrade filtered evidence."""
+        from .pdk_discovery import validate_pdk_library
+        from .recommendations import _corner_class
+        if self.read_only: _invalid('A read-only PDK cache cannot store observations.')
+        validate_pdk_library(library)
+        identity, roots = _identity(server_identity), _roots(library['roots'])
+        observed = _timestamp(time.time() if observed_at is None else observed_at)
+        scope_key = _digest({'server_identity': identity, 'roots': roots, 'mode': 'full_library'})
+        files = {row['path']: row['sha256'] for row in library['files']}
+        if any(not isinstance(sha, str) or not HASH.fullmatch(sha) for sha in files.values()): _invalid()
+        fingerprint = _digest({'roots': roots, 'files': sorted(files.items())})
+        cache_id = _digest({'scope_key': scope_key, 'library_id': library['library_id'],
+                            'content_fingerprint': fingerprint, 'observed_at': observed})
+        metadata = {'schema': 'spiceowl.pdk-library-cache.v1', 'cache_id': cache_id,
+            'library_id': library['library_id'], 'server_identity': identity, 'roots': roots,
+            'content_fingerprint': fingerprint, 'observed_at': observed,
+            'coverage': library['coverage'], 'files': library['files'],
+            'audit_limits': library['audit_limits'], 'search_policy': library.get('search_policy', {}),
+            'search_complete': library['search_complete'], 'fresh_audit_required': True,
+            'remote_freshness_verified': False, 'ready_to_run': False}
+        entries, devices = [], []
+        for candidate in library['entry_candidates']:
+            scopes = {(row['path'], row['section']) for row in candidate['dependency_scopes']}
+            common = {key: value for key, value in candidate.items() if key != 'models'}
+            common['library_declarations'] = [row for row in library.get('declarations', [])
+                if (row['path'], row['section']) in scopes or row['section'] is None and row['path'] in candidate['dependency_paths']]
+            priority = (100 if candidate.get('entry_role') == 'include_entry_candidate' else 0)
+            priority += {'typical': 25, 'statistical': -25, 'extreme': -10, 'unspecified': 0}[_corner_class(candidate['section_candidates'])]
+            entries.append((cache_id, candidate['candidate_id'], priority, _json(common)))
+            for model in candidate['models']:
+                declarations = [row for row in library.get('declarations', []) if row['name'] == model['name']
+                    and ((row['path'], row['section']) in scopes or row['section'] is None and row['path'] in candidate['dependency_paths'])]
+                devices.append((cache_id, model['name'], candidate['candidate_id'], _json(model), _json(declarations)))
+        try:
+            with self.connection:
+                self.connection.execute('INSERT OR REPLACE INTO library_observations VALUES (?,?,?,?,?,?,?)',
+                    (cache_id, scope_key, library['library_id'], fingerprint, observed, _json(metadata), _json(library)))
+                self.connection.execute('DELETE FROM library_entries WHERE cache_id=?', (cache_id,))
+                self.connection.execute('DELETE FROM library_devices WHERE cache_id=?', (cache_id,))
+                self.connection.executemany('INSERT INTO library_entries VALUES (?,?,?,?)', entries)
+                self.connection.executemany('INSERT INTO library_devices VALUES (?,?,?,?,?)', devices)
+        except sqlite3.DatabaseError:
+            raise DomainError('The bounded PDK cache could not store this library; previous observations were retained.', 'pdk_lut_storage') from None
+        return copy.deepcopy(metadata)
+
+    def _library_lookup(self, *, server_identity, roots, library_id=None, content_fingerprint=None,
+                        max_age_s=DEFAULT_MAX_AGE_S, now=None, refresh=False):
+        identity, roots = _identity(server_identity), _roots(roots)
+        now = _timestamp(time.time() if now is None else now); age_limit = _timestamp(max_age_s)
+        if type(refresh) is not bool: _invalid()
+        for value in (library_id, content_fingerprint):
+            if value is not None and (not isinstance(value, str) or not HASH.fullmatch(value)): _invalid()
+        result = {'schema': 'spiceowl.pdk-library-lookup.v1', 'status': 'refresh_required' if refresh else 'miss',
+            'scan_required': True, 'record': None, 'missing': [], 'fresh_audit_required': True,
+            'remote_freshness_verified': False, 'ready_to_run': False}
+        if refresh or self.index_version < 3: return result
+        key = _digest({'server_identity': identity, 'roots': roots, 'mode': 'full_library'})
+        query, values = 'SELECT metadata FROM library_observations WHERE scope_key=?', [key]
+        for column, value in (('library_id', library_id), ('content_fingerprint', content_fingerprint)):
+            if value is not None: query += ' AND '+column+'=?'; values.append(value)
+        row = self.connection.execute(query + ' ORDER BY observed_at DESC,cache_id LIMIT 1', values).fetchone()
+        if row is None: return result
+        record = json.loads(row['metadata']); age = now - record['observed_at']
+        stale = age < 0 or age > age_limit
+        record['staleness'] = {'age_s': age, 'max_age_s': age_limit,
+            'state': 'clock_skew' if age < 0 else 'expired' if stale else 'within_local_age_policy',
+            'remote_content_current': 'unknown'}
+        result.update(status='stale' if stale else 'hit', scan_required=stale, record=record)
+        return result
+
+    def query_library_devices(self, *, model_names=None, offset=0, limit=64, **scope):
+        """Read a bounded device-name page; pass its library_id on continuation."""
+        if type(offset) is not int or not 0 <= offset <= 4096 or type(limit) is not int or not 1 <= limit <= 256: _invalid()
+        names = _models(model_names) if model_names is not None else None
+        if offset and scope.get('library_id') is None: _invalid('Continue a device page with its exact observed library_id.')
+        result = self._library_lookup(**scope); result.update(devices=[], total=0, next_offset=None)
+        if result['status'] != 'hit': return result
+        query, params = 'cache_id=?', [result['record']['cache_id']]
+        if names is not None:
+            query += ' AND model_name IN ('+','.join('?' for _ in names)+')'; params += names
+        total = self.connection.execute('SELECT COUNT(DISTINCT model_name) FROM library_devices WHERE '+query, params).fetchone()[0]
+        rows = self.connection.execute('SELECT model_name,COUNT(*) AS entry_count FROM library_devices WHERE '+query+
+            ' GROUP BY model_name ORDER BY model_name LIMIT ? OFFSET ?', [*params, limit, offset]).fetchall()
+        result.update(devices=[dict(row) for row in rows], total=total,
+            next_offset=offset+len(rows) if offset+len(rows)<total else None)
+        return result
+
+    def lookup_library_models(self, *, required_masters, requirements=None, remote_platform=None,
+                              library_candidate_id=None, **scope):
+        """Combine any observed model set from one server/root library snapshot.
+
+        Common observed entry closures produce legacy-compatible discovery.
+        Disjoint entries return an explicit multi-entry draft, never a fabricated
+        single entry or a ready-to-run claim. Unknown/conflicting scopes stay gaps.
+        """
+        names = _models(required_masters)
+        if library_candidate_id is not None and (not isinstance(library_candidate_id, str)
+                or not HASH.fullmatch(library_candidate_id)): _invalid()
+        if requirements is not None and (not isinstance(requirements, dict)
+                or requirements.get('schema') != 'spiceowl.netlist-model-requirements.v1'
+                or _models(requirements.get('required_masters')) != names
+                or not isinstance(requirements.get('source_sha256'), str)
+                or not HASH.fullmatch(requirements['source_sha256'])): _invalid()
+        result = self._library_lookup(**scope)
+        result.update(discovery=None, recommendation=None, combination=None)
+        if result['status'] != 'hit': return result
+        record = result['record']; cache_id = record['cache_id']
+        params = [cache_id, *names]; marks = ','.join('?' for _ in names)
+        predicate = 'cache_id=? AND model_name IN ('+marks+')'
+        if library_candidate_id is not None:
+            predicate += ' AND candidate_id=?'; params.append(library_candidate_id)
+        indexed = self.connection.execute('SELECT model_name,candidate_id,model,declarations FROM library_devices '
+            'WHERE '+predicate+' ORDER BY candidate_id,model_name', params).fetchall()
+        present = {row['model_name'] for row in indexed}
+        absent = sorted(set(names)-present)
+        if absent:
+            result.update(status='partial' if present else 'miss', scan_required=True,
+                missing=[{'field': 'required_masters', 'code': 'models_not_in_selected_entry' if library_candidate_id else 'models_not_indexed',
+                          'model_names': absent, 'message': 'These models were not covered by the selected stored scope; no inferred cache hit.'}])
+            return result
+        by_entry = {}
+        for row in indexed: by_entry.setdefault(row['candidate_id'], []).append(row)
+        common_ids = [cid for cid, rows in by_entry.items() if {row['model_name'] for row in rows} == set(names)]
+        selected_ids = common_ids or list(by_entry)
+        raw_entries = self.connection.execute('SELECT candidate_id,candidate FROM library_entries WHERE cache_id=? AND candidate_id IN ('+
+            ','.join('?' for _ in selected_ids)+') ORDER BY priority DESC,candidate_id', [cache_id, *selected_ids]).fetchall()
+        entries = [json.loads(row['candidate']) for row in raw_entries]
+        query_source = requirements['source_sha256'] if requirements else _digest({'library_id': record['library_id'], 'models': names})
+        ordered_names = list(requirements['required_masters']) if requirements else names
+        hashes = {row['path']: row['sha256'] for row in record['files']}
+        candidates, declarations, declaration_keys = [], [], set()
+        for entry in entries:
+            # The complete namespace is needed only for cross-entry conflict
+            # checks. Common-entry queries retain its immutable library origin;
+            # repeating unrelated declarations here can dwarf requested evidence.
+            if common_ids: entry.pop('library_declarations', None)
+            original_id = entry['candidate_id']; rows = by_entry[original_id]
+            entry['models'] = [json.loads(row['model']) for row in rows]
+            for row in rows:
+                for declaration in json.loads(row['declarations']):
+                    key = _json(declaration)
+                    if key not in declaration_keys: declarations.append(declaration); declaration_keys.add(key)
+            visible = entry['master_coverage']
+            entry['library_visible_masters'] = visible
+            entry['master_coverage'] = sorted(set(visible) & set(names))
+            entry['missing_masters'] = sorted(set(names) - set(visible))
+            entry['coverage_complete'] = entry['coverage_complete'] and not entry['missing_masters']
+            entry['library_candidate_id'] = original_id
+            entry['candidate_id'] = _digest({'source_sha256': query_source, 'entry_path': entry['entry_path'],
+                'sections': entry['section_candidates'], 'required_masters': ordered_names,
+                'dependency_scopes': entry['dependency_scopes'],
+                'files': [[path, hashes[path]] for path in entry['dependency_paths']], 'tmi_candidates': entry['tmi_candidates']})
+            candidates.append(entry)
+        used = {path for candidate in candidates for path in candidate['dependency_paths']}
+        discovery = {'schema': 'spiceowl.pdk-discovery.v1', 'source_sha256': query_source,
+            'required_masters': ordered_names, 'roots': record['roots'],
+            'entry_candidates': candidates, 'declarations': declarations,
+            'files': [row for row in record['files'] if row['path'] in used],
+            'search_complete': record['search_complete'], 'status': 'candidates',
+            'audit_limits': record['audit_limits'], 'ambiguities': [],
+            'cache_provenance': {'cache_id': cache_id, 'library_id': record['library_id'],
+                'observed_at': record['observed_at'], 'content_fingerprint': record['content_fingerprint'],
+                'mode': 'per_device_library_query', 'coverage': record['coverage'],
+                'fresh_audit_required': True, 'remote_freshness_verified': False},
+            'selection_made': False, 'profile_registered': False}
+        discovery['discovery_id'] = _digest(discovery)
+        from .pdk_discovery import MAX_RESULT_BYTES
+        if len(json.dumps(discovery, allow_nan=False).encode()) > MAX_RESULT_BYTES:
+            result.update(status='partial', scan_required=False, missing=[{'code': 'binding_query_size',
+                'message': 'Complete matching evidence exceeds one query page; supply an observed library_candidate_id.'}],
+                entry_choices=[{'library_candidate_id': row['library_candidate_id'], 'entry_path': row['entry_path'],
+                    'section_candidates': row['section_candidates'], 'covered_model_count': len(row['master_coverage'])}
+                    for row in candidates])
+            if len(_json(result).encode()) > MAX_QUERY_BYTES:
+                raise DomainError('Library entry choices exceed the query budget; inspect the original observation.', 'pdk_lut_query_size')
+            return result
+        from .recommendations import recommend_model_bindings
+        recommendation = recommend_model_bindings(discovery, remote_platform=remote_platform)
+        result['recommendation'] = recommendation
+        if common_ids:
+            result['discovery'] = discovery if requirements else None
+            result['scan_required'] = False
+            result['missing'] = copy.deepcopy(recommendation['missing'])
+        else:
+            result.update(status='partial', scan_required=False, combination=_combine_library_entries(candidates, names, declarations, remote_platform),
+                          missing=[{'field': 'entries', 'code': 'multi_entry_selection_required',
+                                    'message': 'No observed single entry covers this model set; inspect the explicit combination draft.'}])
+        if requirements is None:
+            result['recommendation'].pop('source_sha256', None)
+        if len(_json(result).encode()) > MAX_QUERY_BYTES:
+            raise DomainError('Complete library binding response exceeds its bounded query budget.', 'pdk_lut_query_size')
+        return result
+
+
+def _combine_library_entries(candidates, names, declarations, remote_platform):
+    """Finite set cover as a draft; retain cross-entry scope conflicts explicitly."""
+    from .recommendations import _corner_class, _sections, _tmi
+    remaining, chosen = set(names), []
+    available = sorted(candidates, key=lambda row: (-int(row['entry_role'] == 'include_entry_candidate'),
+        -int(_corner_class(row['section_candidates']) == 'typical'), row['entry_path'], row['candidate_id']))
+    while remaining and len(chosen) < 8:
+        ranked = sorted(available, key=lambda row: -len(remaining & set(row['master_coverage'])))
+        if not ranked or not remaining & set(ranked[0]['master_coverage']): break
+        selected = ranked[0]; chosen.append(selected); remaining -= set(selected['master_coverage']); available.remove(selected)
+    gaps = [{'code': 'combined_dependency_audit_required',
+             'message': 'A combined include closure has not been audited; this is a multi-entry draft only.'}]
+    corners = {_corner_class(row['section_candidates']) for row in chosen}
+    if len(corners - {'unspecified'}) > 1 or ('extreme' in corners and len({tuple(row['section_candidates']) for row in chosen}) > 1):
+        gaps.append({'code': 'entry_corner_conflict', 'message': 'Selected entries expose different corner conditions.'})
+    selected_scopes = {(scope['path'], scope['section']) for row in chosen for scope in row['dependency_scopes']}
+    physical = {}
+    declarations = [item for row in chosen for item in row.get('library_declarations', declarations)]
+    for declaration in declarations:
+        if (declaration['path'], declaration['section']) not in selected_scopes and not (declaration['section'] is None and any(path == declaration['path'] for path, _ in selected_scopes)): continue
+        physical.setdefault(declaration['name'], set()).add((declaration['path'], declaration['line'], declaration['section']))
+    duplicate = sorted(name for name, locations in physical.items() if len(locations) > 1)
+    if duplicate: gaps.append({'code': 'duplicate_combined_model_declarations', 'model_names': duplicate})
+    selected_tmi = {}
+    for row in chosen:
+        if row['unknown_codes']: gaps.append({'code': 'entry_scope_unknown', 'candidate_id': row['candidate_id'], 'unknown_codes': row['unknown_codes']})
+        row['suggested_sections'] = _sections(row)
+        row['tmi_selection'] = _tmi(row, remote_platform)
+        gaps.extend(row['tmi_selection']['missing'])
+        for group in row['tmi_candidates']:
+            for option in group.get('platform_candidates', []):
+                if option['relative_library'] == row['tmi_selection']['value']:
+                    selected_tmi.setdefault(option['relative_library'], set()).add(option['sha256'])
+    if any(len(hashes) > 1 for hashes in selected_tmi.values()):
+        gaps.append({'code': 'combined_tmi_fingerprint_conflict', 'message': 'Entries select different bytes for the same TMI library label.'})
+    if remaining: gaps.append({'code': 'combination_entry_limit', 'model_names': sorted(remaining)})
+    return {'schema': 'spiceowl.pdk-multi-entry-draft.v1', 'entries': chosen,
+        'covered_model_names': sorted(set(names)-remaining), 'missing': gaps,
+        'combination_verified': False, 'requires_explicit_selection': True,
+        'fresh_audit_required': True, 'ready_to_run': False}
 
 
 def rebind_discovery(record, requirements):

@@ -18,7 +18,7 @@ The paired CircuitGit development branch also provides a [fresh simulation intak
 
 [Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired workbench and MCP tools return exact next actions; missing evidence and uncertain submissions remain explicit.
 
-[Agent-authored testbenches](docs/agent-testbench.md) add a finite Spectre source/TB compiler that preserves authored bytes and explicit experiment intent for the paired CircuitGit review flow. A private [PDK lookup table](docs/pdk-lut.md) reuses bounded observations with visible age and scope; execution still requires a fresh dependency audit. Optional [ADC analysis tools](docs/adctools.md), installed with `pip install '.[adctools]'`, provide eight named Python/CLI operations and actual pinned ADCToolbox integration. Analysis uses explicit units, frequency and measurement rules; it does not infer a scientific pass. See the [agent reproducibility guide](docs/agent-reproducibility.md) for the deterministic steps and remaining limits.
+[Agent-authored testbenches](docs/agent-testbench.md) preserve Spectre source and reviewed relative Verilog-A helpers, including their standard-header dependency graph. A private [per-device PDK index](docs/pdk-lut.md) reuses an explicit library observation across different circuit model combinations, with visible age and coverage; execution still requires a fresh dependency audit. Optional [analysis tools](docs/adctools.md), installed with `pip install '.[adctools]'`, provide ten named Python/CLI operations, actual pinned ADCToolbox integration, and [native AC/DC parsing and measurements](docs/ac-dc-results.md). Gain and loop margins require explicit units, references and feedback semantics; DC region codes require a declared model contract. See the [agent reproducibility guide](docs/agent-reproducibility.md) for the deterministic steps and remaining limits.
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
@@ -118,6 +118,12 @@ spiceowl/
 The package includes synthetic replay, native Q&A, private host profiles, bounded SSH probes, optional read-only MCP queries, shared real-run monitoring/diagnostics/PSF parsing, and one signed client reused by CLI and web. CircuitGit owns project materialization, execution identity, dispatch and native collection. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
+
+For a complete development environment, run `python3 scripts/setup_dev.py`
+after cloning, then `.venv/bin/spiceowl serve --demo`. Setup installs the pinned
+MCP and numerical extras, downloads a project-local Python if needed, and runs
+a quick self-check. Use `--serve-demo` to install and start in one command.
+See [developer setup](docs/developer-setup.md) for requirements and recovery.
 
 With Python 3.11+ on macOS or Linux:
 

@@ -72,8 +72,29 @@ jobs:
           import unittest
           import numpy, scipy, adctoolbox
           assert importlib.metadata.version('adctoolbox') == '0.9.3'
-          suite = unittest.defaultTestLoader.discover('tests', pattern='test_adctools.py')
+          suite = unittest.TestSuite([
+              unittest.defaultTestLoader.discover('tests', pattern='test_adctools.py'),
+              unittest.defaultTestLoader.discover('tests', pattern='test_ac_dc.py'),
+          ])
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and not result.skipped
           PY
           spiceowl-adctools --help
+
+  developer-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Set up the pinned editable developer environment
+        run: python scripts/setup_dev.py --no-python-download
+      - name: Recheck without installation and verify repository links
+        run: |
+          python scripts/setup_dev.py --check-only
+          .venv/bin/python scripts/check_links.py
+          .venv/bin/python -m unittest tests.test_dev_setup

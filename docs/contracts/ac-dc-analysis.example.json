@@ -1,0 +1,782 @@
+{
+  "schema": "spiceowl.ac-dc-examples.v1",
+  "synthetic": true,
+  "evidence": "Original synthetic PSF-format records and actual local parser/algorithms; no simulator execution.",
+  "ac": {
+    "source": "HEADER\n\"analysis type\" \"ac\"\n\"analysis name\" \"gain\"\n\"simulator\" \"synthetic-fixture\"\n\"version\" \"fixture-1\"\nTYPE\n\"frequency\" FLOAT DOUBLE PROP(\"units\" \"Hz\")\n\"voltage\" COMPLEX DOUBLE PROP(\"units\" \"V\")\nSWEEP\n\"freq\" \"frequency\"\nTRACE\n\"pair\" GROUP 2\n\"out\" \"voltage\"\n\"reference\" \"voltage\"\nVALUE\n\"freq\" 0\n\"pair\" (20 0) (2 0)\n\"freq\" 10\n\"pair\" (10 -10) (2 0)\n\"freq\" 100\n\"pair\" (0.198019801980198 -1.9801980198019802) (2 0)\nEND\n",
+    "dataset": {
+      "schema": "spiceowl.spectre-dataset.v1",
+      "format": "psf_ascii",
+      "raw_sha256": "3993ce7633e0072bea7c1afa2e48ffd2ee942d985d74f437c255e8e3f731266d",
+      "analysis": {
+        "kind": "ac",
+        "name": "gain",
+        "native_type": "ac",
+        "producer_name": null,
+        "producer_type": null,
+        "simulator": "synthetic-fixture",
+        "simulator_version": "fixture-1"
+      },
+      "sample_count": 3,
+      "axis": {
+        "name": "freq",
+        "unit": "Hz",
+        "values": [
+          0.0,
+          10.0,
+          100.0
+        ]
+      },
+      "signals": [
+        {
+          "name": "out",
+          "unit": "V",
+          "value_kind": "complex",
+          "native_type": "voltage",
+          "real": [
+            20.0,
+            10.0,
+            0.198019801980198
+          ],
+          "imag": [
+            0.0,
+            -10.0,
+            -1.9801980198019802
+          ]
+        },
+        {
+          "name": "reference",
+          "unit": "V",
+          "value_kind": "complex",
+          "native_type": "voltage",
+          "real": [
+            2.0,
+            2.0,
+            2.0
+          ],
+          "imag": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "operating_points": [],
+      "warnings": [],
+      "specification_result": "not_evaluated",
+      "has_undefined_values": false
+    },
+    "arguments": {
+      "backend": "spiceowl",
+      "frequency_hz": [
+        0.0,
+        10.0,
+        100.0
+      ],
+      "response_real": [
+        20.0,
+        10.0,
+        0.198019801980198
+      ],
+      "response_imag": [
+        0.0,
+        -10.0,
+        -1.9801980198019802
+      ],
+      "reference_real": [
+        2.0,
+        2.0,
+        2.0
+      ],
+      "reference_imag": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "response_unit": "V",
+      "reference_unit": "V",
+      "response_kind": "transfer"
+    },
+    "result": {
+      "schema": "spiceowl.adctools.result.v1",
+      "operation": "ac_metrics",
+      "status": "valid",
+      "algorithm_version": "1.0.0",
+      "backend": "spiceowl",
+      "backend_version": "1.0.0",
+      "numerical_environment": {
+        "python": "3.12.14",
+        "numpy": "2.5.5",
+        "scipy": "1.18.1",
+        "adctoolbox": "0.9.3"
+      },
+      "parameters": {
+        "sample_count": 3,
+        "response_kind": "transfer",
+        "response_unit": "V",
+        "reference_unit": "V",
+        "has_reference": true,
+        "effective_response_unit": "1",
+        "dimensionless_gain": true,
+        "feedback_convention": null,
+        "phase_reference_deg": null,
+        "normalized_characteristic_denominator": null,
+        "interpolation": "linear_dB_and_unwrapped_phase_vs_log_frequency;linear_frequency_at_zero",
+        "phase_unwrap_assumption": "less_than_180_degrees_between_adjacent_samples",
+        "return_curves": true
+      },
+      "metrics": {
+        "dc_gain_db": {
+          "value": 20.0,
+          "unit": "dB",
+          "status": "valid"
+        },
+        "low_frequency_gain_db": {
+          "value": 20.0,
+          "unit": "dB",
+          "status": "valid"
+        },
+        "low_frequency_magnitude": {
+          "value": 10.0,
+          "unit": "1",
+          "status": "valid"
+        },
+        "low_frequency_hz": {
+          "value": 0.0,
+          "unit": "Hz",
+          "status": "valid"
+        },
+        "unity_gain_bandwidth_hz": {
+          "value": 99.41752048733693,
+          "unit": "Hz",
+          "status": "valid"
+        },
+        "phase_margin_deg": {
+          "value": null,
+          "unit": "deg",
+          "status": "undefined"
+        },
+        "gain_margin_db": {
+          "value": null,
+          "unit": "dB",
+          "status": "undefined"
+        }
+      },
+      "warnings": [
+        "sampled_response_only_no_extrapolation_or_closed_loop_stability_verdict"
+      ],
+      "specification_result": "not_evaluated",
+      "unity_crossings": [
+        {
+          "frequency_hz": 99.41752048733693,
+          "phase_deg": -84.18972678724589,
+          "classification": "crossing",
+          "scalar_eligible": true,
+          "phase_margin_deg": null,
+          "critical_phase_deg": null,
+          "bracket_hz": [
+            10.0,
+            100.0
+          ]
+        }
+      ],
+      "phase_crossings": [],
+      "stability_verdict": "not_evaluated",
+      "gbw_product_hz": null,
+      "curves": {
+        "frequency_hz": [
+          0.0,
+          10.0,
+          100.0
+        ],
+        "magnitude_db": [
+          20.0,
+          16.989700043360187,
+          -0.04321373782642656
+        ],
+        "phase_deg": [
+          0.0,
+          -45.0,
+          -84.28940686250037
+        ],
+        "frequency_unit": "Hz",
+        "magnitude_unit": "dB",
+        "response_unit": "1",
+        "phase_unit": "deg"
+      }
+    }
+  },
+  "dc": {
+    "source": "HEADER\n\"analysis type\" \"dc\"\n\"analysis name\" \"bias\"\nTYPE\n\"voltage\" FLOAT DOUBLE PROP(\"units\" \"V\")\nSWEEP\n\"supply\" \"voltage\"\nTRACE\n\"out\" \"voltage\"\nVALUE\n\"supply\" 0\n\"out\" 0\n\"supply\" 1\n\"out\" 0.5\nEND\n",
+    "dataset": {
+      "schema": "spiceowl.spectre-dataset.v1",
+      "format": "psf_ascii",
+      "raw_sha256": "f005d81ad441168814cb56e1277eb131fc9ecf2d3d6405ef4762103d651a73b5",
+      "analysis": {
+        "kind": "dc",
+        "name": "bias",
+        "native_type": "dc",
+        "producer_name": null,
+        "producer_type": null,
+        "simulator": null,
+        "simulator_version": null
+      },
+      "sample_count": 2,
+      "axis": {
+        "name": "supply",
+        "unit": "V",
+        "values": [
+          0.0,
+          1.0
+        ]
+      },
+      "signals": [
+        {
+          "name": "out",
+          "unit": "V",
+          "value_kind": "real",
+          "native_type": "voltage",
+          "values": [
+            0.0,
+            0.5
+          ]
+        }
+      ],
+      "operating_points": [],
+      "warnings": [],
+      "specification_result": "not_evaluated",
+      "has_undefined_values": false
+    }
+  },
+  "dc_op": {
+    "source": "HEADER\n\"analysis type\" \"info\"\n\"analysis name\" \"dcOpInfo\"\n\"AnalysisName\" \"bias\"\n\"AnalysisType\" \"dcOp\"\n\"simulator\" \"synthetic-fixture\"\n\"version\" \"fixture-1\"\nTYPE\n\"toy_mos\" STRUCT(\n\"vgs\" FLOAT DOUBLE PROP(\"units\" \"V\")\n\"vds\" FLOAT DOUBLE PROP(\"units\" \"V\")\n\"vth\" FLOAT DOUBLE PROP(\"units\" \"V\")\n\"vdsat\" FLOAT DOUBLE PROP(\"units\" \"V\")\n\"id\" FLOAT DOUBLE PROP(\"units\" \"A\")\n\"gm\" FLOAT DOUBLE PROP(\"units\" \"S\")\n\"gds\" FLOAT DOUBLE PROP(\"units\" \"S\")\n\"region\" INT BYTE\n\"unused_diagnostic\" FLOAT DOUBLE\n) PROP(\"key\" \"inst\")\nVALUE\n\"N1\" \"toy_mos\" (0.7 0.8 0.3 0.2 0.001 0.01 0.0001 2 NaN) PROP(\"model\" \"authored_nmos\")\n\"P1\" \"toy_mos\" (-0.7 -0.8 -0.3 -0.2 -0.001 0.01 0.0001 2 Inf) PROP(\"model\" \"authored_pmos\")\nEND\n",
+    "dataset": {
+      "schema": "spiceowl.spectre-dataset.v1",
+      "format": "psf_ascii",
+      "raw_sha256": "8e244bd0ffdc96ffa8d6668036fd10c101b8fb17c379824c0f2a9f89d7a01f8d",
+      "analysis": {
+        "kind": "dc_op",
+        "name": "dcOpInfo",
+        "native_type": "info",
+        "producer_name": "bias",
+        "producer_type": "dcOp",
+        "simulator": "synthetic-fixture",
+        "simulator_version": "fixture-1"
+      },
+      "sample_count": 1,
+      "axis": null,
+      "signals": [],
+      "operating_points": [
+        {
+          "name": "N1",
+          "model_type": "toy_mos",
+          "model": "authored_nmos",
+          "parameters": {
+            "vgs": {
+              "value": 0.7,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vds": {
+              "value": 0.8,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vth": {
+              "value": 0.3,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vdsat": {
+              "value": 0.2,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "id": {
+              "value": 0.001,
+              "unit": "A",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gm": {
+              "value": 0.01,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gds": {
+              "value": 0.0001,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "region": {
+              "value": 2.0,
+              "unit": null,
+              "status": "valid",
+              "value_kind": "integer"
+            },
+            "unused_diagnostic": {
+              "value": null,
+              "unit": null,
+              "status": "undefined",
+              "value_kind": "real"
+            }
+          }
+        },
+        {
+          "name": "P1",
+          "model_type": "toy_mos",
+          "model": "authored_pmos",
+          "parameters": {
+            "vgs": {
+              "value": -0.7,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vds": {
+              "value": -0.8,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vth": {
+              "value": -0.3,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vdsat": {
+              "value": -0.2,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "id": {
+              "value": -0.001,
+              "unit": "A",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gm": {
+              "value": 0.01,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gds": {
+              "value": 0.0001,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "region": {
+              "value": 2.0,
+              "unit": null,
+              "status": "valid",
+              "value_kind": "integer"
+            },
+            "unused_diagnostic": {
+              "value": null,
+              "unit": null,
+              "status": "undefined",
+              "value_kind": "real"
+            }
+          }
+        }
+      ],
+      "warnings": [
+        "native_nonfinite_values_preserved_as_undefined_null"
+      ],
+      "specification_result": "not_evaluated",
+      "has_undefined_values": true
+    },
+    "arguments": {
+      "backend": "spiceowl",
+      "devices": [
+        {
+          "name": "N1",
+          "model_type": "toy_mos",
+          "model": "authored_nmos",
+          "parameters": {
+            "vgs": {
+              "value": 0.7,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vds": {
+              "value": 0.8,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vth": {
+              "value": 0.3,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vdsat": {
+              "value": 0.2,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "id": {
+              "value": 0.001,
+              "unit": "A",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gm": {
+              "value": 0.01,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gds": {
+              "value": 0.0001,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "region": {
+              "value": 2.0,
+              "unit": null,
+              "status": "valid",
+              "value_kind": "integer"
+            },
+            "unused_diagnostic": {
+              "value": null,
+              "unit": null,
+              "status": "undefined",
+              "value_kind": "real"
+            }
+          }
+        },
+        {
+          "name": "P1",
+          "model_type": "toy_mos",
+          "model": "authored_pmos",
+          "parameters": {
+            "vgs": {
+              "value": -0.7,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vds": {
+              "value": -0.8,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vth": {
+              "value": -0.3,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "vdsat": {
+              "value": -0.2,
+              "unit": "V",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "id": {
+              "value": -0.001,
+              "unit": "A",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gm": {
+              "value": 0.01,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "gds": {
+              "value": 0.0001,
+              "unit": "S",
+              "status": "valid",
+              "value_kind": "real"
+            },
+            "region": {
+              "value": 2.0,
+              "unit": null,
+              "status": "valid",
+              "value_kind": "integer"
+            },
+            "unused_diagnostic": {
+              "value": null,
+              "unit": null,
+              "status": "undefined",
+              "value_kind": "real"
+            }
+          }
+        }
+      ],
+      "required_devices": [
+        "N1",
+        "P1"
+      ],
+      "device_contracts": {
+        "N1": {
+          "polarity": "nmos",
+          "saturation_method": "region",
+          "region_map": {
+            "2": "saturation",
+            "1": "linear"
+          },
+          "region_map_source": "original synthetic model convention"
+        },
+        "P1": {
+          "polarity": "pmos",
+          "saturation_method": "vdsat",
+          "voltage_convention": "signed_vgs_vds",
+          "vdsat_convention": "signed",
+          "require_above_threshold": true,
+          "minimum_headroom_v": 0.1
+        }
+      },
+      "supplies": [
+        {
+          "name": "VDD",
+          "voltage_v": 1.2,
+          "current_a": 0.001,
+          "current_sign": "into_dut"
+        }
+      ]
+    },
+    "result": {
+      "schema": "spiceowl.adctools.result.v1",
+      "operation": "dc_op_metrics",
+      "status": "valid",
+      "algorithm_version": "1.0.0",
+      "backend": "spiceowl",
+      "backend_version": "1.0.0",
+      "numerical_environment": {
+        "python": "3.12.14",
+        "numpy": "2.5.5",
+        "scipy": "1.18.1",
+        "adctoolbox": "0.9.3"
+      },
+      "parameters": {
+        "required_devices": [
+          "N1",
+          "P1"
+        ],
+        "device_contracts": {
+          "N1": {
+            "polarity": "nmos",
+            "saturation_method": "region",
+            "region_map": {
+              "2": "saturation",
+              "1": "linear"
+            },
+            "region_map_source": "original synthetic model convention"
+          },
+          "P1": {
+            "polarity": "pmos",
+            "saturation_method": "vdsat",
+            "voltage_convention": "signed_vgs_vds",
+            "vdsat_convention": "signed",
+            "require_above_threshold": true,
+            "minimum_headroom_v": 0.1
+          }
+        },
+        "supply_power_scope": "explicit_selected_rails_only"
+      },
+      "metrics": {
+        "required_device_count": {
+          "value": 2,
+          "unit": "count",
+          "status": "valid"
+        },
+        "saturation_pass_count": {
+          "value": 2,
+          "unit": "count",
+          "status": "valid"
+        },
+        "saturation_fail_count": {
+          "value": 0,
+          "unit": "count",
+          "status": "valid"
+        },
+        "saturation_unknown_count": {
+          "value": 0,
+          "unit": "count",
+          "status": "valid"
+        },
+        "static_power_w": {
+          "value": 0.0012,
+          "unit": "W",
+          "status": "valid"
+        }
+      },
+      "warnings": [
+        "model_region_and_voltage_conditions_do_not_establish_full_device_qualification"
+      ],
+      "specification_result": "not_evaluated",
+      "devices": [
+        {
+          "name": "N1",
+          "model_type": "toy_mos",
+          "contract": {
+            "polarity": "nmos",
+            "saturation_method": "region",
+            "region_map": {
+              "2": "saturation",
+              "1": "linear"
+            },
+            "region_map_source": "original synthetic model convention"
+          },
+          "observed": {
+            "vgs": {
+              "value": 0.7,
+              "unit": "V",
+              "status": "valid"
+            },
+            "vds": {
+              "value": 0.8,
+              "unit": "V",
+              "status": "valid"
+            },
+            "vth": {
+              "value": 0.3,
+              "unit": "V",
+              "status": "valid"
+            },
+            "vdsat": {
+              "value": 0.2,
+              "unit": "V",
+              "status": "valid"
+            },
+            "id": {
+              "value": 0.001,
+              "unit": "A",
+              "status": "valid"
+            },
+            "gm": {
+              "value": 0.01,
+              "unit": "S",
+              "status": "valid"
+            },
+            "gds": {
+              "value": 0.0001,
+              "unit": "S",
+              "status": "valid"
+            },
+            "gm_over_id": {
+              "value": 10.0,
+              "unit": "1/V",
+              "status": "valid"
+            },
+            "intrinsic_gain": {
+              "value": 100.0,
+              "unit": "1",
+              "status": "valid"
+            }
+          },
+          "region": {
+            "value": 2.0,
+            "unit": null,
+            "status": "valid",
+            "value_kind": "integer"
+          },
+          "region_label": "saturation",
+          "saturation_headroom_v": null,
+          "saturation_verdict": "pass",
+          "missing": [],
+          "scope": "declared_model_region_map"
+        },
+        {
+          "name": "P1",
+          "model_type": "toy_mos",
+          "contract": {
+            "polarity": "pmos",
+            "saturation_method": "vdsat",
+            "voltage_convention": "signed_vgs_vds",
+            "vdsat_convention": "signed",
+            "require_above_threshold": true,
+            "minimum_headroom_v": 0.1
+          },
+          "observed": {
+            "vgs": {
+              "value": -0.7,
+              "unit": "V",
+              "status": "valid"
+            },
+            "vds": {
+              "value": -0.8,
+              "unit": "V",
+              "status": "valid"
+            },
+            "vth": {
+              "value": -0.3,
+              "unit": "V",
+              "status": "valid"
+            },
+            "vdsat": {
+              "value": -0.2,
+              "unit": "V",
+              "status": "valid"
+            },
+            "id": {
+              "value": -0.001,
+              "unit": "A",
+              "status": "valid"
+            },
+            "gm": {
+              "value": 0.01,
+              "unit": "S",
+              "status": "valid"
+            },
+            "gds": {
+              "value": 0.0001,
+              "unit": "S",
+              "status": "valid"
+            },
+            "gm_over_id": {
+              "value": 10.0,
+              "unit": "1/V",
+              "status": "valid"
+            },
+            "intrinsic_gain": {
+              "value": 100.0,
+              "unit": "1",
+              "status": "valid"
+            }
+          },
+          "region": {
+            "value": 2.0,
+            "unit": null,
+            "status": "valid",
+            "value_kind": "integer"
+          },
+          "region_label": null,
+          "saturation_headroom_v": 0.6000000000000001,
+          "saturation_verdict": "pass",
+          "missing": [],
+          "scope": "declared_vdsat_voltage_condition"
+        }
+      ],
+      "supplies": [
+        {
+          "name": "VDD",
+          "voltage_v": 1.2,
+          "current_a": 0.001,
+          "current_sign": "into_dut",
+          "absorbed_power_w": 0.0012
+        }
+      ],
+      "saturation_result": "pass"
+    }
+  }
+}

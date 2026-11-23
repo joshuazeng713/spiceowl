@@ -18,7 +18,7 @@ from spiceowl.domain.common import DomainError
 from spiceowl.onboarding.ssh_discovery import discover_ssh_hosts, validate_ssh_target
 from spiceowl.onboarding.environment import (REMOTE_PYTHON, ACTIVATION_PYTHON, SETUP_CSH_COMMAND, MAX_OUTPUT_BYTES, ProbeReply,
     build_environment_probe, capture_server_environment, parse_environment_reply,
-    activate_observed_environment, probe_server_environment, public_environment, _transport, _build_setup_probe)
+    activate_observed_environment, probe_server_environment, public_environment, public_platform, _transport, _build_setup_probe)
 
 
 def wire(value, nonce):
@@ -483,6 +483,63 @@ class OnboardingEnvironmentTests(unittest.TestCase):
         with self.assertRaises(DomainError) as error:
             _transport([python, '-c', 'import time;time.sleep(1)'], '', timeout=.05)
         self.assertEqual(error.exception.code, 'environment_probe_timeout')
+
+    def test_remote_os_and_architecture_are_bounded_facts_in_both_projections(self):
+        etc = self.root / 'system-etc'; etc.mkdir()
+        (etc / 'os-release').write_text('NAME="Synthetic Enterprise Linux"\nID=centos\nID_LIKE="rhel fedora"\nPRETTY_NAME="never_collect_this"\n')
+        for python2 in (False, True):
+            with self.subTest(python2=python2):
+                private = self.scan(python2=python2)
+                platform = private['platform']
+                self.assertEqual(platform['system'], 'Linux')
+                self.assertEqual(platform['machine'], 'x86_64')
+                self.assertEqual(platform['os_release'], {'id': 'centos', 'id_like': ['rhel', 'fedora']})
+                self.assertEqual(platform['basis'], {'system': 'remote_uname', 'machine': 'remote_uname', 'os_release': 'remote_os_release'})
+                self.assertEqual(public_environment('fixture-a', private)['platform'], platform)
+                self.assertNotIn('never_collect_this', json.dumps(platform))
+                self.assertNotIn('synthetic-server', json.dumps(platform))
+                self.assertIn('/etc/os-release', self.opens)
+
+    def test_os_release_substitutions_duplicates_and_oversize_never_become_platform_facts(self):
+        etc = self.root / 'system-etc'; etc.mkdir()
+        path = etc / 'os-release'
+        cases = [('ID=centos\nID_LIKE="$(touch /synthetic/never-run)"\n', 'invalid'),
+                 ('ID=centos\nID=suse\n', 'invalid'), ('ID=centos\n' + '#' * 4096, 'limit')]
+        for body, status in cases:
+            path.write_text(body)
+            with self.subTest(status=status):
+                private = self.scan()
+                self.assertEqual(private['platform']['os_release_status'], status)
+                self.assertEqual(private['platform']['os_release'], {'id': None, 'id_like': []})
+                self.assertEqual(private['platform']['basis']['os_release'], 'unavailable')
+                self.assertNotIn('touch', json.dumps(private['platform']))
+
+    def test_platform_presentation_never_substitutes_local_values_or_private_identity_text(self):
+        with patch('os.uname', side_effect=AssertionError('Do not inspect the client platform')):
+            unknown = public_platform(None)
+            self.assertIsNone(unknown['system']); self.assertIsNone(unknown['machine'])
+            values = {'system': 'Linux', 'machine': 'SYNTHETIC_PRIVATE_VALUE',
+                'os_release': {'id': '/private/license', 'id_like': ['rhel', 'SECRET_VALUE']},
+                'os_release_status': 'observed', 'hostname': 'private-host',
+                'basis': {'system': 'local_uname', 'machine': 'remote_uname', 'os_release': 'remote_os_release'}}
+            public = public_platform(values)
+        self.assertIsNone(public['system']); self.assertIsNone(public['machine'])
+        self.assertEqual(public['os_release'], {'id': None, 'id_like': []})
+        self.assertNotIn('PRIVATE', json.dumps(public)); self.assertNotIn('private-host', json.dumps(public))
+
+    def test_bootstrap_retains_only_remote_uname_facts_without_guessing_a_distribution(self):
+        nonce = 'a'*32
+        def encoded(value): return value.encode().hex()
+        body = 'bootstrap\t1\nsystem\t' + encoded('Linux') + '\nmachine\t' + encoded('x86_64') + '\n'
+        raw = ('__SPICEOWL_ENV_' + nonce + '_BEGIN__\n' + body + '__SPICEOWL_ENV_' + nonce + '_END__\n').encode()
+        private = parse_environment_reply(raw, nonce)
+        self.assertEqual(public_platform(private['platform'])['machine'], 'x86_64')
+        self.assertEqual(private['platform']['os_release'], {'id': None, 'id_like': []})
+        program = build_environment_probe(nonce)
+        self.assertIn('$(uname -s 2>/dev/null)', program)
+        self.assertIn('$(uname -m 2>/dev/null)', program)
+        self.assertNotIn('source /etc/os-release', program)
+        self.assertNotIn('. /etc/os-release', program)
 
 
 if __name__ == '__main__':

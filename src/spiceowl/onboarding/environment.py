@@ -69,6 +69,57 @@ def setup_shell(path, body):
     if posix and not csh: return 'posix', basis
     return 'unknown', 'conflicting_shell_evidence' if csh and posix else 'unrecognized'
 
+def remote_platform():
+    """Read finite remote platform facts; os-release is data, never shell code."""
+    result = {'system': None, 'machine': None, 'os_release': {'id': None, 'id_like': []},
+        'basis': {'system': 'unavailable', 'machine': 'unavailable', 'os_release': 'unavailable'},
+        'os_release_status': 'unavailable'}
+    try:
+        uname = os.uname()
+        result.update(system=text(uname[0]), machine=text(uname[4]))
+        result['basis'].update(system='remote_uname', machine='remote_uname')
+    except (OSError, AttributeError, IndexError):
+        pass
+    # Common installations link /etc/os-release to this exact standard file.
+    # Other symlink targets are not another source-discovery opportunity.
+    path = os.path.realpath('/etc/os-release')
+    if path not in ('/etc/os-release', '/usr/lib/os-release'):
+        result['os_release_status'] = 'invalid'; return result
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode): return result
+            if info.st_size > 4096:
+                result['os_release_status'] = 'limit'; return result
+            raw = stream.read(4097)
+    except (OSError, IOError):
+        return result
+    if len(raw) > 4096:
+        result['os_release_status'] = 'limit'; return result
+    seen, invalid = set(), False
+    for line in text(raw).splitlines():
+        match = re.match(r'^\s*(ID|ID_LIKE)\s*=\s*(.*?)\s*$', line)
+        if not match: continue
+        name, value = match.groups()
+        if name in seen:
+            invalid = True; continue
+        seen.add(name)
+        if len(value) >= 2 and value[0] in ('\"', "'") and value[-1] == value[0]:
+            value = value[1:-1]
+        tokens = value.split() if name == 'ID_LIKE' else [value]
+        if (not tokens or len(tokens) > 8 or any(not re.match(r'^[a-z0-9][a-z0-9._-]{0,63}$', token) for token in tokens)):
+            invalid = True; continue
+        if name == 'ID': result['os_release']['id'] = tokens[0]
+        else: result['os_release']['id_like'] = [token for index, token in enumerate(tokens) if token not in tokens[:index]]
+    if invalid:
+        result['os_release'] = {'id': None, 'id_like': []}
+        result['os_release_status'] = 'invalid'
+    elif seen:
+        result['basis']['os_release'] = 'remote_os_release'
+        result['os_release_status'] = 'observed'
+    return result
+
 def collect_environment():
     begun = time.time()
     env = dict((text(k), text(v)) for k, v in os.environ.items())
@@ -77,6 +128,7 @@ def collect_environment():
     result = {'schema': 'spiceowl.server-environment.private.v1', 'probe_kind': 'python',
         'identity': {'hostname': text(os.uname()[1]), 'username': text(account.pw_name), 'uid': os.geteuid(),
                      'home': home, 'cwd': cwd, 'shell': env.get('SHELL', text(account.pw_shell))},
+        'platform': remote_platform(),
         'path': env.get('PATH', '').split(os.pathsep), 'environment': [], 'tools': [], 'licenses': [],
         'scripts': [], 'source_chain': [], 'setup_candidates': [], 'pdk_candidates': [], 'library_roots': [],
         'resources': {'cpu_count': None, 'load_1m': None, 'memory_total_bytes': None, 'memory_available_bytes': None},
@@ -382,6 +434,7 @@ def build_environment_probe(nonce):
         "  swo_hex() { [ ${#2} -le 4096 ] || return; printf '%s\\t' \"$1\"; printf '%s' \"$2\" | od -An -tx1 | tr -d ' \\n'; printf '\\n'; }\n"
         "  swo_hex hostname \"$(hostname 2>/dev/null)\"\n"
         "  swo_hex username \"$(id -un 2>/dev/null)\"\n"
+        "  swo_hex system \"$(uname -s 2>/dev/null)\"\n  swo_hex machine \"$(uname -m 2>/dev/null)\"\n"
         "  swo_hex home \"$HOME\"\n  swo_hex shell \"$SHELL\"\n  swo_hex cwd \"$(pwd)\"\n"
         "  swo_hex path \"$PATH\"\n  swo_hex spectre \"$(command -v spectre 2>/dev/null)\"\n"
         "  swo_hex CDS_LIC_FILE \"${CDS_LIC_FILE-}\"\n  swo_hex LM_LICENSE_FILE \"${LM_LICENSE_FILE-}\"\n"
@@ -530,6 +583,10 @@ def _bootstrap(payload):
         return bytes.fromhex(value).decode('utf-8', 'replace')
     for name in ('hostname', 'username', 'home', 'shell', 'cwd'):
         private['identity'][name] = decode(name)
+    private['platform'] = {'system': decode('system') or None, 'machine': decode('machine') or None,
+        'os_release': {'id': None, 'id_like': []}, 'os_release_status': 'unavailable',
+        'basis': {'system': 'remote_uname' if fields.get('system') else 'unavailable',
+                  'machine': 'remote_uname' if fields.get('machine') else 'unavailable', 'os_release': 'unavailable'}}
     private['path'] = decode('path').split(':')
     private['tools'] = [{'kind': 'spectre', 'path': decode('spectre') or None, 'version': None, 'basis': 'login_PATH', 'usable': 'unknown'},
                         {'kind': 'python', 'path': None, 'version': None, 'basis': 'bootstrap_PATH', 'usable': 'unknown'}]
@@ -570,6 +627,30 @@ def parse_environment_reply(raw, nonce):
             or value.get('probe_kind') != 'python'):
         raise DomainError('Unsupported environment observation.', 'environment_probe_protocol')
     return value
+
+
+def public_platform(value):
+    """Present only remote platform identifiers, with no local fallback facts."""
+    value = value if isinstance(value, dict) else {}
+    basis = value.get('basis') if isinstance(value.get('basis'), dict) else {}
+    system = value.get('system')
+    system = system if system in ('Linux', 'Darwin', 'FreeBSD', 'OpenBSD', 'NetBSD', 'SunOS', 'AIX') and basis.get('system') == 'remote_uname' else None
+    machine = value.get('machine')
+    machine = machine if machine in ('x86_64', 'amd64', 'aarch64', 'arm64', 'i386', 'i686', 'ppc64', 'ppc64le', 's390x', 'riscv64', 'sparc64') and basis.get('machine') == 'remote_uname' else None
+    release = value.get('os_release') if isinstance(value.get('os_release'), dict) else {}
+    def identifier(item):
+        return item if isinstance(item, str) and re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,63}', item) else None
+    observed = basis.get('os_release') == 'remote_os_release' and value.get('os_release_status') == 'observed'
+    distro = identifier(release.get('id')) if observed else None
+    raw_like = release.get('id_like', [])
+    like = list(dict.fromkeys(raw_like)) if (observed and isinstance(raw_like, list) and len(raw_like) <= 8
+        and all(identifier(item) is not None for item in raw_like)) else []
+    status = value.get('os_release_status')
+    return {'system': system, 'machine': machine, 'os_release': {'id': distro, 'id_like': like},
+        'basis': {'system': 'remote_uname' if system else 'unavailable',
+                  'machine': 'remote_uname' if machine else 'unavailable',
+                  'os_release': 'remote_os_release' if distro or like else 'unavailable'},
+        'os_release_status': status if status in ('observed', 'unavailable', 'invalid', 'limit') else 'unavailable'}
 
 
 def public_environment(alias, private):
@@ -661,7 +742,7 @@ def public_environment(alias, private):
     return {'schema': 'spiceowl.server-environment.v1', 'alias': alias, 'observed_at': utcnow(),
         'state': 'partial' if warnings or private.get('probe_kind') == 'bootstrap' else 'observed',
         'transport': 'reachable', 'identity': {'observed': bool(identity.get('hostname') and identity.get('username')), 'verified': False},
-        'session_kind': 'ssh_noninteractive_command',
+        'session_kind': 'ssh_noninteractive_command', 'platform': public_platform(private.get('platform')),
         'activation': {'selected_source_id': active_id, 'shell_kind': 'csh',
             'source_method': 'verified_bytes_stdin', 'script_side_effects': 'not_audited',
             'direct_solver_invocations': 0, 'license_checkout_attempted_by_probe': False} if activated else None,

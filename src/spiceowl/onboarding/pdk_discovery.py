@@ -239,7 +239,7 @@ def build_pdk_discovery_script(*, required_masters, roots, source_sha256,
     prefix = prefix.replace("def parse_file(stream,digest,budget):", _CONTRACT_HELPERS + "\ndef parse_file(stream,digest,budget):", 1)
     changes = {
         "sections, records, current = set(), [], None":
-            "sections, records, current = set(), [], None\n    section_spellings={}\n    contract_state={'stack':[],'wrappers':[],'models':[]}",
+            "sections, records, current = set(), [], None\n    section_spellings={}\n    contract_state={'stack':[],'wrappers':[],'models':[],'language':None,'literals':[],'literals_truncated':False}",
         "current=t[1].rstrip(';').lower()":
             "current=t[1].rstrip(';').lower()\n            section_spellings.setdefault(current,t[1].rstrip(';'))",
         "return {'sections':sections,'records':records}":
@@ -348,12 +348,62 @@ contract_header=re.compile(r'(?i)^(?:inline\s+)?\.?subckt\s+('+contract_name+r')
 contract_model=re.compile(r'(?i)^\.?model\s+('+contract_name+r')\s+('+contract_name+r')\b')
 contract_call=re.compile(r'^('+contract_name+r')\s*\(([^()]*)\)\s*('+contract_name+r')(?:\s+(.*))?$')
 contract_spice_call=re.compile(r'(?i)^(M[A-Za-z0-9_.$:+-]*)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+('+contract_name+r')(?:\s+(.*))?$')
+contract_spectre_call=re.compile(r'^('+contract_name+r')\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+('+contract_name+r')(?:\s+(.*))?$')
+contract_bin=re.compile(r'^(.+)\.(global|[0-9]+)$',re.I)
 mos_families=set(['bsim3','bsim3v3','bsim4','mos1','mos2','mos3'])
+contract_literal_count=0
+literal_kinds={'tnom':'nominal_temperature','nominal_temperature':'nominal_temperature',
+    'vnom':'nominal_voltage','vdd_nom':'nominal_voltage','vdd_nominal':'nominal_voltage',
+    'nominal_voltage':'nominal_voltage'}
+for terminal_pair in ('gs','ds','gb','gd','bs','bd'):
+    literal_kinds['v'+terminal_pair+'_max']='voltage_limit'
+    literal_kinds['maxv'+terminal_pair]='voltage_limit'
+
+def capture_literals(state,line,number,section,model):
+    # Only explicit numeric assignments with a small semantic allowlist are
+    # returned. Expressions and ordinary user parameters are never exported.
+    global contract_literal_count
+    eligible=model or re.match(r'(?i)^(?:parameters\b|\.param\b|\.?options?\b|'+contract_name+r'\s+options\b)',line)
+    if not eligible: return
+    if state['stack'] and state['stack'][-1]['name'].lower() not in required: return
+    for match in re.finditer(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s);]+)',line):
+        parameter,literal=match.groups();kind=literal_kinds.get(parameter.lower())
+        if kind is None or len(literal)>64: continue
+        number_match=re.match(r'^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([A-Za-z]*)$',literal)
+        if number_match is None: continue
+        numeric,suffix=number_match.groups()
+        following=line[match.end():].strip()
+        if following and not (re.match(r'^[);]*$',following) or re.match(r'^[A-Za-z_][A-Za-z0-9_]*\s*=',following)):
+            continue
+        if kind=='nominal_temperature':
+            # K is an engineering multiplier in model syntax, not an implicit
+            # Kelvin unit. Only the standard tnom parameter supplies Celsius.
+            if suffix not in ('','C'): continue
+            unit='C' if suffix=='C' or parameter.lower()=='tnom' else None;scale=1.0
+        else:
+            if suffix not in ('','V','m','mV'): continue
+            unit='V';scale=0.001 if suffix in ('m','mV') else 1.0
+        value=float(numeric)*scale
+        if not -1e300<value<1e300: continue
+        if contract_literal_count>=limits['max_directives']: state['literals_truncated']=True;continue
+        contract_literal_count+=1
+        state['literals'].append({'kind':kind,'line':number,'section_key':section,
+            'parameter':parameter,'literal':literal,'value':value,'unit':unit,
+            'basis':'explicit_source_literal','model_name':model.group(1) if model else None,
+            'owner_line':state['stack'][-1]['line'] if state['stack'] else None})
 
 def capture_contract(state,line,number,section):
     global directive_count
     header=contract_header.match(line)
     model=contract_model.match(line)
+    language=re.match(r'(?i)^simulator\s+lang\s*=\s*(spectre|spice)\s*;?$',line)
+    if language:
+        state['language']=language.group(1).lower();return
+    if re.match(r'(?i)^simulator\b',line):
+        state['language']='unsupported'
+        if state['stack']: state['stack'][-1]['unsupported'].append('unsupported_language_directive')
+        return
+    capture_literals(state,line,number,section,model)
     if header or model:
         directive_count+=1
         if directive_count>limits['max_directives']: raise ValueError('directive_limit')
@@ -366,8 +416,11 @@ def capture_contract(state,line,number,section):
                 ports.append(value)
         if state['stack']: state['stack'][-1]['unsupported'].append('nested_subcircuit')
         row={'name':name,'ports':ports[:64],'line':number,'section_key':section,
-             'instances':[],'instance_count':0,'unsupported':[],'closed':False}
+             'instances':[],'instance_count':0,'unsupported':[],'closed':False,
+             'language':state['language'] or ('spice' if line.startswith('.') else 'spectre')}
         if len(ports)!=4 or len(set(ports))!=4: row['unsupported'].append('non_bijective_four_port_interface')
+        if row['language']=='spice' and len(set(p.lower() for p in ports))!=4:
+            row['unsupported'].append('case_aliased_spice_ports')
         state['stack'].append(row)
         if name.lower() in required: state['wrappers'].append(row)
         return
@@ -386,34 +439,57 @@ def capture_contract(state,line,number,section):
             reason='explicit_supported_mos_type' if polarity else None
         elif values or family not in ('nmos','pmos'):
             polarity=None;reason=None
-        if '{' in line or '}' in line: polarity=None;reason=None
         state['models'].append({'name':name,'family':family,'polarity':polarity,
             'type_literal':values[0] if len(values)==1 and len(values[0])<=16 else None,
             'evidence_rule':reason,'line':number,'section_key':section,
-            'owner_line':state['stack'][-1]['line'] if state['stack'] else None})
+            'owner_line':state['stack'][-1]['line'] if state['stack'] else None,
+            'spice_declaration':line.startswith('.')})
         return
     if not state['stack']: return
     row=state['stack'][-1]
     if row['name'].lower() not in required: return
     if re.match(r'(?i)^(?:parameters\b|\.param\b)',line): return
-    match=contract_call.match(line)
+    dialect=state['language'] or row['language']
+    match=contract_call.match(line) if dialect=='spectre' else None
     if match:
         name,nodes,master,params=match.groups(); nodes=nodes.split()
     else:
-        match=contract_spice_call.match(line)
+        match=(contract_spectre_call if dialect=='spectre' else contract_spice_call).match(line) if dialect in ('spectre','spice') else None
         if match:
             parts=match.groups();name=parts[0];nodes=list(parts[1:5]);master=parts[5];params=parts[6]
     if match:
         row['instance_count']+=1
         if row['instance_count']<=2:
             row['instances'].append({'name':name,'ordered_nets':nodes[:64], 'master':master,'line':number})
-        if len(nodes)!=4 or re.search(r'(?i)\b(?:type|model)\s*=',params or ''):
+        if (len(nodes)!=4 or any(not re.match(r'^[A-Za-z0-9_.$:+-]+$',n) for n in nodes)
+                or re.search(r'(?i)\b(?:type|model)\s*=',params or '')):
             row['unsupported'].append('unsupported_mos_instance')
+        if dialect=='spice' and (len(set(n.lower() for n in nodes))!=4 or len(set(p.lower() for p in row['ports']))!=4):
+            row['unsupported'].append('case_aliased_spice_nodes')
     else:
         if len(row['unsupported'])<16: row['unsupported'].append('unsupported_wrapper_statement')
 
+def resolve_primitive_models(exact,bins):
+    if exact:
+        if len(exact)!=1 or bins: return None,'multiple_active_primitive_definitions',exact+bins
+        return exact[0]['polarity'],exact[0]['evidence_rule'] or 'unsupported_primitive_type',exact
+    if not bins: return None,'primitive_model_not_resolved',[]
+    # A binned family is a single owner namespace. Never combine partial bins
+    # from different wrappers or borrow a bin from a sibling wrapper.
+    owners=set((m['path'] if m['owner_line'] is not None else None,m['owner_line']) for m in bins)
+    suffixes=[contract_bin.match(m['name']).group(2).lower() for m in bins]
+    suffixes=[s.lstrip('0') or '0' if s!='global' else s for s in suffixes]
+    if len(owners)!=1 or len(suffixes)!=len(set(suffixes)):
+        return None,'ambiguous_binned_primitive_ownership_or_suffix',bins
+    if not any(s!='global' for s in suffixes): return None,'missing_numeric_model_bin',bins
+    polarities=set(m['polarity'] for m in bins)
+    families=set(m['family'] for m in bins)
+    if len(polarities)!=1 or None in polarities or len(families)!=1:
+        return None,'conflicting_or_unknown_model_bins',bins
+    return next(iter(polarities)),'consistent_explicit_mos_bins',bins
+
 def model_contracts_for_scopes(visited,unresolved):
-    wrappers,models={},{}
+    wrappers,models,binned_models,spice_models={},{},{},{}
     wrapper_keys,model_keys=set(),set()
     sections_by_path={}
     for path,section in visited: sections_by_path.setdefault(path,set()).add(section)
@@ -429,10 +505,16 @@ def model_contracts_for_scopes(visited,unresolved):
                     keys.add(key)
                     item=dict(row,path=path,section=data['section_spellings'].get(row['section_key'],row['section_key']))
                     target.setdefault(row['name'],[]).append(item)
+                    bin_match=contract_bin.match(row['name']) if target is models and row['spice_declaration'] else None
+                    if target is models and row['spice_declaration']:
+                        spice_models.setdefault(row['name'].lower(),[]).append(item)
+                    if bin_match: binned_models.setdefault(bin_match.group(1).lower(),[]).append(item)
+    def exact_models(name):
+        return models.get(name,[])+[m for m in spice_models.get(name.lower(),[]) if m['name']!=name]
     output=[]
     for name in discovery['required_masters']:
         evidence=[];polarity=None;roles=None;reason='definition_not_found'
-        matches=wrappers.get(name,[])+[r for r in models.get(name,[]) if r['owner_line'] is None]
+        matches=wrappers.get(name,[])+[r for r in exact_models(name) if r['owner_line'] is None]
         if len(matches)>1: reason='multiple_active_model_definitions'
         elif len(matches)==1:
             row=matches[0]
@@ -442,26 +524,31 @@ def model_contracts_for_scopes(visited,unresolved):
                 if row['closed'] and not row['unsupported'] and row['instance_count']==1:
                     call=row['instances'][0]
                     evidence.append(dict(call,kind='direct_instance',path=row['path']))
-                    model_matches=[m for m in models.get(call['master'],[]) if
+                    model_matches=[m for m in exact_models(call['master']) if
                                    m['owner_line'] is None or m['path']==row['path'] and m['owner_line']==row['line']]
-                    reason='primitive_model_not_resolved'
-                    if len(model_matches)==1:
-                        primitive=model_matches[0]
+                    bin_matches=[m for m in binned_models.get(call['master'].lower(),[]) if
+                                 m['owner_line'] is None or m['path']==row['path'] and m['owner_line']==row['line']]
+                    primitive_polarity,primitive_reason,primitive_rows=resolve_primitive_models(model_matches,bin_matches)
+                    reason=primitive_reason
+                    if primitive_polarity:
                         reason='unsupported_primitive_type_or_terminal_mapping'
                         nodes=call['ordered_nets']
-                        if primitive['polarity'] and len(nodes)==4 and len(set(nodes))==4 and set(nodes)==set(row['ports']):
-                            polarity=primitive['polarity']
+                        if len(nodes)==4 and len(set(nodes))==4 and set(nodes)==set(row['ports']):
+                            polarity=primitive_polarity
                             mapping=dict(zip(nodes,['d','g','s','b']))
                             roles=[mapping[p] for p in row['ports']]
-                            reason='single_mos_bijective_wrapper'
-                        evidence.append({k:primitive[k] for k in ('name','path','line','section','family','type_literal','evidence_rule')})
-                    elif len(model_matches)>1: reason='multiple_active_primitive_definitions'
+                            reason='single_mos_bijective_binned_wrapper' if bin_matches else 'single_mos_bijective_wrapper'
+                    for primitive in primitive_rows:
+                        evidence.append(dict({k:primitive[k] for k in ('name','path','line','section','family','type_literal','evidence_rule')},
+                                             kind='primitive_model',owner_line=primitive['owner_line']))
             else:
                 polarity=row['polarity'];roles=['d','g','s','b'] if polarity else None
                 reason=row['evidence_rule'] or 'unsupported_primitive_type'
                 evidence.append({k:row[k] for k in ('name','path','line','section','family','type_literal','evidence_rule')})
         verified=polarity is not None and roles is not None and not unresolved
         output.append({'name':name,'polarity':polarity,'ordered_terminal_roles':roles,
+            'suggested_contract':{'polarity':polarity,'terminals':roles} if polarity and roles else None,
+            'suggestion_basis':reason,'auto_prefill_allowed':verified,
             'evidence':evidence,'confidence':'verified' if verified else 'suggested' if polarity or roles else 'unknown',
             'reason':reason,'needs_confirmation':not verified,
             'scope':'static source contract only; no simulator or process qualification'})
@@ -739,6 +826,91 @@ for path,data in sorted(parsed.items()):
         node['master_coverage']=sorted(set(node['master_coverage']))
 
 # Platform directories are observed, not selected from the local architecture.
+incoming_by_path={}
+for source_path,data in sorted(parsed.items()):
+    for current,line,kind,value in data['records']:
+        if kind!='include': continue
+        target=resolve_path(value['path'],os.path.dirname(source_path))
+        if target is None: continue
+        incoming_by_path.setdefault(target,[]).append({'from':source_path,
+            'from_section':data['section_spellings'].get(current,current),'line':line,
+            'to':target,'section':value['section'],'role':value['role']})
+
+def source_metadata_for_candidate(path,visited,contracts):
+    data=parsed[path];incoming=incoming_by_path.get(path,[])
+    observed=[None]+sorted(data['section_spellings'].values())
+    global_lines=[line for section,line,kind,value in data['records'] if section is None and kind=='include']
+    incoming_sample=[];incoming_bytes=0
+    for row in incoming:
+        extra=len(json.dumps(row,sort_keys=True,ensure_ascii=True).encode('utf-8'))
+        if len(incoming_sample)>=8 or incoming_bytes+extra>1024: continue
+        incoming_sample.append(row);incoming_bytes+=extra
+    result={'observed_sections':observed,
+        'source_role_evidence':{'global_scope_present':bool(any(section is None for section,line,kind,value in data['records']) or
+            any(row['section_key'] is None for kind in ('models','wrappers','literals') for row in data['contract_state'][kind])),
+            'incoming_includes':incoming_sample,'incoming_includes_truncated':len(incoming_sample)<len(incoming),
+            'incoming_include_count':len(incoming),
+            'global_incoming_include_count':sum(1 for row in incoming if row['from_section'] is None),
+            'incoming_evidence_scope':'bounded samples of observed include declarations; counts include omitted samples',
+            'global_include_lines':global_lines[:64],'global_include_lines_truncated':len(global_lines)>64,
+            'observed_section_count':len(data['sections'])},
+        'prelude_candidates':[],'nominal_temperature_evidence':[],
+        'nominal_voltage_evidence':[],'voltage_limit_evidence':[],'literal_evidence_truncated':False,
+        'literal_evidence_available_count':0,'literal_declaration_count':0,
+        'literal_evidence_scope':'required-device declarations and separately labeled non-device context; source literals are not process qualification'}
+    for section in observed:
+        if section is not None and section.lower() in ('pre_simu','pre_sim','init','global'):
+            result['prelude_candidates'].append({'path':path,'section':section,
+                'basis':'observed_prelude_section_label','confidence':'suggested','auto_prefill_allowed':False})
+    selected={}
+    for source_path,section in visited: selected.setdefault(source_path,set()).add(section)
+    primitive_bindings={};wrapper_bindings={}
+    for model in contracts:
+        for evidence in model['evidence']:
+            if evidence.get('kind')=='declaration':
+                wrapper_bindings.setdefault((evidence['path'],evidence['line']),set()).add(model['name'])
+            if evidence.get('kind')=='primitive_model' or evidence.get('family'):
+                key=(evidence['path'],evidence['line'],evidence['name'],evidence.get('owner_line'))
+                primitive_bindings.setdefault(key,set()).add(model['name'])
+    literal_candidates=[];literal_groups={}
+    for source_path in sorted(selected):
+        source=parsed.get(source_path)
+        if source is None: continue
+        state=source['contract_state']
+        result['literal_evidence_truncated']=result['literal_evidence_truncated'] or state['literals_truncated']
+        for row in state['literals']:
+            if row['section_key'] is not None and row['section_key'] not in selected[source_path]: continue
+            bound=set()
+            if row['model_name'] is not None:
+                bound=primitive_bindings.get((source_path,row['line'],row['model_name'],row['owner_line']),set())
+                if not bound: continue
+            elif row['owner_line'] is not None:
+                bound=wrapper_bindings.get((source_path,row['owner_line']),set())
+                if not bound: continue
+            literal_scope=('device_scoped' if bound else 'global' if row['section_key'] is None else
+                           'preamble' if row['section_key'] in ('pre_simu','pre_sim','init','global') else 'section')
+            field=row['kind']+'_evidence'
+            item={k:row[k] for k in ('line','parameter','literal','value','unit','basis','model_name','owner_line')}
+            item.update(path=source_path,section=source['section_spellings'].get(row['section_key'],row['section_key']),
+                        scope=literal_scope,required_models=sorted(bound))
+            group_key=(field,source_path,row['section_key'],literal_scope,row['owner_line'],tuple(sorted(bound)),
+                       row['parameter'].lower(),row['value'],row['unit'])
+            group=literal_groups.get(group_key)
+            if group is None:
+                group={'field':field,'item':item,'lines':set()}
+                literal_groups[group_key]=group;literal_candidates.append(group)
+            group['lines'].add(row['line'])
+    literal_count=0;literal_bytes=0
+    result['literal_evidence_available_count']=len(literal_candidates)
+    for group in sorted(literal_candidates,key=lambda group:0 if group['item']['scope']=='device_scoped' else 1):
+        field=group['field'];item=group['item'];lines=sorted(group['lines'])
+        item.update(declaration_count=len(lines),declaration_lines=lines[:16],declaration_locations_truncated=len(lines)>16)
+        result['literal_declaration_count']+=len(lines)
+        extra=len(json.dumps(item,sort_keys=True,ensure_ascii=True).encode('utf-8'))
+        if literal_count>=32 or literal_bytes+extra>4096: result['literal_evidence_truncated']=True;continue
+        result[field].append(item);literal_count+=1;literal_bytes+=extra
+    return result
+
 platform_cache={}
 for row in tmi_refs:
     directory_path=row['directory']
@@ -821,6 +993,7 @@ for node in graph:
                'unknown_codes':sorted(set(unresolved)),'tmi_candidates':candidate_tmi,
                'models':model_contracts_for_scopes(visited,unresolved),
                'additional_sections_may_be_required':True,'ready_to_run':False}
+    candidate.update(source_metadata_for_candidate(path,visited,candidate['models']))
     candidate['candidate_id']=stable({'source_sha256':discovery['source_sha256'],
                                       'entry_path':path,'sections':scopes,
                                       'required_masters':discovery['required_masters'],
@@ -874,6 +1047,29 @@ if len(encoded.encode('utf-8'))>2000000:
     compact_encoded=json.dumps(compact,sort_keys=True,ensure_ascii=True)
     if len(compact_encoded.encode('utf-8'))<=2000000:
         result=compact;encoded=compact_encoded
+    else:
+        # Optional recommendation samples must not displace model contracts.
+        # Keep exact observed counts and flag missing context without changing
+        # static contract confidence or claiming complete operating evidence.
+        metadata_candidates=[];literal_omissions=0;incoming_omissions=0
+        for candidate in compact['entry_candidates']:
+            smaller=dict(candidate)
+            for field in ('nominal_temperature_evidence','nominal_voltage_evidence','voltage_limit_evidence'):
+                literal_omissions+=len(smaller.get(field,[]))
+                if smaller.get(field): smaller['literal_evidence_truncated']=True
+                smaller[field]=[]
+            role=dict(smaller.get('source_role_evidence',{}))
+            incoming_omissions+=len(role.get('incoming_includes',[]))
+            if role.get('incoming_includes'): role['incoming_includes_truncated']=True
+            role['incoming_includes']=[];smaller['source_role_evidence']=role
+            metadata_candidates.append(smaller)
+        metadata_compact=dict(compact,entry_candidates=metadata_candidates,
+            detail_omissions=compact['detail_omissions']+[
+                {'field':'entry_candidates.*.operating_literal_evidence','observed_count':literal_omissions,'reason':'response_limit'},
+                {'field':'entry_candidates.*.source_role_evidence.incoming_includes','observed_count':incoming_omissions,'reason':'response_limit'}])
+        compact_encoded=json.dumps(metadata_compact,sort_keys=True,ensure_ascii=True)
+        if len(compact_encoded.encode('utf-8'))<=2000000:
+            result=metadata_compact;encoded=compact_encoded
 if len(encoded.encode('utf-8'))>2000000:
     original=result
     field_bytes={key:len(json.dumps(value,sort_keys=True,ensure_ascii=True).encode('utf-8'))

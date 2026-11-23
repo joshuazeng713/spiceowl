@@ -1,0 +1,169 @@
+{
+  "schema": "spiceowl.simulation-report.v1",
+  "run_id": "synthetic-example-run",
+  "advisory_only": true,
+  "execution_status": {
+    "status": "completed",
+    "scope": {
+      "kind": "caller_execution_receipt"
+    },
+    "evidence": [
+      {
+        "code": "caller_execution_completed",
+        "source": "execution_receipt",
+        "line_numbers": []
+      }
+    ]
+  },
+  "measurement_validity": {
+    "status": "valid",
+    "scope": {
+      "kind": "caller_summary"
+    },
+    "evidence": [
+      {
+        "code": "measurement_valid",
+        "source": "acceptance",
+        "line_numbers": []
+      }
+    ]
+  },
+  "functional_performance": {
+    "status": "pass",
+    "scope": {
+      "kind": "caller_summary"
+    },
+    "evidence": [
+      {
+        "code": "functional_pass",
+        "source": "acceptance",
+        "line_numbers": []
+      }
+    ]
+  },
+  "operating_qualification": {
+    "status": "violations_detected",
+    "scope": {
+      "kind": "declared_operating_checks",
+      "scope_id": "synthetic-operating-checks",
+      "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "frozen_before_execution": true,
+      "checks": [
+        "soa_voltage",
+        "soa_current",
+        "model_parameter_range"
+      ],
+      "log_complete": true
+    },
+    "evidence": [
+      {
+        "code": "spectre_soa_voltage",
+        "source": "spectre_log",
+        "line_numbers": [
+          1
+        ]
+      }
+    ]
+  },
+  "dependency_provenance": {
+    "status": "incomplete",
+    "scope": {
+      "kind": "observed_files_with_directory_references",
+      "scope_id": "synthetic-runtime-dependencies",
+      "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "run_bound": true,
+      "inventory_complete": true
+    },
+    "evidence": [
+      {
+        "code": "pre_pinned_dependency_verified",
+        "source": "dependency_audit",
+        "line_numbers": [],
+        "dependency_id": "synthetic-model-1",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "code": "unregistered_runtime_tmi_library",
+        "source": "dependency_audit",
+        "line_numbers": [],
+        "dependency_id": "synthetic-tmi-1"
+      }
+    ]
+  },
+  "diagnostics": {
+    "schema": "spiceowl.spectre-diagnostics.v1",
+    "observed_context": {
+      "execution_state": "completed",
+      "exit_code": 0,
+      "log_line_count": 3,
+      "log_bytes": 153,
+      "log_scope": "caller_supplied_segment",
+      "acceptance_source": "caller_summary",
+      "oom_evidence": null,
+      "warning_summary": {
+        "reported_errors": 0,
+        "reported_warnings": 1,
+        "reported_notices": 0,
+        "suppressed_warnings": 20,
+        "footer_line_numbers": [
+          3
+        ],
+        "suppression_line_numbers": [
+          2
+        ],
+        "count_conflict": false
+      },
+      "diagnostic_coverage": {
+        "observed_errors": 0,
+        "observed_warnings": 1,
+        "observed_notices": 0,
+        "completion_footer_count": 1,
+        "duplicate_record_count": 0,
+        "coverage_gap_line_numbers": [],
+        "records_after_footer": false,
+        "structure_complete": true,
+        "error_line_numbers": [],
+        "warning_line_numbers": [
+          1
+        ],
+        "notice_line_numbers": []
+      },
+      "classification_details": {}
+    },
+    "diagnostics": [
+      {
+        "category": "soa_voltage",
+        "severity": "warning",
+        "code": "spectre_soa_voltage",
+        "evidence_line_numbers": [
+          1
+        ],
+        "redacted_excerpt": "WARNING ( CMI-2752 ) : [redacted] model [redacted] .",
+        "suggested_actions": [
+          "Inspect the cited terminal-voltage violation against the selected model's SOA limits.",
+          "Keep the original bias and model settings in this result; review any new experiment separately."
+        ]
+      },
+      {
+        "category": "warnings_suppressed",
+        "severity": "warning",
+        "code": "spectre_warnings_suppressed",
+        "evidence_line_numbers": [
+          2
+        ],
+        "redacted_excerpt": "[redacted] .",
+        "suggested_actions": [
+          "Retain the reported suppression count separately from the footer warning count.",
+          "Suppressed messages limit conclusions based on the absence of diagnostics."
+        ]
+      }
+    ],
+    "scientific_acceptance": {
+      "execution": "completed",
+      "data_validity": "valid",
+      "specification": "pass"
+    },
+    "agent_proposal": null,
+    "advisory_only": true
+  }
+}

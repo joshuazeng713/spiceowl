@@ -49,6 +49,29 @@ def parser():
             command.add_argument("--run-id", required=True)
         if name in ("submit", "collect"):
             command.add_argument("--key", help="Stable request key; omitted keys are privately persisted before sending.")
+    workflow = commands.add_parser("workflow", help="Run a registered deterministic experiment through CircuitGit's existing Runner.")
+    workflow.add_argument("--client-config", required=True, help="Private spiceowl.live-client.v1 JSON file.")
+    workflow_actions = workflow.add_subparsers(dest="action", required=True)
+    for name in ("prepare", "run", "inspect", "execute", "lookup"):
+        command = workflow_actions.add_parser(name, help={
+            "prepare": "Freeze registered source and recipe with a remote dependency audit; report missing conditions.",
+            "run": "Submit one prepared plan with its fixed experiment key.",
+            "inspect": "Observe one job and automatically collect terminal artifacts through the Runner.",
+            "execute": "Prepare, run and inspect one experiment until completion, uncertainty or timeout.",
+            "lookup": "Read the original submission mapping without clearing an uncertain request.",
+        }[name])
+        if name in ("prepare", "execute"):
+            command.add_argument("--recipe", required=True)
+            command.add_argument("--source-commit", required=True)
+        elif name == "run":
+            command.add_argument("--plan-id", required=True)
+        elif name == "inspect":
+            command.add_argument("--job-id", required=True)
+        else:
+            command.add_argument("--key", required=True)
+        if name == "execute":
+            command.add_argument("--timeout", type=float, default=600.0, help="Total waiting deadline in seconds; original IDs are returned on timeout.")
+            command.add_argument("--poll-seconds", type=float, default=3.0)
     commands.add_parser("status", help="Print locally stored connection/run/session records as JSON.")
     commands.add_parser("mcp", help="Serve read-only local queries over stdio (requires the mcp extra).")
     ic = commands.add_parser("ic", help="Read saved IC Workbench tasks through a registered local gateway.").add_subparsers(dest="action", required=True)
@@ -133,6 +156,21 @@ def output(value):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "workflow":
+            from spiceowl.integrations.live import LiveSimulationClient
+            client = LiveSimulationClient(args.client_config)
+            if args.action == "lookup":
+                value = client.lookup_submission(args.key)
+            elif args.action == "execute":
+                value = client.workflow(args.recipe, args.source_commit, timeout=args.timeout, poll_seconds=args.poll_seconds)
+            elif args.action == "prepare":
+                value = client.execute("prepare", {"recipe_id": args.recipe, "source_commit": args.source_commit})
+            elif args.action == "run":
+                value = client.execute("run", {"plan_id": args.plan_id})
+            else:
+                value = client.execute("inspect", {"job_id": args.job_id})
+            output(value)
+            return 1 if value.get("state") in ("blocked", "uncertain", "timed_out") or value.get("inspection_state") == "uncertain" else 0
         if args.command == "live":
             from spiceowl.integrations.live import LiveSimulationClient
             client = LiveSimulationClient(args.client_config)

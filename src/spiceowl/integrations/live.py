@@ -25,8 +25,9 @@ from spiceowl.domain.common import DomainError, utcnow
 from spiceowl.integrations.authority import load_key, sign
 from spiceowl.integrations.ic_workbench import decode_envelope, validate_gateway_config, validate_submission
 
-OPERATIONS = frozenset({'runtime', 'scan', 'submit', 'status', 'collect', 'watch', 'unwatch'})
-KEYED = frozenset({'submit', 'collect'})
+OPERATIONS = frozenset({'runtime', 'scan', 'submit', 'status', 'collect', 'watch', 'unwatch',
+                        'prepare', 'run', 'inspect'})
+KEYED = frozenset({'submit', 'collect', 'run'})
 CALLER = 'spiceowl-local'
 MAX_CONFIG_BYTES = 16384
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -49,7 +50,24 @@ _PUBLIC_FIELDS = frozenset('''schema project_id read_at pool runs capabilities c
     automatic_retry advisory_only scientific_acceptance observed_context category severity code
     evidence_line_numbers redacted_excerpt suggested_actions data_validity specification
     log_line_count log_bytes log_scope acceptance_source oom_evidence source run_bound oom_kill
-    oom_kill_delta agent_proposal action description'''.split())
+    oom_kill_delta agent_proposal action description
+    recipe_id job_id inspection_state missing field message report measurements
+    dependency_summary file_count pre_pinned launch_attempts experiments recipes template prepare run inspect
+    status scope evidence execution_status measurement_validity functional_performance
+    operating_qualification dependency_provenance scope_id manifest_sha256 frozen_before_execution
+    checks log_complete line_numbers dependency_id sha256 count inventory_complete
+    execution_state warning_summary reported_errors reported_warnings reported_notices suppressed_warnings
+    footer_line_numbers suppression_line_numbers count_conflict diagnostic_coverage observed_errors
+    observed_warnings observed_notices completion_footer_count duplicate_record_count coverage_gap_line_numbers
+    records_after_footer structure_complete error_line_numbers warning_line_numbers notice_line_numbers
+    classification_details scale_override duplicate_seen values_relation
+    recipe_sha256 psf_sha256 evidence_source sample_count time_span_s voltage_ranges_v
+    name dimension expected actual tolerance_s maximum_observed_s maximum_allowed_s
+    maximum_error_v tolerance_v minimum_v maximum_v windows start_s end_s minimum_samples
+    actual_samples input_range_v output_range_v output_threshold_passed signal voltage_range_v threshold_passed
+    delays records summary tPHL tPLH min_s max_s mean_s input_crossing_s output_crossing_s delay_s
+    input_transition_count output_transition_count paired_count ambiguous_or_missing_pair_count
+    records_truncated crossing_v acceptance_effect overall_qualified_acceptance qualification_scope'''.split())
 
 
 def _json(raw):
@@ -97,7 +115,23 @@ def _safe_public(value, depth=0):
     if depth > 16:
         raise DomainError('Simulation response is too deeply nested.', 'live_protocol')
     if isinstance(value, dict):
-        return {key: _safe_public(item, depth + 1) for key, item in value.items() if key in _PUBLIC_FIELDS}
+        result = {}
+        for key, item in value.items():
+            if key not in _PUBLIC_FIELDS:
+                continue
+            if key == 'voltage_ranges_v':
+                # Signal names are dynamic, but only numeric min/max values are
+                # admitted. This is not an arbitrary nested backend object.
+                if (not isinstance(item, dict) or len(item) > 64 or any(
+                        not isinstance(name, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', name)
+                        or not isinstance(bounds, list) or len(bounds) != 2
+                        or any(type(x) not in (int, float) or not math.isfinite(x) for x in bounds)
+                        for name, bounds in item.items())):
+                    raise DomainError('The simulation response has invalid voltage statistics.', 'live_protocol')
+                result[key] = copy.deepcopy(item)
+            else:
+                result[key] = _safe_public(item, depth + 1)
+        return result
     if isinstance(value, list):
         if len(value) > 2048:
             raise DomainError('Simulation response has too many records.', 'live_protocol')
@@ -208,8 +242,8 @@ class LiveSimulationClient:
             timer.cancel()
             connection.close()
 
-    def _health(self):
-        health = self._request('GET', '/api/health')
+    def _health(self, *, timeout=READ_TIMEOUT):
+        health = self._request('GET', '/api/health', timeout=timeout)
         token = health.get('mutation_token')
         if (health.get('api_version') != '1' or health.get('mode') != 'live'
                 or not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]{16,256}', token)):
@@ -224,21 +258,73 @@ class LiveSimulationClient:
         if values['project_id'] != self.project_id:
             raise DomainError('This client is bound to a different project.', 'live_project_mismatch')
         required = {'project_id'}
-        if operation not in ('runtime', 'scan'):
+        if operation == 'prepare':
+            required |= {'recipe_id', 'source_commit'}
+        elif operation == 'run':
+            required.add('plan_id')
+        elif operation == 'inspect':
+            required.add('job_id')
+        elif operation not in ('runtime', 'scan'):
             required |= {'configuration', 'source_commit'}
         if operation in ('status', 'collect', 'watch', 'unwatch'):
             required.add('run_id')
         if set(values) != required:
             raise DomainError('Supply exactly the identity fields required by this simulation operation.')
-        for name in ('configuration', 'run_id'):
+        for name in ('configuration', 'run_id', 'recipe_id', 'job_id'):
             if name in values and (not isinstance(values[name], str) or not _ID.fullmatch(values[name])):
                 raise DomainError('Invalid simulation identity field.')
         if 'run_id' in values and not re.fullmatch(r'[A-Za-z0-9_-]{1,180}', values['run_id']):
             raise DomainError('Invalid simulation run identity.')
+        if 'job_id' in values and not re.fullmatch(r'[A-Za-z0-9_-]{1,180}', values['job_id']):
+            raise DomainError('Invalid experiment job identity.')
+        if 'plan_id' in values and (not isinstance(values['plan_id'], str)
+                                  or not re.fullmatch(r'[a-f0-9]{64}', values['plan_id'])):
+            raise DomainError('Use the exact 64-character prepared experiment plan ID.')
         if 'source_commit' in values and (not isinstance(values['source_commit'], str)
                                          or not re.fullmatch(r'[a-f0-9]{40}', values['source_commit'])):
             raise DomainError('Use the exact 40-character source commit for this simulation.')
         return values
+
+    def _validate_experiment_result(self, operation, values, result):
+        def check(condition):
+            if not condition:
+                raise DomainError('The experiment response does not match the requested identity or state.', 'live_protocol')
+        check(isinstance(result, dict) and result.get('project_id') == self.project_id)
+        if operation == 'prepare':
+            check(result.get('schema') == 'ic.experiment.plan.v1')
+            check(result.get('recipe_id') == values['recipe_id'] and result.get('source_commit') == values['source_commit'])
+            check(result.get('state') in ('prepared', 'blocked'))
+            check(isinstance(result.get('missing'), list))
+            if result['state'] == 'blocked':
+                check(result.get('plan_id') is None and bool(result['missing']))
+            else:
+                check(isinstance(result.get('plan_id'), str) and re.fullmatch(r'[a-f0-9]{64}', result['plan_id']) is not None)
+                check(not result['missing'])
+            return
+        check(result.get('schema') == 'ic.experiment.job.v1')
+        check(isinstance(result.get('job_id'), str) and re.fullmatch(r'[A-Za-z0-9_-]{1,180}', result['job_id']) is not None)
+        check(result.get('run_id') == result['job_id'])
+        check(isinstance(result.get('configuration'), str) and _ID.fullmatch(result['configuration']) is not None)
+        check(isinstance(result.get('source_commit'), str) and re.fullmatch(r'[a-f0-9]{40}', result['source_commit']) is not None)
+        check(isinstance(result.get('plan_id'), str) and re.fullmatch(r'[a-f0-9]{64}', result['plan_id']) is not None)
+        check(operation != 'run' or result['plan_id'] == values['plan_id'])
+        check(operation != 'inspect' or result['job_id'] == values['job_id'])
+        if operation == 'inspect' or 'inspection_state' in result:
+            check(result.get('inspection_state') in ('pending', 'working', 'collecting', 'complete', 'uncertain'))
+        if result.get('inspection_state') == 'complete':
+            report, measurement = result.get('report'), result.get('measurements')
+            check(isinstance(report, dict) and report.get('schema') == 'spiceowl.simulation-report.v1'
+                  and report.get('run_id') == result['job_id'])
+            statuses = {'execution_status': {'queued', 'running', 'completed', 'failed', 'cancelled', 'unknown'},
+                        'measurement_validity': {'valid', 'invalid', 'unknown'},
+                        'functional_performance': {'pass', 'fail', 'unknown'},
+                        'operating_qualification': {'passed_within_scope', 'violations_detected', 'unknown'},
+                        'dependency_provenance': {'verified_within_scope', 'incomplete', 'mismatch', 'unknown'}}
+            for name, allowed in statuses.items():
+                item = report.get(name)
+                check(isinstance(item, dict) and isinstance(item.get('status'), str) and item['status'] in allowed
+                      and isinstance(item.get('scope'), dict) and isinstance(item.get('evidence'), list))
+            check(isinstance(measurement, dict) and measurement.get('schema') == 'spiceowl.experiment-measurement.v1')
 
     @contextmanager
     def _journal(self):
@@ -266,6 +352,8 @@ class LiveSimulationClient:
                         raise DomainError('Live request journal is invalid.', 'live_journal_invalid')
                     if row['operation'] not in KEYED or self._arguments(row['operation'], row['arguments']) != row['arguments']:
                         raise DomainError('Live request journal identity is invalid.', 'live_journal_invalid')
+                    if row['operation'] == 'run' and row['key'] != 'experiment-' + row['arguments']['plan_id']:
+                        raise DomainError('Live experiment journal changed its stable plan key.', 'live_journal_invalid')
                     expected = hashlib.sha256(json.dumps([row['operation'], row['arguments']], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
                     if row['fingerprint'] != expected or (row['state'] == 'complete' and not isinstance(row.get('result'), dict)):
                         raise DomainError('Live request journal identity is invalid.', 'live_journal_invalid')
@@ -314,12 +402,15 @@ class LiveSimulationClient:
         if not isinstance(key, str) or not _KEY.fullmatch(key):
             raise DomainError('Supply the original stable submission key.')
         with self._journal() as journal:
-            row = next((item for item in journal['requests'] if item['key'] == key and item['operation'] == 'submit'), None)
+            row = next((item for item in journal['requests'] if item['key'] == key and item['operation'] in ('submit', 'run')), None)
             if row is None:
                 raise DomainError('This journal has no submission request with that key.', 'live_request_missing')
             self._health()
             data = self._request('GET', '/api/submissions/' + quote(key, safe=''))
-            validate_submission(data, key, self.project_id, row['arguments'])
+            # Run requests are identified by the frozen plan, not the legacy
+            # configuration/source tuple expected by validate_run.
+            expected = row['arguments'] if row['operation'] == 'submit' else None
+            validate_submission(data, key, self.project_id, expected)
             result = {'schema': 'spiceowl.live-submission-lookup.v1', 'project_id': self.project_id,
                       'state': 'mapping_found' if data['found'] else 'mapping_not_found',
                       'run_id': data['run_id'], 'read_at': data['read_at'],
@@ -329,11 +420,72 @@ class LiveSimulationClient:
             self._save(journal)
             return result
 
-    def execute(self, operation, args, idempotency_key=None):
+    def workflow(self, recipe_id, source_commit, *, timeout=600.0, poll_seconds=3.0):
+        """Prepare, run and inspect one fixed experiment without a model.
+
+        Inspect observes the remote job and may collect terminal artifacts using
+        the Runner's existing receipt. A timeout or uncertain observation returns
+        the original identities and never prepares or submits a replacement.
+        """
+        args = self._arguments('prepare', {'recipe_id': recipe_id, 'source_commit': source_commit})
+        for name, value, maximum in (('timeout', timeout, 604800.0), ('poll_seconds', poll_seconds, 60.0)):
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= maximum:
+                raise DomainError('Use a finite positive ' + name + ' within the supported waiting limit.')
+        result = {'schema': 'spiceowl.experiment-workflow.v1', 'project_id': self.project_id,
+                  'recipe_id': recipe_id, 'source_commit': source_commit, 'plan_id': None,
+                  'job_id': None, 'run_id': None, 'submission_key': None, 'state': 'pending',
+                  'stage': 'prepare', 'missing': [], 'job': None}
+        deadline = time.monotonic() + timeout
+        def remaining():
+            available = deadline-time.monotonic()
+            if available <= 0:
+                raise DomainError('The workflow waiting deadline expired.', 'live_timeout')
+            return available
+        def accept_job(job):
+            if (job.get('plan_id') != result['plan_id'] or job.get('configuration') != recipe_id
+                    or job.get('source_commit') != source_commit
+                    or result['job_id'] is not None and job.get('job_id') != result['job_id']):
+                raise DomainError('The experiment job changed its prepared identity.', 'live_protocol')
+            result.update(job_id=job['job_id'], run_id=job['run_id'], job=job)
+        try:
+            plan = self.execute('prepare', args, timeout=remaining())
+            result.update(plan_id=plan['plan_id'], missing=plan['missing'])
+            if plan['state'] == 'blocked':
+                result['state'] = 'blocked'
+                return result
+            result.update(stage='run', submission_key='experiment-' + plan['plan_id'])
+            accept_job(self.execute('run', {'plan_id': plan['plan_id']}, timeout=remaining()))
+            result['stage'] = 'inspect'
+            while True:
+                state = result['job'].get('inspection_state', 'pending')
+                if state in ('complete', 'uncertain'):
+                    result['state'] = state
+                    return result
+                accept_job(self.execute('inspect', {'job_id': result['job_id']}, timeout=remaining()))
+                if result['job']['inspection_state'] not in ('complete', 'uncertain'):
+                    time.sleep(min(poll_seconds, remaining()))
+        except DomainError as exc:
+            result.update(state='timed_out' if exc.code == 'live_timeout' else 'uncertain', error_code=exc.code)
+            return result
+
+    def execute(self, operation, args, idempotency_key=None, *, timeout=None):
         values = self._arguments(operation, args)
+        if timeout is not None and (type(timeout) not in (float, int) or not math.isfinite(timeout) or timeout <= 0):
+            raise DomainError('Use a finite positive request timeout.')
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        def remaining(limit):
+            available = limit if deadline is None else min(limit, deadline-time.monotonic())
+            if available <= 0:
+                raise DomainError('The workflow deadline expired before the next request.', 'live_timeout')
+            return available
         if idempotency_key is not None and (operation not in KEYED or not isinstance(idempotency_key, str)
                                             or not _KEY.fullmatch(idempotency_key)):
-            raise DomainError('Only submit/collect accept a stable key of 8–160 identifier characters.')
+            raise DomainError('Only submit, collect and run accept stable request keys.')
+        if operation == 'run':
+            stable_key = 'experiment-' + values['plan_id']
+            if idempotency_key is not None and idempotency_key != stable_key:
+                raise DomainError('Experiment runs use the stable key derived from their prepared plan.', 'live_key_conflict')
+            idempotency_key = stable_key
         if operation == 'runtime':
             return self.runtime()
         native_operation = 'resources_scan' if operation == 'scan' else operation
@@ -342,7 +494,9 @@ class LiveSimulationClient:
             if key is not None:
                 body['idempotency_key'] = key
             raw = json.dumps(body, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
-            result = self._request('POST', '/api/simulation/control', raw, token, timeout=CONTROL_TIMEOUT)
+            result = self._request('POST', '/api/simulation/control', raw, token, timeout=remaining(CONTROL_TIMEOUT))
+            if operation in ('prepare', 'run', 'inspect'):
+                self._validate_experiment_result(operation, values, result)
             if operation in ('submit', 'status') and not {'run_id', 'project_id', 'configuration', 'source_commit'} <= set(result):
                 raise DomainError('The simulation response has an incomplete identity.', 'live_protocol')
             if operation in ('submit', 'status', 'collect', 'watch', 'unwatch'):
@@ -355,7 +509,7 @@ class LiveSimulationClient:
                         raise DomainError('The simulation response changed the selected identity.', 'live_protocol')
             return _safe_public(result)
         if operation not in KEYED:
-            return send(self._health())
+            return send(self._health(timeout=remaining(READ_TIMEOUT)))
         fingerprint = hashlib.sha256(json.dumps([operation, values], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         with self._journal() as journal:
             requests = journal['requests']
@@ -374,7 +528,7 @@ class LiveSimulationClient:
                 raise DomainError('This request was rejected. Inspect the connection grant before issuing another key.', 'live_request_rejected')
             if len(requests) >= MAX_REQUESTS:
                 raise DomainError('Live request journal is full; preserve it for operator reconciliation.', 'live_journal_limit')
-            token = self._health()  # No claim needed until a POST could occur.
+            token = self._health(timeout=remaining(READ_TIMEOUT))  # No claim needed until a POST could occur.
             key = idempotency_key or ('live-' + uuid4().hex)
             row = {'fingerprint': fingerprint, 'operation': operation, 'arguments': values,
                    'key': key, 'state': 'pending', 'created_at': utcnow()}

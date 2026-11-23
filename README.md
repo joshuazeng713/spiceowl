@@ -12,7 +12,7 @@
 
 > **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `main`; the [publishing guide](https://github.com/joshuazeng713/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
-> **Early alpha — server pool, native agent Q&A and a developer inverter smoke test.** Compare bounded SSH resource observations, prepare standalone or Virtuoso-origin execution plans, and ask an installed Codex runtime a short question. Web-console runs and run diagnoses remain synthetic. A separate, opt-in [developer script](examples/inverter/README.md) can execute the original MOS1 inverter on a licensed Spectre installation; general web/CLI job submission and unattended monitoring remain planned. Optional MCP tools read saved records. See the [console guide](docs/local-console.md), [server pool guide](docs/server-pool.md), and [native Q&A guide](docs/native-agent.md).
+> **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [native Q&A guide](docs/native-agent.md).
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
@@ -31,12 +31,12 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
 | Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Native Codex Q&A, fake agent/API management, MCP queries and SSH host/resource checks implemented |
-| Observe | Track execution identity, simulation progress, logs, memory, and disk usage | Real host snapshots and developer smoke receipts; web runs remain synthetic |
-| Reconnect | Reconcile an existing job after a client or controller interruption | Local record recovery and same-run smoke status queries; general simulator reconnection planned |
-| Validate | Check inputs, required signals, measurement windows, and result completeness | Acceptance reducer and dedicated inverter waveform checks; general waveform validators planned |
-| Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; dispatch disabled |
-| Diagnose | Use an optional agent to explain evidence and propose actions | Offline fixture diagnosis implemented |
-| Report | Separate execution outcome, measurement validity, and circuit performance | Synthetic web reports and a separate inverter smoke report |
+| Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
+| Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
+| Validate | Check inputs, required signals, measurement windows, and result completeness | Bounded transient PSF ASCII checks and inverter-specific acceptance; general measurement-window and specification recipes remain planned |
+| Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; automatic restart, migration and parameter repair are not implemented |
+| Diagnose | Explain evidence and propose actions | Deterministic Spectre failure classification; native agent Q&A and synthetic diagnosis remain separate |
+| Report | Separate execution outcome, measurement validity, and circuit performance | Real execution/observation/data/specification dimensions, separate synthetic reports and developer smoke reports |
 
 ### A morning report should answer three different questions
 
@@ -78,7 +78,7 @@ flowchart TD
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
-The current slice adds **a server pool, execution-origin planning and native Q&A**, following the [P0.3 contract](docs/contracts/p03-pool-agent.md). The earlier [P0.2 contract](docs/contracts/p02-connectivity.md) covers SSH/MCP fundamentals. The broader [implementation plan](docs/design/integration-plan.md) also proposes API-key and ACP routes; these remain future work. The [three design workstreams](docs/design/README.md) share the [interface boundaries](docs/contracts/interface-boundaries.md).
+The current [standalone runtime](docs/standalone-runtime.md) builds on **server pools, execution-origin planning and native Q&A** from the [P0.3 contract](docs/contracts/p03-pool-agent.md). The earlier [P0.2 contract](docs/contracts/p02-connectivity.md) covers SSH/MCP fundamentals. The broader [implementation plan](docs/design/integration-plan.md) also proposes API-key and ACP routes; these remain future work. The [three design workstreams](docs/design/README.md) share the [interface boundaries](docs/contracts/interface-boundaries.md).
 
 ## Repository map
 
@@ -93,7 +93,8 @@ spiceowl/
 ├── src/spiceowl/              # Installable Python package
 │   ├── domain/                # Experiment, attempt, receipt, and event models
 │   ├── adapters/              # Execution and simulator integrations
-│   ├── monitoring/            # Observation and failure classification
+│   ├── integrations/          # CircuitGit client/pool, diagnostics and PSF ASCII parsing
+│   ├── monitoring/            # Durable observation of existing real runs
 │   ├── validation/            # Input and measurement acceptance checks
 │   ├── recovery/              # Policy evaluation and action proposals
 │   ├── storage/               # Durable records and artifact references
@@ -105,7 +106,7 @@ spiceowl/
 └── tests/                     # Offline tests and synthetic fixtures
 ```
 
-The package includes fake AI connections, a SQLite controller, synthetic replay, acceptance/policy helpers, private host profiles, bounded SSH probes, optional MCP queries, CLI and bundled web assets. The [local console guide](docs/local-console.md) distinguishes these implementations from later job monitoring. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
+The package includes synthetic replay, native Q&A, private host profiles, bounded SSH probes, optional read-only MCP queries, shared real-run monitoring/diagnostics/PSF parsing, and one signed client reused by CLI and web. CircuitGit owns project materialization, execution identity, dispatch and native collection. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
 
@@ -129,6 +130,17 @@ For multiple nodes, use **Simulation hosts → Import pool** to preview an expli
 
 For real text answers, register a private native runtime profile using `agents add --file PROFILE.json`, then open **Agent chat**. This uses the runtime's existing provider/auth configuration, which may be a subscription or a separately configured API route. Requests have durable keys, no automatic provider fallback, and no simulator tools. See the [native Q&A guide](docs/native-agent.md).
 
+## Connect the real simulation console
+
+Provision a private [live-client configuration](examples/live-client.example.json) for an authorized, running CircuitGit gateway, then use the same file for CLI and web:
+
+```bash
+spiceowl live --client-config /absolute/private/live-client.json runtime
+spiceowl serve --live-client-config /absolute/private/live-client.json
+```
+
+The [standalone runtime guide](docs/standalone-runtime.md) covers server grants, exact project/configuration/commit identity, explicit submission and collection, and unknown-request lookup. This path executes prepared netlists with remote Spectre without launching Virtuoso or OCEAN. The local client needs no PDK files; licensed models, alias mappings, hash pins and a working simulator license must exist in the remote execution environment when the circuit needs them. Keep the CircuitGit service running for background observation. Current `watch` observes an existing run; it does not automatically collect, restart a solver or change parameters.
+
 ## Developer inverter smoke test
 
 The source-checkout utility [run_inverter_smoke.py](scripts/run_inverter_smoke.py) provides an explicit `prepare → stage → launch → status → collect` workflow for the [original toy MOS1 inverter](examples/inverter/README.md). It requires a registered, authorized Linux host with licensed Spectre, GNU `timeout`, and a working Python 3.6+ interpreter. Replace `HOST_ID` with a registered host ID and `PYTHON_ABSOLUTE_PATH` with that remote interpreter's absolute path. Run the steps individually and inspect each result before continuing:
@@ -145,11 +157,11 @@ If the remote launch environment needs explicit license configuration, append th
 
 `prepare` actively checks the selected hosts and freezes a local source/acceptance bundle; it does not reserve resources or launch a job. `stage` writes the frozen input to an isolated remote directory. `launch` rechecks resource headroom, verifies the remote identity/version and claims one bounded attempt. If delivery is uncertain, use `status` with the same saved run directory; do not prepare a new key or blindly relaunch. Collect only after a confirmed terminal result. Collection checks hashes and completion evidence, saves native PSF ASCII and logs, and produces separate execution, measurement-validity and toy-inverter results. Optional `collect --plots` needs a separately installed local matplotlib.
 
-Keep `.spiceowl/smoke/` private. The original educational models represent no fabrication process, and a passing smoke test does not qualify a PDK or unattended recovery. This utility is separate from the product's web/CLI execution plans and read-only MCP; those interfaces do not dispatch simulations. Limits and acceptance criteria are documented with the [example](examples/inverter/README.md).
+Keep `.spiceowl/smoke/` private. The original educational models represent no fabrication process, and a passing smoke test does not qualify a PDK or unattended recovery. This utility remains a separate developer workflow. The optional real CLI/web client dispatches through CircuitGit’s existing Runner; MCP cache queries and placement-only commands retain their read-only or planning scope. Limits and acceptance criteria are documented with the [example](examples/inverter/README.md).
 
-SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three optional MCP tools expose the local cache to agents. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. This does not enable continuous monitoring or automatic recovery. See the [IC Workbench integration guide](docs/ic-workbench.md).
+SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three optional MCP tools expose the local cache to agents. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. That passive cache interface does not enable monitoring or automatic recovery. The optional real client enables explicit watches separately. See the [IC Workbench integration guide](docs/ic-workbench.md).
 
-CircuitGit can use the [external resource-selection API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit) to scan a configured server pool, freeze the selected site in a reviewed plan and recheck it before its existing Runner submits the simulation. Stored runs carry optional historical library/cell and execution-target metadata. SpiceOwl web/CLI runs remain synthetic; its MCP tools remain read-only. Both repositories are delivered and tested together.
+CircuitGit can use the [external resource-selection API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit) to scan a configured server pool, freeze the selected site in a reviewed plan and recheck it before its existing Runner submits the simulation. Stored runs carry optional historical library/cell and execution-target metadata. SpiceOwl’s optional real CLI/web entry point reuses that same Runner, and MCP remains read-only. Both repositories’ simulation integration is delivered and tested together.
 
 ## Contributing
 

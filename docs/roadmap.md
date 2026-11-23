@@ -1,6 +1,6 @@
 # Roadmap
 
-This is a milestone plan, not a release or delivery-date promise. M0 and the bounded P0.1 offline prototype are implemented. A milestone closes when its observable acceptance criteria pass.
+This is a milestone plan, not a release or delivery-date promise. The offline prototype, host/native-Q&A slice and optional standalone Spectre client are implemented. M1/M2/M3 have bounded implementations; broader acceptance criteria remain open. A milestone closes when its observable acceptance criteria pass.
 
 ## M0 — Project foundation (current)
 
@@ -11,7 +11,7 @@ This is a milestone plan, not a release or delivery-date promise. M0 and the bou
 - [x] Illustrative manifest and synthetic failure scenario.
 - [ ] Maintainer records the first supported Cadence/version/execution profile.
 
-The repository now includes an installable alpha package, local CLI/web console and synthetic replay. No real provider or simulator integration is certified. See the [local console guide](local-console.md).
+The repository includes an installable alpha package, local CLI/web console, synthetic replay and optional real integrations. A supported code path is not certification of an arbitrary provider, site or PDK. See the [local console guide](local-console.md) and [standalone runtime](standalone-runtime.md).
 
 ## P0.1 — Offline local console (implemented)
 
@@ -23,7 +23,7 @@ The repository now includes an installable alpha package, local CLI/web console 
 - [x] Four finite synthetic run scenarios with explicit manual replay.
 - [x] Public tests for domain contracts, service restart/deduplication and loopback API boundaries.
 
-The small web console was brought forward at the maintainer's request. Synthetic replay does not close M1's continuous-monitor requirements. Provider credentials, real inference, durable external execution and automatic recovery remain absent.
+This section records the original offline milestone. Later slices add native inference and a real client backed by CircuitGit’s existing Runner. Synthetic replay remains separate and cannot establish real execution, monitoring or scientific acceptance. Automatic recovery remains absent.
 
 ## P0 — Agent and model-API connections (partially implemented)
 
@@ -33,7 +33,7 @@ Deliver connection configuration/registry, separate agent-runtime and model-API 
 
 P0.2 provides private SSH profiles, explicit identity/tool-version probes, a browser host view, and optional read-only stdio MCP tools. Public tests use a fake SSH peer and an actual local MCP handshake. These checks do not close M1 or M2. Direct API adapters, persistent credential entry and account-scoped usage limits remain planned. See the [connectivity contract](contracts/p02-connectivity.md).
 
-P0.3 adds native Codex text Q&A, explicit multi-host Linux resource snapshots, conservative placement recommendations and standalone/Virtuoso-origin execution plans. See [server pool](server-pool.md) and [native Q&A](native-agent.md). A successfully completed native question verifies that request's configured provider route. No job submission, reservation, native ADE control or continuous monitoring is implemented; those remain M1/M2 work.
+P0.3 adds native Codex text Q&A, explicit multi-host Linux resource snapshots, conservative placement recommendations and standalone/Virtuoso-origin execution plans. See [server pool](server-pool.md) and [native Q&A](native-agent.md). A successfully completed native question verifies that request's configured provider route. Those P0.3 planning commands remain non-dispatching. The later standalone runtime adds real submission and existing-run monitoring; reservations, native ADE control and automatic recovery remain open.
 
 Acceptance:
 
@@ -46,9 +46,22 @@ Acceptance:
 - Keep all public tests independent of subscriptions, API keys, Cadence, and private servers.
 - Real login and small paid smoke tests are separately authorized, opt-in integration checks, not automatic discovery.
 
-## M1 — Read-only monitoring
+## Standalone Spectre integration — implemented alpha slice
 
-Deliver a Python CLI, mock executor, durable attempt records, incremental log observations, and a plain structured report. Reuse the packaging introduced by P0; Python 3.11+ is the current proposal, subject to selected dependency support.
+- [x] Shared signed live client used by local CLI and web, with an explicit private project/host/caller grant.
+- [x] Resource selection, input/site identity and dispatch through CircuitGit's existing Runner.
+- [x] Durable existing-run watches, bounded status calls, last successful observations and failure backoff.
+- [x] Private client journal and exact submission-key lookup; unknown requests cannot be replayed with replacement keys.
+- [x] Explicit native collection, shared transient PSF ASCII parsing and deterministic Spectre diagnostics.
+- [x] Separate execution, observation, data-validity and specification reporting.
+- [ ] Automatic solver restart, resource migration and parameter repair.
+- [ ] General analog measurement recipes and broader native result formats.
+
+The [runtime guide](standalone-runtime.md) records the supported CLI, private grant, service lifecycle and scientific limits. Existing live watches disable automatic collection. CircuitGit and SpiceOwl are tested and pinned together; actual sites still need authorized qualification.
+
+## M1 — Read-only monitoring (partially implemented)
+
+The shared monitor and structured report are implemented for existing CircuitGit runs. Incremental log-stream accounting, rotation handling and broader executor support remain open. Python 3.11+ is supported.
 
 Acceptance:
 
@@ -57,11 +70,11 @@ Acceptance:
 - Distinguish connection loss from a confirmed process/job failure.
 - Handle log rotation and duplicate observations without losing event identity.
 - Report execution, observation freshness, measurement validity, and specification outcome separately.
-- Document that M1 cannot submit, cancel, modify, or recover real jobs.
+- Keep the monitor itself unable to submit, cancel, modify or restart a real job; explicit live operations use the existing Runner.
 
-## M2 — One reliable execution backend
+## M2 — One reliable execution backend (partially implemented)
 
-Select one Linux execution profile and one simulator version. Implement immutable input capture, preparation checks, submission receipts, reconciliation, owned-job cancellation, artifact collection, and input provenance. Evaluate Prefect integration against these semantics.
+The optional real client reuses CircuitGit’s existing standalone Spectre Runner for input/site checks, keyed submission and native collection. Keep the same execution owner rather than adding a framework or second ledger. Broader executor qualification, user-facing cancellation and recovery remain open.
 
 Acceptance:
 
@@ -72,9 +85,9 @@ Acceptance:
 - Record simulator version, resolved netlist/model dependency identity, execution profile, and actual input fingerprint.
 - Publish precisely what the selected profile supports. Real-tool tests run only in a configured private environment.
 
-## M3 — Experiment validation
+## M3 — Experiment validation (partially implemented)
 
-Implement validators for input consistency, required signals, analysis completion, measurement-window coverage, and one useful analog measurement recipe.
+The bounded transient PSF ASCII parser checks readability, finite/aligned values, time ordering and required signals. Inverter-specific acceptance is separate. General measurement-window coverage, analysis-specific validation and useful analog measurement recipes remain open; readable data never implies a specification pass.
 
 Acceptance:
 
@@ -109,13 +122,13 @@ Acceptance:
 - Untrusted log/model content cannot authorize a command or change a policy.
 - Clearly identify implemented, experimental, and unsupported capabilities.
 
-## First implementation slices
+## Next implementation slices
 
-1. Define connection records, capability/auth/session contracts, and fake agent/API backends.
-2. Add metadata persistence and a local management interface with secret-reference handling.
-3. Add one documented Codex route and one API-key route with isolated, opt-in smoke tests; expand ACP after the common contracts pass.
-4. Return to M1: implement the mock simulation monitor and durable observation/report flow.
-5. Inject duplicate events, rotated logs, lost responses, and missing results before real submission/recovery.
+1. Qualify the paired standalone runtime on explicitly authorized sites and preserve native evidence.
+2. Extend input/measurement validation with real experiment requirements and missing-output/window cases.
+3. Improve observation coverage, log rotation and gateway lifecycle checks without weakening uncertainty handling.
+4. Add an explicit API-key route and expand ACP after shared connection contracts pass.
+5. Add bounded recovery only after ownership, outcome reconciliation and scientific validation are established.
 
 ## Later, after the first backend works
 

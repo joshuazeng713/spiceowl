@@ -1,6 +1,6 @@
 # Architecture
 
-Status: architecture target with a local console, SSH/MCP connectivity and a P0.3 server-pool/native-Q&A slice. The [local console guide](local-console.md), [server pool guide](server-pool.md) and [native agent guide](native-agent.md) record shipped components and limits. Aggregate resource checks, placement/origin plans, read-only MCP queries and native text inference are implemented. General product web/CLI simulation submission, unattended monitoring and recovery remain planned. A separate, explicitly authorized [developer inverter smoke utility](../examples/inverter/README.md) can execute the original MOS1 example; the [IC Workbench integration](ic-workbench.md) reads and caches stored records while IC Workbench retains execution ownership.
+Status: a local console with separate synthetic demos and an optional [real standalone Spectre runtime](standalone-runtime.md). CLI and web share one signed client to CircuitGit’s existing Runner. SpiceOwl supplies host-pool checks, durable existing-run monitoring, Spectre diagnostics and PSF ASCII parsing; CircuitGit retains materialization, run/submission identity, remote execution and native collection. Automatic solver restart, parameter repair and general scientific measurement recipes remain planned. The [local console](local-console.md), [server pool](server-pool.md), [native Q&A](native-agent.md), passive [IC cache](ic-workbench.md) and separate [developer inverter smoke](../examples/inverter/README.md) retain their documented scopes.
 
 The connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific version probes. Private profiles and explicit pool members can be registered through the CLI or [browser onboarding](host-onboarding.md); listing never probes a server. MCP clients query existing SQLite records through an independent read-only connection, without starting a controller or recovering its active turns. The separate native Q&A adapter sends text to an ephemeral Codex thread with restricted tools and preserves uncertain request outcomes. See the [P0.2 contract](contracts/p02-connectivity.md) and [P0.3 contract](contracts/p03-pool-agent.md).
 
@@ -12,7 +12,7 @@ Use separate `AgentBackend` and `ModelBackend` contracts behind a connection man
 
 ## First deployment
 
-Start with a single controller and one explicitly configured Linux execution environment. The first monitor uses a mock executor; the first real backend is selected only after the maintainer records the available Virtuoso/Spectre versions and whether execution is local, through SSH, or through a scheduler.
+The implemented real path connects to an explicitly configured CircuitGit service and resource pool. Each selected Linux host has an operator-owned SSH/site profile and verified Spectre/model identity. The local client does not need PDK files; remote model aliases, hash pins and the simulator license still need to validate. This route executes prepared netlists without Virtuoso or OCEAN. Keep the gateway process available for background monitoring and qualify each installation with an authorized trial.
 
 Keep these responsibilities separate:
 
@@ -22,14 +22,15 @@ Keep these responsibilities separate:
 | `adapters/executors` | Job submission, reconciliation, resource observation, owned-job cancellation | Deciding whether a circuit meets its specification |
 | `adapters/simulators` | Input preparation, tool capabilities, log interpretation, result collection | Unreviewed electrical or measurement changes |
 | `execution` (future package) | Compose adapters, enforce grants, dispatch actions and separately keyed postprocessing | Let an agent session own simulator execution |
-| `monitoring` | Timestamped observations and evidence-based failure classification | Treating stale observations as proof of failure |
+| `monitoring` | Durable watches of existing runs, bounded status calls and failure backoff | Submitting/restarting a solver or treating stale observations as proof of failure |
+| `integrations` | Signed live client, private request reconciliation, resource selection, Spectre diagnostics and PSF ASCII parsing | A second execution/approval ledger or copying private PDK content |
 | `validation` | Input consistency, data completeness, measurement preconditions, specification checks | Silently changing the acceptance criteria |
 | `recovery` | Allowed actions, limits, decision records, recovery attempts | Executing arbitrary agent-generated shell commands |
 | `storage` | Durable identities, events, receipts, artifact references | Keeping large waveform payloads inside the event database |
 | `agent` | Evidence summaries and typed diagnostic/action proposals | Direct lifecycle authority over a job |
 | `cli` | User commands and structured presentation | Keeping a simulation alive through a terminal connection |
 
-The maintainer brought a small local web console forward into P0.1. It shares the controller and SQLite records with the CLI and ships static assets in the Python package. A full real-execution console remains a later milestone; the prototype has no external frontend service or runtime dependency.
+The web console ships static assets in the Python package. Synthetic demos use the local Controller/SQLite records; the separate real-simulation view and `live` CLI commands share `LiveSimulationClient`. The live path uses CircuitGit’s existing Runner records instead of creating synthetic task identities or another execution engine. No external frontend service is needed.
 
 ## Execution ownership
 
@@ -45,7 +46,7 @@ cancel_owned(receipt, action_key) -> action_receipt
 collect(receipt, artifact_selection) -> artifact_references
 ```
 
-These are interface sketches, not existing APIs. Each adapter must document which operations it supports. An adapter that can only observe an existing job must not advertise submission, cancellation, or checkpoint recovery.
+These are general interface sketches. The implemented finite live API is documented in [standalone runtime](standalone-runtime.md); it supports explicit submit/status/collect/watch operations and exact-key lookup, without cancellation or solver restart. Each adapter must document which operations it supports. An adapter that can only observe an existing job must not advertise submission, cancellation, or checkpoint recovery.
 
 `collect` inventories/references/copies existing bytes within a configured scope; OCEAN computation is a separate service-owned postprocessing task. `ExecutionReceipt`, `ActionReceipt`, `PostprocessReceipt`, and their tagged `OperationResult` handoff are defined in [shared boundaries](contracts/interface-boundaries.md#shared-handoff-records). Imported native executions may have a null submission key and explicitly unknown historical fingerprints; this never permits an unkeyed submission.
 
@@ -64,7 +65,7 @@ Each solver restart generation is a new attempt, including native scheduler rest
 
 This is not a claim of exactly-once external execution. The executor must supply deduplication or trustworthy reconciliation; a workflow framework's retry feature alone does not provide it.
 
-Controller startup must recover pending records, reconcile nonterminal attempts, and resume observation. A transient empty scheduler result is not enough to declare a job gone; consult accounting/history and the adapter's consistency rules.
+The live client retains unknown requests without replay. Monitor watches and last successful observations are durable. By default, a restarted gateway needs an explicit `watch`; the operator can enable `simulation_direct.resume_monitors=true` to resume previously authorized watches after rechecking their original identity and current scope. Runtime reads do not arm a watch. Broader controller/scheduler recovery remains a target: a transient empty scheduler result cannot establish that a job is gone.
 
 ## State is multidimensional
 
@@ -81,7 +82,7 @@ Execution completion does not establish measurement validity. A valid measuremen
 
 ## Monitoring
 
-Collect bounded evidence at a configurable cadence. The initial default cadence will be chosen after measuring adapter overhead; do not poll a cluster's accounting database aggressively.
+The shared existing-run monitor uses bounded Runner status calls, a default 30-second cadence and failure backoff capped at 300 seconds. It retains the last successful execution observation separately from failed checks. Current live watches disable automatic collection. The following broader evidence set remains an adapter target; aggregate host snapshots are not per-process memory accounting.
 
 - Process or scheduler state and observation timestamp.
 - Current simulator analysis/stage and simulated time when exposed.

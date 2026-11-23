@@ -1,0 +1,457 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spiceowl:simulation-runtime:v1",
+  "title": "Stored standalone simulation runtime",
+  "x-contract-version": "1.0.0",
+  "description": "GET /api/simulation/runtime?project_id=... reads stored evidence only. Remote operations use POST /api/simulation/control after installed connection authorization. read_at is not a fresh resource or execution observation.",
+  "type": "object",
+  "required": [
+    "schema",
+    "project_id",
+    "read_at",
+    "pool",
+    "runs",
+    "capabilities"
+  ],
+  "properties": {
+    "schema": {
+      "const": "ic.simulation.runtime.v1"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+    },
+    "read_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pool": {
+      "type": "object",
+      "required": [
+        "configured",
+        "checked_at",
+        "scan_in_progress",
+        "hosts"
+      ],
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "checked_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "scan_in_progress": {
+          "type": "boolean"
+        },
+        "hosts": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/host"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "runs": {
+      "type": "array",
+      "maxItems": 25,
+      "items": {
+        "$ref": "#/$defs/run"
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "scan",
+        "monitor",
+        "direct_submit",
+        "direct_collect"
+      ],
+      "properties": {
+        "scan": {
+          "type": "boolean"
+        },
+        "monitor": {
+          "type": "boolean"
+        },
+        "direct_submit": {
+          "type": "boolean"
+        },
+        "direct_collect": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "host": {
+      "type": "object",
+      "required": [
+        "host_id",
+        "label",
+        "reachable",
+        "cpu_busy_percent",
+        "load_1m",
+        "cpu_count",
+        "memory_available_bytes",
+        "memory_total_bytes",
+        "observed_at",
+        "error_code"
+      ],
+      "properties": {
+        "host_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "reachable": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cpu_busy_percent": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "load_1m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "cpu_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "memory_available_bytes": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "memory_total_bytes": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "error_code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 180
+        }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "source_commit",
+        "configuration",
+        "execution_target",
+        "execution",
+        "monitor",
+        "diagnostics",
+        "acceptance",
+        "collectable"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+        },
+        "source_commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "configuration": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 180
+        },
+        "execution_target": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "mode",
+                "host_id",
+                "plan_id",
+                "resource_observed_at",
+                "resource_reservation"
+              ],
+              "properties": {
+                "mode": {
+                  "enum": [
+                    "fixed_site",
+                    "resource_pool"
+                  ]
+                },
+                "host_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 180
+                },
+                "plan_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "resource_observed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "resource_reservation": {
+                  "const": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "execution": {
+          "type": "object",
+          "required": [
+            "state",
+            "exit_code"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "maxLength": 180
+            },
+            "exit_code": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "monitor": {
+          "type": "object",
+          "required": [
+            "state",
+            "last_attempt_at",
+            "last_success_at",
+            "next_check_at",
+            "failures"
+          ],
+          "properties": {
+            "state": {
+              "type": "string",
+              "maxLength": 180
+            },
+            "last_attempt_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "last_success_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "next_check_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "failures": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "diagnostics": {
+          "$ref": "#/$defs/diagnostics"
+        },
+        "acceptance": {
+          "$ref": "#/$defs/acceptance"
+        },
+        "collectable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "object",
+      "required": [
+        "execution",
+        "data_validity",
+        "specification"
+      ],
+      "properties": {
+        "execution": {
+          "enum": [
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "data_validity": {
+          "enum": [
+            "valid",
+            "invalid",
+            "unknown"
+          ]
+        },
+        "specification": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": [
+        "schema",
+        "observed_context",
+        "diagnostics",
+        "scientific_acceptance",
+        "agent_proposal",
+        "advisory_only"
+      ],
+      "properties": {
+        "schema": {
+          "const": "spiceowl.spectre-diagnostics.v1"
+        },
+        "observed_context": {
+          "type": "object"
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "scientific_acceptance": {
+          "$ref": "#/$defs/acceptance"
+        },
+        "agent_proposal": {
+          "type": "null"
+        },
+        "advisory_only": {
+          "const": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "category",
+        "code",
+        "severity",
+        "evidence_line_numbers",
+        "redacted_excerpt",
+        "suggested_actions"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "evidence_line_numbers": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "redacted_excerpt": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "suggested_actions": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

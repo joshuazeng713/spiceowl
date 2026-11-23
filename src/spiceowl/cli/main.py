@@ -1,4 +1,4 @@
-"""CLI entry point for local records and explicit read-only connectivity probes."""
+"""CLI for demo records, connectivity and an optional bound simulation client."""
 
 import argparse
 import json
@@ -14,7 +14,7 @@ from spiceowl.storage.sqlite import Store
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="spiceowl", description="Local simulation console: synthetic runs and read-only real connectivity.")
+    result = argparse.ArgumentParser(prog="spiceowl", description="Local console: synthetic demos, host connectivity and an optional real simulation client.")
     result.add_argument("--version", action="version", version=f"SpiceOwl {__version__}")
     default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "spiceowl"
     result.add_argument("--data-dir", default=str(default), help="Local persistent state directory (put before the command).")
@@ -22,7 +22,33 @@ def parser():
     serve = commands.add_parser("serve", help="Open a loopback-only web console.")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--demo", action="store_true", help="Idempotently add synthetic demo data.")
+    serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
+    live = commands.add_parser("live", help="Use the configured real CircuitGit Runner with an explicitly bound project.")
+    live.add_argument("--client-config", required=True, help="Private spiceowl.live-client.v1 JSON file.")
+    live_actions = live.add_subparsers(dest="action", required=True)
+    for name in ("runtime", "scan", "submit", "status", "collect", "watch", "unwatch", "lookup"):
+        command = live_actions.add_parser(name, help={
+            "runtime": "Read stored real simulation and pool observations.",
+            "scan": "Explicitly scan the configured simulation host pool.",
+            "submit": "Submit exact configured inputs through CircuitGit's existing Runner.",
+            "status": "Observe one exact real run.",
+            "collect": "Collect one exact run through the existing Runner.",
+            "watch": "Enable background observation of one exact run.",
+            "unwatch": "Stop background observation without cancelling the simulation.",
+            "lookup": "Read the original submission key mapping; never replay a request.",
+        }[name])
+        if name == "lookup":
+            command.add_argument("--key", required=True)
+            continue
+        command.add_argument("--project", help="Must match the configured project; defaults to that binding.")
+        if name not in ("runtime", "scan"):
+            command.add_argument("--configuration", required=True)
+            command.add_argument("--source-commit", required=True)
+        if name in ("status", "collect", "watch", "unwatch"):
+            command.add_argument("--run-id", required=True)
+        if name in ("submit", "collect"):
+            command.add_argument("--key", help="Stable request key; omitted keys are privately persisted before sending.")
     commands.add_parser("status", help="Print locally stored connection/run/session records as JSON.")
     commands.add_parser("mcp", help="Serve read-only local queries over stdio (requires the mcp extra).")
     ic = commands.add_parser("ic", help="Read saved IC Workbench tasks through a registered local gateway.").add_subparsers(dest="action", required=True)
@@ -107,6 +133,17 @@ def output(value):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "live":
+            from spiceowl.integrations.live import LiveSimulationClient
+            client = LiveSimulationClient(args.client_config)
+            if args.action == "lookup":
+                output(client.lookup_submission(args.key))
+            else:
+                values = {name: getattr(args, name) for name in ("configuration", "source_commit", "run_id") if hasattr(args, name)}
+                if args.project is not None:
+                    values["project_id"] = args.project
+                output(client.execute(args.action, values, getattr(args, "key", None)))
+            return 0
         if args.command == "ic":
             from spiceowl.integrations.ic_workbench import ICGatewayBackend
             from spiceowl.hosts import load_profile
@@ -209,8 +246,9 @@ def main(argv=None):
                     raise DomainError("Port must be between 0 and 65535.")
                 if args.demo:
                     app.seed_demo()
-                with make_server(app, args.port) as server:
-                    print(f"SpiceOwl {__version__} · server pool + native Q&A · synthetic simulation runs", flush=True)
+                with make_server(app, args.port, live_client_config=args.live_client_config) as server:
+                    simulation_mode = "configured real simulation client + separate synthetic demos" if args.live_client_config else "synthetic simulation runs"
+                    print(f"SpiceOwl {__version__} · server pool + native Q&A · {simulation_mode}", flush=True)
                     print(f"http://127.0.0.1:{server.server_address[1]}", flush=True)
                     try:
                         server.serve_forever()

@@ -1,13 +1,13 @@
 # Contributing to SpiceOwl
 
-SpiceOwl has an offline alpha CLI/web console and synthetic backend tests. Read the [local console guide](docs/local-console.md), [roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) before starting implementation.
+SpiceOwl has an alpha CLI/web console with synthetic demos and an optional real CircuitGit client, plus shared monitoring, diagnostics and result parsing tested with synthetic fixtures. Read the [local console guide](docs/local-console.md), [roadmap](docs/roadmap.md) and [architecture](docs/architecture.md) before starting implementation.
 
 ## Useful first contributions
 
 - A reproducible, sanitized simulation failure with a clear expected outcome.
 - Review of the experiment/run contract from an analog-design perspective.
 - A small connection-management slice with fake agent/API backends, following the [parallel design workstreams](docs/design/README.md).
-- A small slice of the mock executor and read-only monitor.
+- A focused existing-run monitor, transport-failure or result-parser improvement with synthetic fixtures.
 - An input or measurement validator with synthetic/public fixtures.
 - Documentation corrections and improvements to the English/Chinese introductions.
 
@@ -34,7 +34,7 @@ Do not submit proprietary PDK/model files, private circuit sources, license file
 - Preserve the separation between experiment intent, execution, validation, and specification outcome.
 - Make submission and recovery uncertainty explicit. Never blindly repeat an external action after a lost response.
 - Give new adapters capability declarations and deterministic fake-backed tests before adding optional real-tool tests.
-- When runtime code arrives, add meaningful tests for restart/reconnection, duplicate events, failure injection, and scientific acceptance.
+- Runtime changes need meaningful tests for restart/reconnection, duplicate requests/events, failure injection and scientific acceptance. Keep the paired CircuitGit adapter and exact-commit contract aligned when changing a simulation integration.
 - Keep standard public CI independent of Cadence, PDKs, private hosts, and model API keys.
 - Use English for technical specifications and code; keep user-facing README content aligned in English and Chinese.
 

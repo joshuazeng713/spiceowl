@@ -1,6 +1,6 @@
 # Real connectivity: bounded SSH probes and local MCP
 
-SpiceOwl 0.2.0a1 implements the **P0.2 connectivity slice** described in the [P0.2 contract](contracts/p02-connectivity.md). The [console](local-console.md) continues to use synthetic runs and fake agent/model backends. Qualify each installation and host using the verification stages below.
+This guide describes the **P0.2 connectivity slice** and its [contract](contracts/p02-connectivity.md). Those probes and MCP reads retain their original scope. The current [console](local-console.md) also has separate native Q&A and an optional [real standalone simulation client](standalone-runtime.md); synthetic demo runs and fake diagnostic backends remain clearly identified. Qualify each installation and host using the verification stages below.
 
 The current 0.3.0a1 build also provides a [server pool](server-pool.md) and [native text Q&A](native-agent.md). This page describes the narrower SSH/MCP interfaces; its fake-backend statements refer to the original connection and per-run diagnosis demo.
 
@@ -11,7 +11,7 @@ P0.2 adds two separate paths:
 | Explicit SSH probe | Checks the configured remote hostname/user, then requests supported tool versions with bounded commands. | A working license, accessible PDK, usable testbench, running job, or valid simulation result. |
 | Local stdio MCP | Lets a client read a selected SpiceOwl database through a small tool allowlist. | A live SSH connection, provider inference access, or permission to operate a simulator. |
 
-There is no simulation submission, cancellation, netlisting, solver restart, daemon control, or OCEAN evaluation in this slice. Version probes do not require a Virtuoso GUI bridge. OCEAN computation is future, separately authorized service work; it is not hidden inside a version probe or artifact read. The console's API inference and diagnostic backends remain fake. Connecting Codex as an MCP client does not convert those fake backends into real model integrations.
+There is no simulation submission, cancellation, netlisting, solver restart, daemon control, or OCEAN evaluation in this slice. Version probes do not require a Virtuoso GUI bridge. OCEAN computation is future, separately authorized service work; it is not hidden inside a version probe or artifact read. The original demo’s API inference and diagnostic backends remain fake; native Q&A and deterministic Spectre diagnostics are separate features. Connecting Codex as an MCP client does not convert those fake backends into real model integrations.
 
 All hosts, usernames, IDs, and absolute paths in this guide are **fictional examples**. Replace them with operator-selected values in private configuration. The examples contain no real credentials and were not executed for this guide.
 

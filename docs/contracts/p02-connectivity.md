@@ -1,5 +1,7 @@
 # P0.2 connectivity slice
 
+Later extension: the separately configured [standalone runtime](../standalone-runtime.md) adds finite real CLI/web operations through CircuitGit’s existing Runner. The original probes, read-only MCP tools and placement-only commands documented here retain their narrower scope.
+
 Scope: explicit, bounded SSH identity/tool-version probes and a stdio MCP server that reads SpiceOwl state. No simulation submission, cancellation, netlisting, OCEAN evaluation, daemon control, or model inference. The existing synthetic runs and fake AI backends remain labeled as synthetic.
 
 Later extension: [host onboarding](../host-onboarding.md) adds explicit browser registration and pool import. The original no-HTTP-registration boundary below describes P0.2; the new endpoints persist the same strict profiles and remain separate from active checks.

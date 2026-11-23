@@ -1,6 +1,6 @@
 # IC Workbench integration
 
-SpiceOwl can read IC Workbench's stored simulation records through an explicitly registered loopback gateway. A compact supervision card fits inside IC Workbench's existing simulation panel. IC Workbench remains the owner of project compilation, submission IDs, approval requests, execution and collection. The integration does not run a second executor.
+SpiceOwl can read IC Workbench's stored simulation records through an explicitly registered loopback gateway. A compact supervision card fits inside IC Workbench's existing simulation panel. IC Workbench remains the owner of project compilation, submission IDs, approval requests, execution and collection. The integration does not run a second executor. This guide describes the passive `ic` cache and existing IC Service actions. The separately configured [standalone live client](standalone-runtime.md) adds finite CLI/web control and existing-run watches through the same Runner.
 
 ## Register and read
 
@@ -56,7 +56,7 @@ Contract revision 1.2.0 additionally accepts optional recorded `library_id` and 
 
 ## Scope and tests
 
-This slice supports the configured IC site's stored records and existing controlled action channel. It does not implement multi-host reservations, continuous remote polling, process recovery, checkpoint migration, automatic parameter edits, or automatic resubmission.
+This passive slice supports the configured IC site’s stored records and existing controlled action channel. Its cache sync never polls remote processes continuously or enables recovery. The separate standalone runtime supports explicit existing-run watches. Multi-host reservations, checkpoint migration, automatic parameter edits and automatic resubmission remain unimplemented.
 
 Run `PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_ic_*.py'`. MCP tests exercise the actual optional stdio server against synthetic local state. IC Workbench has separate gateway and supervision-component tests.
 

@@ -1,5 +1,7 @@
 # P0.3 server pool, placement and native Q&A
 
+Later extension: the separately configured [standalone runtime](../standalone-runtime.md) adds finite real CLI/web operations through CircuitGit’s existing Runner. The original probes, read-only MCP tools and placement-only commands documented here retain their narrower scope.
+
 This slice extends P0.2 with explicitly selected hosts, Linux resource snapshots, resource-based placement proposals, simulation-origin routing, and a real native Codex Q&A connection. A resource observation is not a reservation or proof that a simulation can run. No real simulation is submitted without an explicit experiment and launch request.
 
 ## Host routing and metrics

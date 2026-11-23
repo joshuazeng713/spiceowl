@@ -19,6 +19,11 @@ let selectedQa = null, qaView = null, qaPolling = false, qaSubmitting = false;
 let poolImportPreview = null;
 let selectedHostIds = null;
 let hostSelectionRevision = 0, planningBusy = false;
+let live = {loaded: false, loading: false, enabled: false, projectId: '', runtime: null, error: null, busy: false, receipt: null};
+let liveDraft = {configuration: '', source_commit: '', run_id: ''};
+const LIVE_PENDING = 'spiceowl.live-pending';
+const LIVE_COLLECT_PENDING = 'spiceowl.live-collect-pending';
+const livePendingKey = operation => operation === 'collect' ? LIVE_COLLECT_PENDING : LIVE_PENDING;
 const isPublicDemo = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
 const demoRepository = 'https://github.com/joshuazeng713/spiceowl';
 function demoSource() {
@@ -91,6 +96,7 @@ async function api(path, options = {}) {
   const data = await response.json();
   if (!response.ok) {
     const error = new Error(data.error?.message || 'The local request failed.');
+    error.code = data.error?.code || 'request_failed';
     error.definitive = response.status < 500;
     throw error;
   }
@@ -128,6 +134,117 @@ function runStatus(run) {
 
 function heading(eyebrow, name, subtitle, actions = '') {
   return `<div class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1>${name}</h1><p class="subtitle">${subtitle}</p></div>${actions}</div>`;
+}
+
+function livePending(operation = null) {
+  const raw = operation ? pendingGet(livePendingKey(operation)) : pendingGet(LIVE_PENDING) || pendingGet(LIVE_COLLECT_PENDING);
+  if (!raw) return null;
+  const request = JSON.parse(raw);
+  if (!['submit', 'collect'].includes(request.operation) || operation && request.operation !== operation || !request.args || typeof request.idempotency_key !== 'string') throw Error('原请求记录不可读，请在本地客户端核对后继续。');
+  return request;
+}
+
+async function refreshLive() {
+  if (isPublicDemo() || live.loading) return;
+  live.loading = true;
+  try {
+    const value = await api('/api/live/runtime');
+    if (value.enabled !== false && (value.enabled !== true || value.runtime?.schema !== 'ic.simulation.runtime.v1' || value.project_id !== value.runtime.project_id)) throw Error('真实仿真快照的项目身份不符。');
+    live.enabled = value.enabled; live.projectId = value.project_id || ''; live.runtime = value.runtime; live.error = null;
+    const pending = livePending();
+    if (pending && !liveDraft.configuration && pending.args.project_id === live.projectId) {
+      for (const key of Object.keys(liveDraft)) liveDraft[key] = pending.args[key] || '';
+    }
+  } catch (error) { live.error = error.message; }
+  finally { live.loaded = true; live.loading = false; if (location.hash === '#live') render(); }
+}
+
+function liveCollectReady() {
+  const candidates=live.runtime?.runs || [];
+  return candidates.some(run=>run.run_id===liveDraft.run_id.trim()&&run.configuration===liveDraft.configuration.trim()
+    &&run.source_commit===liveDraft.source_commit.trim()&&(!run.project_id||run.project_id===live.projectId)
+    &&run.collectable===true);
+}
+
+function livePage() {
+  let html = heading('STANDALONE SPECTRE', '真实仿真 · CircuitGit', '查看保存的资源与运行记录，明确发起状态检查、仿真提交和结果收集。');
+  if (isPublicDemo()) return html + '<section class="panel live-panel" data-public-demo-info="live"><h2>公共演示未启用真实仿真</h2><p>在本地启动服务并配置操作员连接后使用。此页不会访问仿真服务器。</p></section>';
+  if (!live.loaded) return html + '<section class="panel live-panel"><p>正在读取连接状态…</p></section>';
+  if (!live.enabled) return html + `<section class="panel live-panel" data-live-disabled><h2>真实仿真未启用</h2><p>由本地操作员使用 <code>serve --live-client-config</code> 启动参数指定已配置连接。浏览器不接收配置路径或凭据。</p>${live.error ? `<p class="error-text">${escape(live.error)}</p>` : ''}<button class="button secondary" data-action="live-refresh">刷新连接状态</button></section>`;
+  const snapshot = live.runtime || {}, capabilities = snapshot.capabilities || {};
+  const hosts = Array.isArray(snapshot.pool?.hosts) ? snapshot.pool.hosts.slice(0, 32) : [];
+  const runs = Array.isArray(snapshot.runs) ? snapshot.runs.slice(0, 25) : [];
+  const metric = (value, suffix = '') => Number.isFinite(value) ? escape(Number(value.toFixed(1))) + suffix : '未记录';
+  const disabled = allowed => live.busy || !allowed ? 'disabled' : '';
+  let pending = null, submitPending = null, collectPending = null;
+  try { submitPending = livePending('submit'); collectPending = livePending('collect'); pending = submitPending || collectPending; } catch (error) { live.error = error.message; }
+  html += `<div class="live-workspace"><section class="panel live-panel"><div class="section-title"><h2>执行身份</h2>${chip('CircuitGit 已配置', 'green')}</div><p class="subtle-note">项目由操作员连接固定。配置、完整提交和运行 ID 必须与目标记录一致。</p><div class="live-input-grid"><label>项目<input id="live-project" value="${escape(live.projectId)}" disabled></label><label>配置 ID<input id="live-configuration" ${live.busy ? 'disabled' : ''} value="${escape(liveDraft.configuration)}" maxlength="180" autocomplete="off" placeholder="tran"></label><label class="live-wide">源提交 · 40 位 SHA<input id="live-source-commit" ${live.busy ? 'disabled' : ''} value="${escape(liveDraft.source_commit)}" maxlength="40" autocomplete="off" spellcheck="false"></label><label class="live-wide">已有运行 ID<input id="live-run-id" ${live.busy ? 'disabled' : ''} value="${escape(liveDraft.run_id)}" maxlength="180" autocomplete="off" spellcheck="false" placeholder="从下方运行记录选取，或输入准确 ID"></label></div><div class="live-actions"><button class="button primary" data-action="live-submit" ${disabled(capabilities.direct_submit && !submitPending)}>提交新仿真</button><button class="button secondary" data-action="live-status" ${disabled(true)}>读取运行状态</button><button class="button secondary" data-action="live-collect" ${disabled(capabilities.direct_collect && !collectPending && liveCollectReady())}>收集结果</button><button class="button secondary" data-action="live-watch" ${disabled(capabilities.monitor)}>开启后台监控</button><button class="button secondary" data-action="live-unwatch" ${disabled(capabilities.monitor)}>停止监控</button></div><p class="subtle-note">停止监控仅停止观察；执行、数据有效性与指标结果分别报告。</p>${pending ? '<p class="live-pending" role="status">原请求键已保存。结果未确认前保留同一请求，不会自动再次提交。</p>' : ''}${submitPending ? '<button class="button secondary small" data-action="live-lookup">查询原提交映射</button>' : ''}${live.busy ? '<p role="status">正在处理明确请求…</p>' : ''}${live.error ? `<p class="error-text" role="alert">${escape(live.error)}</p>` : ''}${live.receipt ? `<div class="live-receipt" role="status"><strong>操作回执</strong><p>状态：${escape(live.receipt.state || live.receipt.status || live.receipt.watch_state || '已返回')}</p>${live.receipt.run_id ? `<code>${escape(live.receipt.run_id)}</code>` : ''}${live.receipt.error_code ? `<p>${escape(live.receipt.error_code)}</p>` : ''}</div>` : ''}</section>`;
+  html += `<section class="panel live-panel"><div class="section-title"><h2>资源服务器</h2><div class="live-actions"><button class="button secondary small" data-action="live-refresh" ${disabled(true)}>刷新保存记录</button><button class="button primary small" data-action="live-scan" ${disabled(capabilities.scan && !snapshot.pool?.scan_in_progress)}>检查配置的服务器</button></div></div><p class="subtle-note">资源检查时间：${escape(snapshot.pool?.checked_at || '未检查')}。资源数据是观察值；刷新保存记录不会执行 SSH。</p>${snapshot.pool?.scan_in_progress ? '<p role="status">资源检查进行中…</p>' : ''}<div class="live-table-wrap"><table class="live-table"><thead><tr><th>服务器</th><th>连接</th><th>CPU 使用率 / 核数</th><th>可用 / 总内存</th><th>观察时间</th></tr></thead><tbody>${hosts.map(host => `<tr><td>${escape(host.label || host.host_id)}<br><code>${escape(host.host_id)}</code></td><td>${host.reachable === true ? '已验证' : '未确认'}${host.error_code ? `<br>${escape(host.error_code)}` : ''}</td><td>${metric(host.cpu_busy_percent, '%')} / ${metric(host.cpu_count)}</td><td>${metric(Number.isFinite(host.memory_available_bytes) ? host.memory_available_bytes / 2**30 : null, ' GiB')} / ${metric(Number.isFinite(host.memory_total_bytes) ? host.memory_total_bytes / 2**30 : null, ' GiB')}</td><td>${escape(host.observed_at || '未记录')}</td></tr>`).join('') || '<tr><td colspan="5">尚无资源记录。点击明确检查后查看结果。</td></tr>'}</tbody></table></div></section>`;
+  html += `<section class="panel live-panel"><div class="section-title"><h2>真实运行记录</h2><span class="section-note">快照读取：${escape(snapshot.read_at || '未记录')}</span></div><div class="live-run-list">${runs.map(run => {
+    const diagnosis = Array.isArray(run.diagnostics?.diagnostics) ? run.diagnostics.diagnostics.slice(0, 8) : [];
+    return `<article class="live-run"><div class="section-title"><h3>${escape(run.run_id)}</h3><button class="button secondary small" data-action="live-select" data-id="${escape(run.run_id)}">使用此运行</button></div><div class="live-dimensions"><span>执行：<strong>${escape(title(run.execution?.state))}</strong></span><span>观察：<strong>${escape(title(run.monitor?.state))}</strong></span><span>数据：<strong>${escape(title(run.acceptance?.data_validity))}</strong></span><span>指标：<strong>${escape(title(run.acceptance?.specification))}</strong></span></div><p class="live-identity">配置 ${escape(run.configuration)} · 服务器 ${escape(run.execution_target?.host_id || '未记录')}<br><code>${escape(run.source_commit)}</code></p><p class="subtle-note">最近成功观察：${escape(run.monitor?.last_success_at || '未记录')} · 下一次检查：${escape(run.monitor?.next_check_at || '未安排')}</p>${diagnosis.map(item => `<div class="live-diagnostic"><strong>${escape(item.code || item.category)}</strong>${item.redacted_excerpt ? `<pre>${escape(item.redacted_excerpt)}</pre>` : ''}<ul>${(Array.isArray(item.suggested_actions) ? item.suggested_actions : []).slice(0, 4).map(action => `<li>${escape(action)}</li>`).join('')}</ul></div>`).join('')}</article>`;
+  }).join('') || '<p class="muted">当前项目尚无真实运行记录。</p>'}</div></section></div>`;
+  return html;
+}
+
+function liveArguments(operation) {
+  const result = {project_id: live.projectId};
+  if (operation === 'scan') return result;
+  for (const key of ['configuration', 'source_commit']) result[key] = liveDraft[key].trim();
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$/.test(result.configuration) || !/^[a-f0-9]{40}$/.test(result.source_commit)) throw Error('请填写配置 ID 和 40 位小写源提交 SHA。');
+  if (operation !== 'submit') {
+    result.run_id = liveDraft.run_id.trim();
+    if (!/^[A-Za-z0-9_-]{1,180}$/.test(result.run_id)) throw Error('请填写准确的已有运行 ID。');
+  }
+  return result;
+}
+
+async function handleLiveClick(event) {
+  const button = event.target.closest('button[data-action^="live-"]');
+  if (!button) return;
+  if (isPublicDemo()) { location.hash = '#local'; return; }
+  const operation = button.dataset.action.slice(5);
+  if (operation === 'refresh') { await refreshLive(); return; }
+  if (operation === 'lookup') {
+    if (live.busy) return;
+    try {
+      const pending = livePending('submit');
+      if (!pending || pending.operation !== 'submit') throw Error('没有待核对的提交键。');
+      live.busy = true; live.error = null; render();
+      const receipt = await api('/api/live/submission?key=' + encodeURIComponent(pending.idempotency_key));
+      live.receipt = receipt;
+      if (receipt.run_id) liveDraft = {configuration: pending.args.configuration, source_commit: pending.args.source_commit, run_id: receipt.run_id};
+    } catch (error) { live.error = error.message; }
+    finally { live.busy = false; if (location.hash === '#live') render(); }
+    return;
+  }
+  if (operation === 'select') {
+    const run = live.runtime?.runs.find(item => item.run_id === button.dataset.id);
+    if (run) { for (const key of Object.keys(liveDraft)) liveDraft[key] = run[key] || ''; render(); }
+    return;
+  }
+  if (live.busy || !live.enabled || !['scan', 'submit', 'status', 'collect', 'watch', 'unwatch'].includes(operation)) return;
+  let request;
+  try {
+    request = {operation, args: liveArguments(operation)};
+    if(operation==='collect'&&!liveCollectReady())throw Error('请先读取此运行状态，确认仿真已结束后再收集结果。');
+    if (['submit', 'collect'].includes(operation)) {
+      const pending = livePending(operation);
+      if (pending) throw Error('请先核对原请求；未知结果不会通过再次提交来恢复。');
+      request = {...request, idempotency_key: `live-${crypto.randomUUID()}`};
+      pendingSet(livePendingKey(operation), JSON.stringify(request));
+    }
+    live.busy = true; live.error = null; render();
+    const receipt = await api('/api/live/control', {method: 'POST', body: request});
+    live.receipt = receipt;
+    if (receipt.run_id && (operation === 'submit' || !liveDraft.run_id)) liveDraft.run_id = receipt.run_id;
+    const uncertain = ['uncertain', 'outcome_unknown', 'launch_outcome_unknown', 'dispatching'].includes(receipt.state || receipt.status);
+    if (request.idempotency_key && !uncertain) pendingRemove(livePendingKey(operation));
+    await refreshLive();
+  } catch (error) {
+    if (request?.idempotency_key && error.definitive && !/uncertain|unresolved|unknown/.test(error.code || '')) pendingRemove(livePendingKey(operation));
+    live.error = error.message;
+  } finally { live.busy = false; if (location.hash === '#live') render(); }
 }
 
 function overview() {
@@ -381,9 +498,10 @@ function render() {
   sessionView = null;
   const page = location.hash.slice(1) || 'overview';
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent chat' : run ? run.label : 'Overview';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent chat' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
-  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
   if (page === 'hosts' && !isPublicDemo()) {
     $('#execution-kind').value = plannedKind;
@@ -434,6 +552,7 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
+  if (action.startsWith('live-')) return;
   if (isPublicDemo() && ['add-host', 'import-pool', 'host-probe', 'pool-scan', 'native-probe', 'native-select'].includes(action)) {
     location.hash = '#local'; return;
   }
@@ -508,6 +627,8 @@ document.addEventListener('click', async event => {
   } catch (error) { toast(error.message); }
   finally { if (button.isConnected) { button.disabled = false; button.textContent = originalText; } if (action === 'pool-scan') updateHostSelectionUI(); }
 });
+
+document.addEventListener('click', handleLiveClick);
 
 $('#connection-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -592,6 +713,12 @@ $('#pool-import-form').addEventListener('submit', async event => {
 });
 
 document.addEventListener('input', event => {
+  const liveFields = {'live-configuration': 'configuration', 'live-source-commit': 'source_commit', 'live-run-id': 'run_id'};
+  if (liveFields[event.target.id]) {
+    liveDraft[liveFields[event.target.id]] = event.target.value;
+    const collect=document.querySelector('[data-action="live-collect"]');
+    if(collect){try{collect.disabled=live.busy||!live.runtime?.capabilities?.direct_collect||!!livePending('collect')||!liveCollectReady();}catch{collect.disabled=true;}}
+  }
   if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
   if (event.target.id === 'native-question') nativeQuestion = event.target.value;
   if (event.target.closest('#pool-import-form')) resetPoolPreview();
@@ -707,6 +834,11 @@ window.addEventListener('hashchange', async () => {
 });
 setInterval(() => { if (currentRun() && selectedSession && !document.hidden) pollSession(); }, 900);
 setInterval(() => { if (location.hash === '#agents' && selectedQa && !document.hidden && (!qaView || ['queued', 'running'].includes(qaView.status))) pollNative(); }, 1000);
+// Only cached CircuitGit snapshots refresh; no scan/status action is implicit.
+setInterval(() => {
+  if (!isPublicDemo() && location.hash === '#live' && live.enabled && !live.busy && !live.loading && !document.hidden
+      && !document.activeElement?.closest('.live-input-grid')) refreshLive();
+}, 3000);
 // Update the age label locally; this does not request another remote sample.
 setInterval(() => {
   if (isPublicDemo() || location.hash !== '#hosts' || document.hidden) return;

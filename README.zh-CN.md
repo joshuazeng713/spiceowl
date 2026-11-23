@@ -12,6 +12,8 @@
 
 > **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH、真实 Agent 和仿真执行需要本地安装。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/joshuazeng713/spiceowl/blob/main/docs/github-pages.md)。
 
+配套 CircuitGit 开发分支新增[从零接入仿真](docs/onboarding-discovery.md)：解析导入的反相器、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
+
 > **早期 Alpha：通过可选 CircuitGit 连接运行真实的独立 Spectre 仿真。** 本地 CLI 和单独的真实仿真面板可以检查已授权的服务器池，经 CircuitGit 原有 Runner 提交已固定 Git 版本的输入、后台观察已有任务，并显式收集结果。SpiceOwl 提供共用的监控器、Spectre 诊断、PSF ASCII 解析器和签名客户端。合成演示继续保留；公开演示不执行仿真。自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[原生问答指南](docs/native-agent.md)。
 
 ![SpiceOwl 本地控制台的合成演示任务](docs/images/local-console.png)

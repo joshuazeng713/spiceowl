@@ -1,11 +1,12 @@
 """Deterministic recipe preparation. Inputs are supplied bytes and registry data."""
+import ast
 import copy
 import hashlib
 import json
 import math
 import re
 
-from .source import ExperimentIssue, ID, PRIMITIVES, extract_circuit, identifier, require, sha
+from .source import ExperimentIssue, ID, NUMBER, PRIMITIVES, extract_circuit, identifier, parse_sources, require, sha
 
 SPEC_SCHEMA = 'spiceowl.experiment-spec.v1'
 PROFILE_SCHEMA = 'spiceowl.experiment-model-profile.v1'
@@ -240,6 +241,73 @@ def validate_spec(spec, profile, ports=None):
     return s
 
 
+def _multiplicity_value(value, variables, local_parameters, trail=(), budget=None):
+    """Check a bounded arithmetic count without executing or rewriting source."""
+    budget = [2048] if budget is None else budget
+    require(len(trail) <= 16, 'source.parameters', 'invalid_mos_multiplicity',
+            'Multiplicity parameter dependencies exceed the supported bound.')
+    scales = {'a': 1e-18, 'f': 1e-15, 'p': 1e-12, 'n': 1e-9, 'u': 1e-6,
+              'm': 1e-3, 'k': 1e3, 'K': 1e3, 'meg': 1e6, 'M': 1e6,
+              'G': 1e9, 'T': 1e12, 'P': 1e15}
+    pieces, position = [], 0
+    while position < len(value):
+        token = NUMBER.match(value, position)
+        name = re.match(r'[A-Za-z_][A-Za-z0-9_]*', value[position:])
+        if token:
+            suffix = re.search(r'(meg|[afpnumkKMGTP])$', token[0])
+            numeric = float(token[0][:suffix.start()] if suffix else token[0])
+            numeric *= scales[suffix[0]] if suffix else 1.0
+            require(math.isfinite(numeric), 'source.parameters', 'invalid_mos_multiplicity',
+                    'Explicit MOS multiplicity must be finite.')
+            pieces.append(repr(numeric)); position = token.end()
+        elif name:
+            pieces.append(name[0]); position += len(name[0])
+        else:
+            pieces.append(value[position]); position += 1
+    try:
+        tree = ast.parse(''.join(pieces), mode='eval')
+    except (SyntaxError, RecursionError):
+        raise ExperimentIssue('source.parameters', 'invalid_mos_multiplicity', 'Unsupported multiplicity expression.') from None
+    require(sum(1 for _ in ast.walk(tree)) <= 128, 'source.parameters', 'invalid_mos_multiplicity',
+            'Multiplicity expression exceeds the supported arithmetic bound.')
+
+    def resolve(node, depth=0):
+        budget[0] -= 1
+        require(budget[0] >= 0, 'source.parameters', 'invalid_mos_multiplicity', 'Multiplicity arithmetic exceeds its total work bound.')
+        require(depth <= 32, 'source.parameters', 'invalid_mos_multiplicity', 'Multiplicity arithmetic is too deeply nested.')
+        if isinstance(node, ast.Expression):
+            return resolve(node.body, depth + 1)
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            result = node.value
+        elif isinstance(node, ast.Name):
+            require(node.id not in trail, 'source.parameters', 'invalid_mos_multiplicity', 'Multiplicity parameter dependencies are recursive.')
+            if node.id in local_parameters:
+                result = _multiplicity_value(local_parameters[node.id], variables, local_parameters, trail + (node.id,), budget)
+            else:
+                require(node.id in variables, 'source.parameters', 'invalid_mos_multiplicity', 'Multiplicity references an undeclared explicit parameter.')
+                result = variables[node.id]
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            result = resolve(node.operand, depth + 1) * (-1 if isinstance(node.op, ast.USub) else 1)
+        elif isinstance(node, ast.BinOp):
+            left, right = resolve(node.left, depth + 1), resolve(node.right, depth + 1)
+            if isinstance(node.op, ast.Add): result = left + right
+            elif isinstance(node.op, ast.Sub): result = left - right
+            elif isinstance(node.op, ast.Mult): result = left * right
+            elif isinstance(node.op, ast.Div): result = left / right
+            elif isinstance(node.op, ast.Pow) and abs(right) <= 32: result = left ** right
+            else: raise ValueError('unsupported arithmetic')
+        else:
+            raise ValueError('unsupported arithmetic')
+        require(type(result) in (int, float) and math.isfinite(result) and abs(result) <= 1e100,
+                'source.parameters', 'invalid_mos_multiplicity', 'Multiplicity arithmetic must remain finite and bounded.')
+        return result
+
+    try:
+        return resolve(tree)
+    except (ArithmeticError, TypeError, ValueError, RecursionError):
+        raise ExperimentIssue('source.parameters', 'invalid_mos_multiplicity', 'Explicit MOS multiplicity cannot be resolved to finite bounded arithmetic.') from None
+
+
 def _inverter(circuit, spec, profile):
     instances = circuit['instances']
     require(len(instances) == 2 and len(circuit['provenance']['closure']) <= 1, 'selection', 'inverter_topology',
@@ -247,6 +315,7 @@ def _inverter(circuit, spec, profile):
     roles = spec['roles']
     expected = {'d': roles['outputs'][0], 'g': roles['inputs'][0]}
     polarities = set()
+    local_parameters = parse_sources({'selected.scs': circuit['raw']})['subcircuits'][circuit['subcircuit']]['parameters']
     for item in instances:
         model = profile['models'].get(item['master'])
         require(model is not None and model.get('kind', 'mos') == 'mos', 'model_profile.models', 'inverter_model_contract',
@@ -257,8 +326,17 @@ def _inverter(circuit, spec, profile):
         rail = roles['vss'] if polarity == 'n' else roles['vdd']
         require(mapped == {**expected, 's': rail, 'b': rail}, 'selection', 'inverter_topology',
                 'Registered terminal ordering does not form the explicitly selected CMOS inverter.')
-        require({'w', 'l', 'nf', 'multi'} <= set(item['parameters']), 'source.parameters', 'mos_dimensions_missing',
-                'The selected devices must explicitly preserve w/l/nf/multi parameters.')
+        require({'w', 'l'} <= set(item['parameters']), 'source.parameters', 'mos_dimensions_missing',
+                'The selected devices must explicitly preserve w/l parameters.')
+        # Omitted nf/multi remain omitted: the selected model owns their meaning.
+        # Explicit assignments are checked, while their literal source is kept.
+        for name in ('nf', 'multi'):
+            if name not in item['parameters']:
+                continue
+            value = _multiplicity_value(item['parameters'][name], spec['parameters'], local_parameters)
+            require(value > 0 and (name != 'nf' or value == math.floor(value)),
+                    'source.parameters.' + name, 'invalid_mos_multiplicity',
+                    'Explicit nf must be a positive integer; explicit multi must be positive and finite.')
     require(polarities == {'n', 'p'}, 'selection', 'inverter_topology', 'Exactly one registered n-polarity and one p-polarity device are required.')
 
 

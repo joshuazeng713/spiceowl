@@ -14,6 +14,8 @@
 
 > **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [native Q&A guide](docs/native-agent.md).
 
+The paired CircuitGit development branch also provides a [fresh simulation intake](docs/onboarding-discovery.md): parse an imported inverter, discover selected SSH environments and model candidates, then freeze explicit experiment conditions. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
+
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)
 
 *Actual prototype interface with authored synthetic observations.*

@@ -68,7 +68,7 @@ class ICLibraryContextTests(unittest.TestCase):
     def test_legacy_null_and_independent_context_fields_round_trip_without_inference(self):
         for i, fields in enumerate(({}, {"library_id": None, "cell_id": None},
                                     {"library_id": CONTEXT["library_id"]}, {"cell_id": CONTEXT["cell_id"]},
-                                    {"library_id": "A" * 128, "cell_id": "B" * 128})):
+                                    {"library_id": "_" + "A" * 179, "cell_id": "B" * 180})):
             source = run_fixture(f"fixture-{i}") | fields
             validated = validate_supervision(snapshot_fixture(source), CONFIG["project_id"])
             self.assertEqual(validated["runs"][0], source)
@@ -106,7 +106,7 @@ class ICLibraryContextTests(unittest.TestCase):
 
     def test_invalid_ids_and_unrelated_extra_fields_are_rejected(self):
         for key in CONTEXT:
-            for value in ("", "A" * 129, "电路", "../private", "lib/cell", "lib\\cell", "https://example.invalid",
+            for value in ("", "A" * 181, "电路", "../private", "lib/cell", "lib\\cell", "https://example.invalid",
                           "id\n", "id\x00", "id\x7f", " id", "id ", "id\ud800", 1, True, [], {}):
                 with self.subTest(key=key, value=repr(value)), self.assertRaises(DomainError):
                     validate_supervision(snapshot_fixture(run_fixture() | {key: value}), CONFIG["project_id"])
@@ -142,7 +142,7 @@ class ICLibraryContextTests(unittest.TestCase):
         self.sync(source)
         views = ReadViews(ReadStore(self.temp.name))
         for key in CONTEXT:
-            for value in ("PRIVATE/secret", "A" * 129, "id\n", 42):
+            for value in ("PRIVATE/secret", "A" * 181, "id\n", 42):
                 self.backend.store.update("ic_run:" + CONFIG["id"], source["run_id"], lambda record: record | CONTEXT | {key: value})
                 for read in (lambda: views.list_ic_runs(CONFIG["id"]), lambda: views.get_ic_run(CONFIG["id"], source["run_id"])):
                     with self.subTest(key=key, value=value), self.assertRaises(DomainError) as raised:
@@ -162,7 +162,7 @@ class ICLibraryContextTests(unittest.TestCase):
             source = run_fixture() | fields
             validator.validate(snapshot_fixture(source))
             validator.validate(lookup_fixture(run=source))
-        for fields in ({"library_id": "A" * 129}, {"cell_id": "../x"}, {"cell_id": 1}, {"cell_id": "id\n"}):
+        for fields in ({"library_id": "A" * 181}, {"cell_id": "../x"}, {"cell_id": 1}, {"cell_id": "id\n"}):
             self.assertFalse(validator.is_valid(snapshot_fixture(run_fixture() | fields)))
 
 

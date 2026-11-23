@@ -178,15 +178,38 @@ def _ic_hash(value, size=64):
     return value
 
 
+def _ic_resource_timestamp(value):
+    return (isinstance(value, str) and len(value) <= 64 and re.fullmatch(
+        r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T"
+        r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?"
+        r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])", value)
+        and _timestamp(value) is not None)
+
+
 def _ic_summary(record):
     context = {}
     for name in ("library_id", "cell_id"):
         if name in record:
             value = record[name]
             if value is not None and (not isinstance(value, str)
-                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value)):
+                    or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}", value)):
                 raise DomainError("A stored IC library/cell identifier is invalid.", "storage_record")
             context[name] = value
+    if "execution_target" in record:
+        target = record["execution_target"]
+        keys = {"mode", "host_id", "plan_id", "resource_observed_at", "resource_reservation"}
+        valid = isinstance(target, dict) and set(target) == keys and target.get("resource_reservation") is False
+        if valid and target.get("mode") == "fixed_site":
+            valid = all(target.get(key) is None for key in ("host_id", "plan_id", "resource_observed_at"))
+        elif valid and target.get("mode") == "resource_pool":
+            valid = (isinstance(target.get("host_id"), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}", target["host_id"])
+                     and isinstance(target.get("plan_id"), str) and re.fullmatch(r"[a-f0-9]{64}", target["plan_id"])
+                     and (target.get("resource_observed_at") is None or _ic_resource_timestamp(target["resource_observed_at"])))
+        else:
+            valid = False
+        if not valid:
+            raise DomainError("A stored IC execution target is invalid.", "storage_record")
+        context["execution_target"] = dict(target)
     raw_execution = record.get("execution") if isinstance(record.get("execution"), dict) else {}
     raw_data = record.get("data") if isinstance(record.get("data"), dict) else {}
     raw_specification = record.get("specification") if isinstance(record.get("specification"), dict) else {}

@@ -8,9 +8,9 @@
 <p align="center">An open-source agent console for long-running circuit simulations.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/main">Current alpha source</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Current alpha source</a></p>
 
-> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `main`; the [publishing guide](https://github.com/joshuazeng713/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
+> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
 > **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [native Q&A guide](docs/native-agent.md).
 
@@ -122,7 +122,7 @@ The package includes synthetic replay, native Q&A, private host profiles, bounde
 With Python 3.11+ on macOS or Linux:
 
 ```bash
-git clone https://github.com/joshuazeng713/spiceowl.git
+git clone https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
 .venv/bin/python -m pip install .

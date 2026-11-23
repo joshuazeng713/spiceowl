@@ -25,7 +25,7 @@ const LIVE_PENDING = 'spiceowl.live-pending';
 const LIVE_COLLECT_PENDING = 'spiceowl.live-collect-pending';
 const livePendingKey = operation => operation === 'collect' ? LIVE_COLLECT_PENDING : LIVE_PENDING;
 const isPublicDemo = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
-const demoRepository = 'https://github.com/joshuazeng713/spiceowl';
+const demoRepository = 'https://github.com/spiceowl-dev/spiceowl';
 function demoSource() {
   const metadata = window.SpiceOwlDemo?.metadata || {};
   const branch = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/.test(metadata.source_branch || '') ? metadata.source_branch : 'main';
@@ -62,7 +62,7 @@ function publicDemoChrome() {
 }
 
 function publicLocalPage() {
-  return heading('RUN LOCALLY', 'Bring the console to your workspace.', 'Use your own local installation for private host profiles, saved observations and native text Q&A.') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><h2>Start with the synthetic workspace</h2><p>Requires Python 3.11+ on macOS or Linux. Use the branch that supplies this demo, then run these commands in a terminal on your own computer:</p><pre class="public-command">git clone --branch ${escape(demoSource().branch)} https://github.com/joshuazeng713/spiceowl.git
+  return heading('RUN LOCALLY', 'Bring the console to your workspace.', 'Use your own local installation for private host profiles, saved observations and native text Q&A.') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><h2>Start with the synthetic workspace</h2><p>Requires Python 3.11+ on macOS or Linux. Use the branch that supplies this demo, then run these commands in a terminal on your own computer:</p><pre class="public-command">git clone --branch ${escape(demoSource().branch)} https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
 .venv/bin/python -m pip install .

@@ -8,9 +8,9 @@
 <p align="center">面向长时间电路仿真的开源 Agent 控制台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-<p align="center"><a href="https://joshuazeng713.github.io/spiceowl/"><strong>直接体验在线交互演示</strong></a> · <a href="https://github.com/joshuazeng713/spiceowl/tree/main">当前 Alpha 源码</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>直接体验在线交互演示</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
 
-> **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH、真实 Agent 和仿真执行需要本地安装。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/joshuazeng713/spiceowl/blob/main/docs/github-pages.md)。
+> **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH、真实 Agent 和仿真执行需要本地安装。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md)。
 
 配套 CircuitGit 开发分支新增[从零接入仿真](docs/onboarding-discovery.md)：解析导入的反相器、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
 
@@ -103,7 +103,7 @@ spiceowl/
 在 macOS 或 Linux 上使用 Python 3.11 及以上版本：
 
 ```bash
-git clone https://github.com/joshuazeng713/spiceowl.git
+git clone https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
 .venv/bin/python -m pip install .

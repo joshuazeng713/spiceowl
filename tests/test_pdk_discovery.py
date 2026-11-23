@@ -193,6 +193,28 @@ class PdkDiscoveryTests(unittest.TestCase):
         self.assertEqual(model["reason"], "multiple_active_primitive_definitions")
         self.assertEqual(model["confidence"], "unknown")
 
+    def test_large_model_catalog_keeps_requested_contracts_without_name_only_deduplication(self):
+        unrelated = "".join('model unrelated_%04d bsim4 type=1\n' % n for n in range(4000))
+        scopes = "".join('section Corner%02d\nendsection Corner%02d\n' % (n, n) for n in range(32))
+        self.write("models.scs", unrelated + self.model_source() + scopes)
+        data = self.discover()
+        self.assertEqual(len(data["entry_candidates"]), 33)
+        self.assertTrue(all(m["confidence"] == "verified" for c in data["entry_candidates"] for m in c["models"]))
+        self.assertNotIn("unrelated_3999", json.dumps(data))
+        # Separate source lines remain separate declarations even if the name,
+        # family and polarity text are identical; they must not be merged.
+        self.write("models.scs", unrelated + self.model_source() +
+                   'model primitive_a bsim4 type=1\nmodel primitive_a bsim4 type=1\n')
+        model = self.discover()["entry_candidates"][0]["models"][0]
+        self.assertEqual(model["reason"], "multiple_active_primitive_definitions")
+        self.assertEqual(model["confidence"], "unknown")
+
+    def test_same_named_local_primitives_keep_distinct_wrapper_scope_and_polarity(self):
+        self.write("models.scs", self.model_source().replace("primitive_a", "shared_local").replace("primitive_b", "shared_local"))
+        models = self.discover()["entry_candidates"][0]["models"]
+        self.assertEqual([m["polarity"] for m in models], ["n", "p"])
+        self.assertTrue(all(m["confidence"] == "verified" for m in models))
+
     def test_catalog_suggests_roots_without_expanding_scope(self):
         scanned = self.root / "scanned"
         scanned.mkdir()
@@ -329,6 +351,16 @@ class PdkDiscoveryTests(unittest.TestCase):
         self.assertEqual(data["entry_candidates"], [])
         self.assertEqual(data["summary"]["observed_file_count"], 120)
         self.assertEqual(data["summary"]["observed_entry_candidate_count"], 120)
+        metrics = data["summary"]
+        self.assertEqual(metrics["candidate_bytes"]["count"], 120)
+        self.assertGreaterEqual(metrics["candidate_bytes"]["max"], metrics["candidate_bytes"]["min"])
+        self.assertGreater(metrics["candidate_bytes"]["total"], 2000000)
+        self.assertGreater(metrics["field_bytes"]["entry_candidates"], 2000000)
+        self.assertGreater(metrics["candidate_field_bytes"]["dependency_scopes"], 0)
+        self.assertGreater(metrics["full_payload_bytes"], metrics["compact_payload_bytes"])
+        self.assertGreater(metrics["compact_payload_bytes"], 2000000)
+        self.assertTrue(all(type(size) is int and size >= 0 for size in metrics["field_bytes"].values()))
+        self.assertNotIn(str(self.root), json.dumps(metrics["field_bytes"]))
         self.assertGreater(data["unknown_count"], data["summary"]["observed_unknown_count"])
         self.assertIn("response_limit", {r["code"] for r in data["unknown"]})
         self.assertEqual(data["traversal"]["directories_scanned"], 2)
@@ -409,6 +441,30 @@ class PdkDiscoveryTests(unittest.TestCase):
         cfg = audit_config_for_candidate(data, candidate["candidate_id"], sections=[None],
                                          tmi_relative_library="platformA/libTMImodel.so")
         self.assertEqual(cfg["tmi_relative_library"], "platformA/libTMImodel.so")
+
+    def test_repeated_tmi_declaration_retains_every_applied_scope_without_repeating_platform_arrays(self):
+        entry = self.write("entry.scs", 'include "shared.scs" section=CornerA\ninclude "shared.scs" section=CornerB\n')
+        shared = self.write("shared.scs", '.option tmipath="tmi"\n.option etmiUsrInput="tmi"\n' +
+                            self.model_source() + 'section CornerA\n.option tmipath="tmi"\nendsection CornerA\n'
+                            'section CornerB\nendsection CornerB\n')
+        self.write("tmi/platformA/libTMImodel.so", b"\x00synthetic-library")
+        data = self.discover()
+        candidate = next(c for c in data["entry_candidates"] if c["entry_path"] == str(entry))
+        refs = candidate["tmi_candidates"]
+        self.assertEqual(len(refs), 3)
+        globals_ = [r for r in refs if r["section"] is None]
+        self.assertEqual(len(globals_), 2)
+        for row in globals_:
+            self.assertEqual(set(row["applied_scopes"]), {"CornerA", "CornerB"})
+            self.assertEqual(row["source_path"], str(shared))
+            self.assertEqual(len(row["platform_candidates"]), 1)
+        scoped = next(r for r in refs if r["section"] == "CornerA")
+        self.assertEqual(scoped["applied_scopes"], ["CornerA"])
+        shared_global = next(c for c in data["entry_candidates"] if c["entry_path"] == str(shared) and c["section_candidates"] == [None])
+        self.assertTrue(all(r["applied_scopes"] == [None] for r in shared_global["tmi_candidates"]))
+        config = audit_config_for_candidate(data, candidate["candidate_id"], sections=[None],
+                                            tmi_relative_library="platformA/libTMImodel.so")
+        self.assertEqual(config["tmi_relative_library"], "platformA/libTMImodel.so")
 
     def test_budget_caps_and_read_limit_surface_incompleteness(self):
         for limits in ({"max_files": 257}, {"max_logical_line_bytes": 5000000},

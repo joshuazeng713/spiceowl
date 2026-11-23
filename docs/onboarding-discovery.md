@@ -47,6 +47,8 @@ Directory traversal removes overlapping roots, rotates among independent roots, 
 
 When detailed output exceeds its response budget, the scanner returns `status="incomplete"`, `results_omitted=true`, `search_complete=false`, and empty detailed file/declaration/candidate arrays. It still retains traversal statistics, byte/issue counts, bounded issue codes, and exact observed directory suggestions. Those suggestions prioritize observed root children, followed by model or unscanned-frontier directories and shallow depth, under both the existing count limit and encoded-byte limit. `summary.observed_file_count`, `observed_declaration_count`, `observed_entry_candidate_count`, `observed_graph_node_count`, `observed_include_count`, and `observed_unknown_count` preserve counts before the detailed output was omitted. Empty detailed arrays in this response do not mean that no files or models were found. The final receipt digest is computed over the emitted fallback metadata, and narrowing the scope requires a new discovery rather than treating this receipt as complete.
 
+Before empty-result fallback, the serializer tries omitting only the diagnostic `section_graph` and `includes` arrays. `detail_omissions` records each field and its observed item count. If that fits, all files, declarations, candidates, model contracts, candidate dependency scopes, and original search/issue/ambiguity state remain intact. Omitting diagnostics never changes qualification or promotes an incomplete search. If even this compact representation is too large, fallback `summary.field_bytes` reports each full top-level value's actual UTF-8 JSON byte count; `candidate_field_bytes` aggregates those value sizes by candidate field; `candidate_bytes` reports count/min/max/total candidate sizes. `full_payload_bytes` and `compact_payload_bytes` describe the two attempted encodings. These are counters only and contain no model bodies or paths; encoded-value counts exclude object keys and delimiters.
+
 `profile_suggestions` validates the receipt's consistency digest and returns inert drafts. The digest establishes internal consistency, not remote authenticity or launch-time freshness. The backend must bind the actual server response, supplied source, and user choices to its own current session.
 
 `audit_config_for_candidate` checks the candidate ID and observed section/platform choices and returns input for the existing dependency audit. It does not execute that audit or establish authorization. The subsequent audit must use the final selected combination.
@@ -81,11 +83,14 @@ Each `tmi_candidates` row contains:
 | Field | Meaning |
 | --- | --- |
 | `source_path`, `section`, `line` | Location of the static TMI attribute. |
+| `applied_scopes` | Exact scopes in that same source file where this declaration participates in the candidate closure. A global declaration has `section:null`; its application in several scopes does not duplicate the platform array. |
 | `attribute` | Observed supported attribute, such as `tmipath` or `etmiUsrInput`. |
 | `directory` | Resolved observed TMI directory; private. |
 | `platform_candidates` | Available `{platform, path, relative_library, sha256, bytes}` rows for immediate child directories containing `libTMImodel.so`. |
 
 `relative_library` is the selectable value passed to `audit_config_for_candidate`. It must occur in this candidate's observed platform options. No platform is selected from the UI machine's architecture. A file's presence/hash does not prove binary compatibility; an actual simulator/platform check remains necessary.
+
+Candidate TMI rows deduplicate only the same physical source declaration and identical platform evidence. Different source lines, declared sections, attributes or platform fingerprints remain distinct, and every applied scope is retained. Contract resolution similarly indexes each physical declaration by source location and wrapper ownership; equal model names in different wrappers or separate declarations remain distinct evidence.
 
 ## Model evidence and electrical profile mapping
 

@@ -413,20 +413,26 @@ def capture_contract(state,line,number,section):
         if len(row['unsupported'])<16: row['unsupported'].append('unsupported_wrapper_statement')
 
 def model_contracts_for_scopes(visited,unresolved):
-    wrappers,models=[] ,[]
-    for path,section in sorted(visited,key=lambda v:(v[0],v[1] or '')):
+    wrappers,models={},{}
+    wrapper_keys,model_keys=set(),set()
+    sections_by_path={}
+    for path,section in visited: sections_by_path.setdefault(path,set()).add(section)
+    for path in sorted(sections_by_path):
         data=parsed.get(path)
         if data is None: continue
         state=data['contract_state']
-        for source,target in ((state['wrappers'],wrappers),(state['models'],models)):
+        for source,target,keys in ((state['wrappers'],wrappers,wrapper_keys),(state['models'],models,model_keys)):
             for row in source:
-                if row['section_key'] is None or row['section_key']==section:
+                if row['section_key'] is None or row['section_key'] in sections_by_path[path]:
+                    key=(path,row['line'],row['section_key'],row.get('owner_line'))
+                    if key in keys: continue
+                    keys.add(key)
                     item=dict(row,path=path,section=data['section_spellings'].get(row['section_key'],row['section_key']))
-                    if item not in target: target.append(item)
+                    target.setdefault(row['name'],[]).append(item)
     output=[]
     for name in discovery['required_masters']:
         evidence=[];polarity=None;roles=None;reason='definition_not_found'
-        matches=[r for r in wrappers if r['name']==name]+[r for r in models if r['name']==name and r['owner_line'] is None]
+        matches=wrappers.get(name,[])+[r for r in models.get(name,[]) if r['owner_line'] is None]
         if len(matches)>1: reason='multiple_active_model_definitions'
         elif len(matches)==1:
             row=matches[0]
@@ -436,8 +442,8 @@ def model_contracts_for_scopes(visited,unresolved):
                 if row['closed'] and not row['unsupported'] and row['instance_count']==1:
                     call=row['instances'][0]
                     evidence.append(dict(call,kind='direct_instance',path=row['path']))
-                    model_matches=[m for m in models if m['name']==call['master'] and
-                                   (m['owner_line'] is None or m['path']==row['path'] and m['owner_line']==row['line'])]
+                    model_matches=[m for m in models.get(call['master'],[]) if
+                                   m['owner_line'] is None or m['path']==row['path'] and m['owner_line']==row['line']]
                     reason='primitive_model_not_resolved'
                     if len(model_matches)==1:
                         primitive=model_matches[0]
@@ -675,9 +681,10 @@ for path in sorted(file_candidates[:limits['max_files']],key=priority):
     load(path,role='model',parse=True)
 
 include_scanned=set()
-pending_files=list(parsed)
+pending_files=deque(parsed)
+queued_files=set(parsed)
 while pending_files:
-    path=pending_files.pop(0)
+    path=pending_files.popleft();queued_files.discard(path)
     if path in include_scanned: continue
     include_scanned.add(path)
     for current,line,kind,value in parsed[path]['records']:
@@ -685,8 +692,8 @@ while pending_files:
         dep=resolve_path(value['path'],os.path.dirname(path))
         if dep is None: continue
         loaded=load(dep,role=value['role'],parse=value['role']!='ahdl_source')
-        if loaded is not None and loaded in parsed and loaded not in include_scanned:
-            pending_files.append(loaded)
+        if loaded is not None and loaded in parsed and loaded not in include_scanned and loaded not in queued_files:
+            pending_files.append(loaded);queued_files.add(loaded)
         if len(pending_files)>limits['max_edges']:
             issue('include_queue_limit',path,line);pending_files=[];break
 
@@ -725,7 +732,8 @@ for path,data in sorted(parsed.items()):
             elif kind=='tmi':
                 dep=resolve_path(value['path'],os.path.dirname(path))
                 if dep is None: node['unknown_codes'].append('tmi_outside_roots'); continue
-                row={'source_path':path,'section':node['section'],'line':line,'attribute':value['attribute'],
+                row={'source_path':path,'section':data['section_spellings'].get(current,current),
+                     'applied_scopes':[node['section']],'line':line,'attribute':value['attribute'],
                      'directory':dep,'platform_candidates':[]}
                 node['tmi_references'].append(row);tmi_refs.append(row)
         node['master_coverage']=sorted(set(node['master_coverage']))
@@ -758,9 +766,10 @@ for row in tmi_refs:
     row['platform_candidates']=platform_cache[directory_path]
 
 entry_candidates, ambiguities = [], []
+platform_signatures={directory:stable(options) for directory,options in platform_cache.items()}
 for node in graph:
     pending=[(node['path'],node['section_key'])]
-    visited=set();covered=set();unresolved=[];candidate_tmi=[]
+    visited=set();covered=set();unresolved=[];candidate_tmi=[];candidate_tmi_by_key={}
     while pending:
         key=tuple(pending.pop())
         if key in visited: continue
@@ -772,7 +781,16 @@ for node in graph:
             unresolved.append('include_target_not_scanned');continue
         covered.update(current['master_coverage'])
         unresolved.extend(current['unknown_codes'])
-        candidate_tmi.extend(current['tmi_references'])
+        for reference in current['tmi_references']:
+            tmi_key=(reference['source_path'],reference['line'],reference['section'],reference['attribute'],
+                     reference['directory'],platform_signatures.get(reference['directory']))
+            if tmi_key not in candidate_tmi_by_key:
+                combined=dict(reference,applied_scopes=list(reference['applied_scopes']))
+                candidate_tmi_by_key[tmi_key]=combined;candidate_tmi.append(combined)
+            else:
+                combined=candidate_tmi_by_key[tmi_key]
+                for scope in reference['applied_scopes']:
+                    if scope not in combined['applied_scopes']: combined['applied_scopes'].append(scope)
         pending.extend(current['include_targets'])
     if not covered: continue
     if len(entry_candidates)>=dl['max_candidates']:
@@ -845,6 +863,14 @@ if len(encoded.encode('utf-8'))>2000000:
         result=compact;encoded=compact_encoded
 if len(encoded.encode('utf-8'))>2000000:
     original=result
+    field_bytes={key:len(json.dumps(value,sort_keys=True,ensure_ascii=True).encode('utf-8'))
+                 for key,value in original.items()}
+    candidate_sizes=[len(json.dumps(candidate,sort_keys=True,ensure_ascii=True).encode('utf-8'))
+                     for candidate in entry_candidates]
+    candidate_field_bytes={}
+    for candidate in entry_candidates:
+        for key,value in candidate.items():
+            candidate_field_bytes[key]=candidate_field_bytes.get(key,0)+len(json.dumps(value,sort_keys=True,ensure_ascii=True).encode('utf-8'))
     summary_codes=['response_limit']+sorted(set(row['code'] for row in issues)-set(['response_limit']))[:max(0,limits['max_issues']-1)]
     result={'schema':'spiceowl.pdk-discovery.v1','source_sha256':discovery['source_sha256'],
             'required_masters':discovery['required_masters'],'roots':roots,'search_complete':False,
@@ -857,7 +883,13 @@ if len(encoded.encode('utf-8'))>2000000:
             'summary':{'observed_file_count':len(files),'observed_declaration_count':len(all_declarations),
                        'observed_entry_candidate_count':len(entry_candidates),'observed_graph_node_count':len(graph),
                        'observed_include_count':len(includes),'observed_unknown_count':issue_count,
-                       'observed_directory_suggestion_count':len(directory_suggestions)},
+                       'observed_directory_suggestion_count':len(directory_suggestions),
+                       'field_bytes':field_bytes,'candidate_field_bytes':candidate_field_bytes,
+                       'candidate_bytes':{'count':len(candidate_sizes),'min':min(candidate_sizes) if candidate_sizes else 0,
+                                          'max':max(candidate_sizes) if candidate_sizes else 0,'total':sum(candidate_sizes)},
+                       'full_payload_bytes':len(encoded.encode('utf-8')),
+                       'compact_payload_bytes':len(compact_encoded.encode('utf-8')),
+                       'field_bytes_basis':'UTF-8 JSON-encoded values; excludes object keys and delimiters'},
             'bytes_read':total_bytes,'unknown_count':issue_count+1,
             'unknown':[{'code':code} for code in summary_codes],
             'unknown_truncated':issue_count+1>len(summary_codes),

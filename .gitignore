@@ -225,6 +225,7 @@ __marimo__/
 /private/
 /local/
 /.spiceowl/
+/.dev-tools/
 /tmp/
 /pdk/
 /pdks/

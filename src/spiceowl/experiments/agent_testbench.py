@@ -26,7 +26,8 @@ def validate_agent_spec(spec, profile):
     require(spec['corner'] in checked_profile['corners'], 'spec.corner', 'corner_mapping_missing',
             'The selected PDK sections need an explicit registered corner alias mapping.')
     draft = spec['criteria']
-    fields(draft, {'schema', 'text', 'interface', 'analyses', 'stimuli', 'objectives', 'criteria', 'postprocess'}, 'spec.criteria')
+    fields(draft, {'schema', 'text', 'interface', 'analyses', 'stimuli', 'objectives', 'criteria', 'postprocess'},
+           'spec.criteria', {'helper_files'})
     require(draft['schema'] == 'ic.agent_testbench.v1', 'spec.criteria.schema', 'unsupported_schema',
             'Use the complete authored ic.agent_testbench.v1 draft.')
     fields(draft['interface'], {'subckt', 'instance', 'port_bindings'}, 'spec.criteria.interface')
@@ -79,6 +80,10 @@ def prepare_agent_testbench(sources, selection, spec, model_profile):
         require(_sha(pdk) == binding['pdk_sha256'], 'spec.pdk_binding.pdk_sha256', 'managed_pdk_digest_mismatch',
                 'The generated managed PDK wrapper differs from its selected binding.')
         includes = profile['corners'][checked['corner']]
+        headers = binding.get('veriloga_header_closure', {}).get('files', binding.get('veriloga_standard_includes', []))
+        require(not {row['alias'] for row in headers} &
+                {row['alias'] for row in includes}, 'spec.pdk_binding.veriloga_standard_includes',
+                'veriloga_standard_alias_conflict', 'Standard Verilog-A headers need distinct controlled aliases from PDK entries.')
         parsed_includes, problems = [], []
         for line, text in _statements(pdk, 'pdk.scs', problems):
             if re.fullmatch(r'simulator\s+lang\s*=\s*spectre', text, re.I):
@@ -115,6 +120,11 @@ def prepare_agent_testbench(sources, selection, spec, model_profile):
             'used_models': validation['manifest']['required_masters'], 'external_includes': includes,
             'files_sha256': {path: _sha(raw) for path, raw in files.items()},
             'agent_tb_manifest': validation['manifest'], 'analyses': validation['analyses'], 'saves': validation['saves'],
+            'info_requests': validation['info_requests'],
+            'veriloga_modules': validation['manifest']['veriloga_modules'],
+            'veriloga_external_dependencies': validation['manifest']['veriloga_external_dependencies'],
+            'veriloga_header_closure': validation['manifest']['veriloga_header_closure'],
+            'veriloga_dependency_policy': 'Runner must audit the selected aliases and guarantee compiler use of the audited staged standard headers',
             'scope': 'agent_authored_testbench', 'qualification_scope': 'authored objectives require separate postprocessing and scientific validation',
             'scientific_intent_inferred': False, 'simulation_verified': False, 'human_review_required': True}
         recipe['recipe_sha256'] = _sha(canonical(recipe))

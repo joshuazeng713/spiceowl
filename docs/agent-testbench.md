@@ -47,7 +47,8 @@ identifies a separate dependency audit receipt.
 
 The PDK binding requires `discovery_id`, `candidate_id`, `sections`,
 `model_names`, and `pdk_sha256`. Optional fields are `entry_sha256`,
-`tmi_candidate_id`, and `audit_sha256`. These are binding data; the pure validator
+`tmi_candidate_id`, `audit_sha256`, `veriloga_standard_includes` and
+`veriloga_header_closure`. These are binding data; the pure validator
 does not claim that discovery or auditing actually occurred.
 
 ## Registered compiler mapping
@@ -82,7 +83,15 @@ and port counts in the dependency audit.
 
 The complete authored draft uses `ic.agent_testbench.v1` with `text`,
 `interface: {subckt, instance, port_bindings}`, `analyses`, `stimuli`,
-`objectives`, `criteria`, and `postprocess`. The entire object is hashed.
+`objectives`, `criteria`, and `postprocess`. Optional `helper_files` maps each
+relative support filename to its literal UTF-8 text. When present, its keys and
+bytes must exactly match a subset of supplied support files, including Verilog-A
+helpers. The remaining support files must belong to the include/ahdl closure
+rooted at `dut.scs`; a TB-only file cannot masquerade as original DUT support.
+A missing or edited helper, undeclared TB-only support or any unreferenced
+supplied file blocks readiness. The flat compiler support mapping is the union
+of these distinct origins. Both retain byte hashes and their `support_role`
+in the validation manifest. The entire authored object is hashed.
 `text` must equal the committed TB bytes. If `manifest_id` is supplied, its JSON
 must represent that same object and its original bytes are retained.
 
@@ -105,11 +114,131 @@ subcircuit arity and recursive hierarchy are rejected.
 
 All includes must be top-level and resolve to supplied relative files or managed `dut.scs` and
 `pdk.scs`. Missing files, unused supplied files, traversal, absolute/dynamic
-includes, AHDL, language switches to SPICE, shell commands, executable functions,
+includes, language switches to SPICE, shell commands, executable functions,
 file-writing options and unsupported dynamic constructs are explicit gaps.
 Unsupported syntax is not silently declared compatible. Limits are 64 supplied
 files, 1 MiB per file, 8 MiB total, 16,384 statements per file, 512 terminals per
 instance/interface and 64 levels of hierarchy.
+
+The bounded operating-point output directive `NAME info what=oppoint
+where=rawfile` is also supported at top level. These exact `what` and `where`
+values are required; arbitrary filenames, paths, extra parameters and other
+`info` types are rejected. It records a request for the simulator's controlled
+raw-result output, not an independent analysis: the TB still needs a real
+`tran`, `ac` or `dc` analysis and an explicit `save`. Inventory, validation,
+manifest and compiled recipe expose additive `info_requests` rows containing
+`name`, `what`, `where`, source `path` and `line`. The existing `analyses` list
+retains its meaning. Duplicate info names and collisions with analysis names
+are blocked. The execution owner must bind the resulting native artifact and
+its actual producer analysis; static readiness does not establish that the
+requested operating-point dataset was produced.
+
+## Reviewed relative Verilog-A sources
+
+An authored Spectre file can contain `ahdl_include "behavior/library.va"`.
+Supply those exact bytes through `support_files`; the registered compiler uses
+the existing relative-to-committed-source mapping. A plain Spectre `include`
+cannot switch a file to Verilog-A. Absolute paths, environment substitutions,
+parent traversal and unprovided files are gaps.
+
+A supplied `.va` or `.vams` file can use a literal top-level directive such as
+`` `include "cells/sample.va" ``. References resolve relative to that file's
+directory and must name supplied `.va` or `.vams` files. Nested includes are
+walked, cycles are rejected and every supplied support file must be reachable.
+The supported local include units contain complete module declarations or
+further top-level includes; arbitrary lexical fragments inside a module,
+conditional preprocessing, macro-defined includes and user-defined macros are
+not implemented.
+
+The scalar behavioral subset includes ordered module ports, scalar
+`input/output/inout` and `electrical` declarations, real/integer parameters and
+variables, explicit parameter bounds, `analog` contributions with `V`/`I`,
+assignments, `begin/end`, `if/else`, `cross`, `timer`, `initial_step`,
+`final_step`, `transition`, selected arithmetic/math functions, and read-only
+`$abstime`/`$temperature`/`$vt` forms. A finite allowlist also recognizes common
+standard constant macros when the constants dependency is declared. Module
+interfaces enter the normal master-resolution and port-count checks; known
+local modules are excluded from external `required_masters`. The declared
+authored port map is checked against the module's ordered ports when selected
+directly as the DUT interface.
+
+Unknown functions, system/file tasks, output tasks such as `$display`, process
+control such as `$finish`, `$bound_step`, arrays, loops, custom functions,
+custom disciplines and structural Verilog module instantiation are outside
+this slice. They return explicit gaps rather than being silently passed to the
+solver. Statements hidden in comments do not become instructions.
+
+This checker is **not a Verilog-A compiler or an execution sandbox**. Its finite
+grammar does not prove semantic correctness, convergence, absence of every
+possible simulator-side effect, or compatibility with a selected Spectre
+release. Real compilation/execution still requires review and the execution
+owner's isolation, dependency checks and authorization. Compiler-generated
+AHDL build files belong to the controlled run directory and are separate from
+the reviewed source inventory.
+
+## Controlled standard-header dependencies
+
+The exact names `constants.vams` and `disciplines.vams` refer to controlled
+external dependencies. Standard headers cannot be supplied or shadowed in
+`support_files`. No PDK/tool header contents are copied into this repository,
+and the checker does not open them from the local computer or guess an install
+directory.
+
+The selected binding includes observed identities in this shape; placeholders
+below must be replaced with actual inventory values before validation:
+
+```python
+selected_binding["veriloga_standard_includes"] = [
+    {"name": "disciplines.vams", "alias": "VA_DISCIPLINES", "sha256": observed_header_sha256},
+]
+selected_binding["veriloga_header_closure"] = {
+    "inventory_sha256": observed_complete_header_inventory_sha256,
+    "files": [
+        {"name": "disciplines.vams", "alias": "VA_DISCIPLINES", "sha256": observed_header_sha256},
+        {"name": "units/physical.vams", "alias": "VA_UNITS", "sha256": observed_dependency_sha256},
+    ],
+    "includes": [
+        {"from": "disciplines.vams", "reference": "units/physical.vams", "target": "units/physical.vams"},
+    ],
+}
+```
+
+The transitive include shown here illustrates the schema; it is not a claim
+about a vendor header. A truly observed leaf header still requires a closure
+with its file row and `includes=[]`. Never infer a leaf solely from its name.
+An include edge may also retain a positive `line` number. Standard entry rows
+must exactly match their closure file rows. Names are relative staging names;
+aliases are bounded uppercase identifiers and cannot collide with PDK aliases.
+Raw host paths and shell commands are not accepted in these bindings.
+
+The static check validates the bounded graph: all files must be reachable from
+the selected standard entries, every edge must resolve literally within that
+graph, and missing files, cycles, duplicate names/aliases, unused bindings and
+unreferenced closure files are gaps. It cannot authenticate an inventory receipt
+or establish that a declared graph matches actual header bytes.
+
+The Runner must therefore verify `inventory_sha256` against the complete
+observation from the explicitly selected simulator environment, resolve the
+registered aliases to its observed paths, audit **every** closure file and
+include edge, and stage the exact audited bytes. Compilation must resolve the
+unchanged source directives to these staged headers and their staged transitive
+closure. Falling back to a host search path or an unobserved tool installation
+does not satisfy this contract. A failed or incomplete observation blocks the
+run; an agent cannot supply an empty closure to bypass it.
+
+`veriloga_modules` and `veriloga_external_dependencies` are additive inventory
+fields. The validation manifest and compiled recipe add the standard binding
+to each external usage and retain `veriloga_header_closure`. External usages
+remain labeled `requires_runner_dependency_audit`; `static_ready` is not an
+audit receipt. All supplied VA bytes, the complete authored draft, selected
+standard identities and closure metadata feed the existing manifest/recipe
+hashes. Editing a helper or a header identity changes the reviewed identity.
+
+Synthetic regressions can be run without a simulator, SSH, PDK or LLM:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_agent_tb tests.test_veriloga
+```
 
 Authored postprocessing remains inert metadata at this layer. The old inverter
 PSF measurement function returns `unknown` for this recipe, with an explicit

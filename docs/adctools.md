@@ -1,4 +1,4 @@
-# Offline ADC and transient analysis
+# Offline ADC, transient and AC/DC analysis
 
 `spiceowl.adctools` measures explicitly supplied arrays. It supports Python and a JSON/CSV CLI for an agent or CI runner. It does not discover test intent, generate stimuli, start a simulator, resample a waveform, infer ADC bit weights, or declare that a circuit meets its specifications. Dataset selection, simulator-run identity, and scientific acceptance criteria belong to the calling experiment layer.
 
@@ -22,6 +22,8 @@ The core SpiceOwl installation remains independent of these dependencies. NumPy 
 | `reconstruct_codes` | Explicit decisions, weights and offset | Unsupported |
 | `histogram_linearity` | Explicit uniform/sine input CDF inversion | Unsupported |
 | `tran_metrics` | Finite-record step, slew, delay and V/I power metrics | Unsupported |
+| `ac_metrics` | Explicit complex response/reference ratio, Bode curves and bounded loop-margin measurements | Unsupported |
+| `dc_op_metrics` | Explicit model-region or signed Vdsat checks, selected-rail DC power | Unsupported |
 
 Import a named function or use the bounded dispatcher:
 
@@ -38,6 +40,12 @@ report = analyze("sine_fit3", {
 ```
 
 Inputs must be finite, real, correctly aligned, and explicitly named. Array input is bounded to 1,048,576 samples; calibration accepts at most 64 decision columns. Boolean, complex and string sample arrays are rejected. Malformed operation arguments raise `AnalysisError`; unresolved scientific estimates return an invalid result where possible. A caller must handle both.
+
+AC data use separate real and imaginary arrays with an explicit frequency axis
+and units. DC operating points use named parameter records. Their native PSF
+reader, exact APIs, margin conventions and model-specific region policy are
+documented in [AC/DC results](ac-dc-results.md). The existing transient parser
+and measurement definitions are unchanged.
 
 ## Result and units
 

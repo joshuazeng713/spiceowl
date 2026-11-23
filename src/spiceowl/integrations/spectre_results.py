@@ -259,3 +259,9 @@ def summarize_psf_ascii(text, required_signals=None):
         checks.update(parse="pass", finite="pass", aligned="pass", time_monotonic="pass", required_signals="pass" if present else "fail")
     result["checks"] = [{"name": name, "status": status} for name, status in checks.items()]
     return result
+
+
+def parse_psf_analysis(text, *, analysis_kind, analysis_name=None):
+    """Parse a selected AC/DC/dcOpInfo artifact without changing time-only API."""
+    from .spectre_datasets import parse_psf_analysis as parse
+    return parse(text, analysis_kind=analysis_kind, analysis_name=analysis_name)

@@ -1,0 +1,1488 @@
+{
+  "discovery": {
+    "ambiguities": [
+      {
+        "candidate_ids": [
+          "5b148517c87580f5b7637902ac3d0e5cca2fb761232c7abc8921fbdc92826e1b",
+          "b542f33d64c72c29ccff146e248cab41c3aa9198e2c1432353cf3a84a8049570",
+          "5ddfafbc9eedb87f8c9d4bbba3b81784bd93ebb6ec6a27947977eb3b935da522"
+        ],
+        "code": "multiple_entry_or_section_candidates"
+      },
+      {
+        "code": "multiple_tmi_platforms",
+        "requires": "simulator_platform_evidence"
+      }
+    ],
+    "audit_limits": {
+      "max_directives": 32768,
+      "max_edges": 8192,
+      "max_file_bytes": 65536,
+      "max_files": 32,
+      "max_issues": 256,
+      "max_line_bytes": 65536,
+      "max_logical_line_bytes": 4194304,
+      "max_sections": 1024,
+      "max_total_bytes": 1048576
+    },
+    "bytes_read": 594,
+    "cache_scope": "metadata fingerprints only; never a launch-time pin or freshness proof",
+    "catalogs": [
+      {
+        "bytes": 69,
+        "path": "/private/tmp/tmpdfw9u3ar/home/work/cds.lib",
+        "sha256": "6060dfdfd327cd0e6a19f828ec6940ecd4bd5d4d17a639ae82149533989c065c"
+      }
+    ],
+    "declarations": [
+      {
+        "exact_name_match": true,
+        "kind": "inline_subckt",
+        "line": 1,
+        "name": "sample_low_device",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+        "port_count": 4,
+        "ports": [
+          "P1",
+          "P2",
+          "P3",
+          "P4"
+        ],
+        "section": null
+      },
+      {
+        "exact_name_match": true,
+        "kind": "inline_subckt",
+        "line": 5,
+        "name": "sample_high_device",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+        "port_count": 4,
+        "ports": [
+          "P1",
+          "P2",
+          "P3",
+          "P4"
+        ],
+        "section": null
+      }
+    ],
+    "directory_suggestions": [
+      {
+        "authorized_for_scan": true,
+        "basis": [
+          "observed_root_child"
+        ],
+        "depth": 1,
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi",
+        "qualified": false,
+        "requires_root_confirmation": false,
+        "scanned": true
+      },
+      {
+        "authorized_for_scan": true,
+        "basis": [
+          "contains_candidate_model_files"
+        ],
+        "depth": 0,
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit",
+        "qualified": false,
+        "requires_root_confirmation": false,
+        "scanned": true
+      }
+    ],
+    "directory_suggestions_truncated": false,
+    "discovery_id": "84ea1cb3f55790e951e033996e445f501ed7aa72676e30c394ab4c321323f2ce",
+    "discovery_limits": {
+      "max_candidates": 256,
+      "max_catalog_bytes": 1048576,
+      "max_catalogs": 16,
+      "max_depth": 6,
+      "max_directories": 64,
+      "max_directory_entries": 128,
+      "max_graph_nodes": 4096,
+      "max_platform_candidates": 64
+    },
+    "entry_candidates": [
+      {
+        "additional_sections_may_be_required": true,
+        "available_sections": [
+          null
+        ],
+        "candidate_id": "5b148517c87580f5b7637902ac3d0e5cca2fb761232c7abc8921fbdc92826e1b",
+        "coverage_complete": true,
+        "dependency_paths": [
+          "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+        ],
+        "dependency_scopes": [
+          {
+            "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+            "section": null
+          }
+        ],
+        "entry_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+        "entry_role": "definition_only",
+        "entry_sha256": "c3639acb0d9b4206c43c1ede89a995c162f763466967f3fbb5deb16228e46271",
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "missing_masters": [],
+        "models": [
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 5,
+                "name": "sample_high_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 6,
+                "master": "compact_high",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 7,
+                "name": "compact_high",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "-1"
+              }
+            ],
+            "name": "sample_high_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          },
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 1,
+                "name": "sample_low_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 2,
+                "master": "compact_low",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 3,
+                "name": "compact_low",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "1"
+              }
+            ],
+            "name": "sample_low_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          }
+        ],
+        "ready_to_run": false,
+        "section_candidates": [
+          null
+        ],
+        "tmi_candidates": [],
+        "unknown_codes": []
+      },
+      {
+        "additional_sections_may_be_required": true,
+        "available_sections": [
+          null,
+          "Fast",
+          "Nominal"
+        ],
+        "candidate_id": "b542f33d64c72c29ccff146e248cab41c3aa9198e2c1432353cf3a84a8049570",
+        "coverage_complete": true,
+        "dependency_paths": [
+          "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+          "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs"
+        ],
+        "dependency_scopes": [
+          {
+            "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+            "section": null
+          },
+          {
+            "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+            "section": "Fast"
+          }
+        ],
+        "entry_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "entry_role": "include_entry_candidate",
+        "entry_sha256": "5426d33c9d16bf766ba78f878824bafa145f2e881fd3425ab941f5a8e1d648e1",
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "missing_masters": [],
+        "models": [
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 5,
+                "name": "sample_high_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 6,
+                "master": "compact_high",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 7,
+                "name": "compact_high",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "-1"
+              }
+            ],
+            "name": "sample_high_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          },
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 1,
+                "name": "sample_low_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 2,
+                "master": "compact_low",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 3,
+                "name": "compact_low",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "1"
+              }
+            ],
+            "name": "sample_low_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          }
+        ],
+        "ready_to_run": false,
+        "section_candidates": [
+          "Fast"
+        ],
+        "tmi_candidates": [
+          {
+            "attribute": "tmipath",
+            "directory": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi",
+            "line": 7,
+            "platform_candidates": [
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformA/libTMImodel.so",
+                "platform": "platformA",
+                "relative_library": "platformA/libTMImodel.so",
+                "sha256": "0bf478b47dd795c59fbd438831d93422b0b3e8823adcd04ddd0b904416ef7f7f"
+              },
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformB/libTMImodel.so",
+                "platform": "platformB",
+                "relative_library": "platformB/libTMImodel.so",
+                "sha256": "c0df7ced4f20d6cc1e84848414ef5dc6c1c94d52ab2884e8c428a486f63e626f"
+              }
+            ],
+            "section": "Fast",
+            "source_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs"
+          }
+        ],
+        "unknown_codes": []
+      },
+      {
+        "additional_sections_may_be_required": true,
+        "available_sections": [
+          null,
+          "Fast",
+          "Nominal"
+        ],
+        "candidate_id": "5ddfafbc9eedb87f8c9d4bbba3b81784bd93ebb6ec6a27947977eb3b935da522",
+        "coverage_complete": true,
+        "dependency_paths": [
+          "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+          "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs"
+        ],
+        "dependency_scopes": [
+          {
+            "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+            "section": null
+          },
+          {
+            "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+            "section": "Nominal"
+          }
+        ],
+        "entry_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "entry_role": "include_entry_candidate",
+        "entry_sha256": "5426d33c9d16bf766ba78f878824bafa145f2e881fd3425ab941f5a8e1d648e1",
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "missing_masters": [],
+        "models": [
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 5,
+                "name": "sample_high_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 6,
+                "master": "compact_high",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 7,
+                "name": "compact_high",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "-1"
+              }
+            ],
+            "name": "sample_high_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          },
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 1,
+                "name": "sample_low_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 2,
+                "master": "compact_low",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 3,
+                "name": "compact_low",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "1"
+              }
+            ],
+            "name": "sample_low_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          }
+        ],
+        "ready_to_run": false,
+        "section_candidates": [
+          "Nominal"
+        ],
+        "tmi_candidates": [
+          {
+            "attribute": "tmipath",
+            "directory": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi",
+            "line": 3,
+            "platform_candidates": [
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformA/libTMImodel.so",
+                "platform": "platformA",
+                "relative_library": "platformA/libTMImodel.so",
+                "sha256": "0bf478b47dd795c59fbd438831d93422b0b3e8823adcd04ddd0b904416ef7f7f"
+              },
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformB/libTMImodel.so",
+                "platform": "platformB",
+                "relative_library": "platformB/libTMImodel.so",
+                "sha256": "c0df7ced4f20d6cc1e84848414ef5dc6c1c94d52ab2884e8c428a486f63e626f"
+              }
+            ],
+            "section": "Nominal",
+            "source_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs"
+          }
+        ],
+        "unknown_codes": []
+      }
+    ],
+    "files": [
+      {
+        "bytes": 289,
+        "kind": "file",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+        "roles": [
+          "model"
+        ],
+        "sections": [],
+        "selected_sections": [],
+        "sha256": "c3639acb0d9b4206c43c1ede89a995c162f763466967f3fbb5deb16228e46271"
+      },
+      {
+        "bytes": 152,
+        "kind": "file",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "roles": [
+          "model"
+        ],
+        "sections": [
+          "Fast",
+          "Nominal"
+        ],
+        "selected_sections": [],
+        "sha256": "5426d33c9d16bf766ba78f878824bafa145f2e881fd3425ab941f5a8e1d648e1"
+      },
+      {
+        "bytes": 42,
+        "kind": "file",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformA/libTMImodel.so",
+        "roles": [
+          "dynamic_library"
+        ],
+        "sections": [],
+        "selected_sections": [],
+        "sha256": "0bf478b47dd795c59fbd438831d93422b0b3e8823adcd04ddd0b904416ef7f7f"
+      },
+      {
+        "bytes": 42,
+        "kind": "file",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformB/libTMImodel.so",
+        "roles": [
+          "dynamic_library"
+        ],
+        "sections": [],
+        "selected_sections": [],
+        "sha256": "c0df7ced4f20d6cc1e84848414ef5dc6c1c94d52ab2884e8c428a486f63e626f"
+      }
+    ],
+    "includes": [
+      {
+        "from": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "from_section": "Fast",
+        "line": 6,
+        "role": "model",
+        "section": null,
+        "to": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+      },
+      {
+        "from": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "from_section": "Nominal",
+        "line": 2,
+        "role": "model",
+        "section": null,
+        "to": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+      }
+    ],
+    "profile_registered": false,
+    "requested_cds_libs": [
+      "/private/tmp/tmpdfw9u3ar/home/work/cds.lib"
+    ],
+    "required_masters": [
+      "sample_high_device",
+      "sample_low_device"
+    ],
+    "root_suggestions": [
+      {
+        "authorized_for_scan": true,
+        "catalog": "/private/tmp/tmpdfw9u3ar/home/work/cds.lib",
+        "library": "synthetic_tech",
+        "line": 1,
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit",
+        "requires_root_confirmation": false
+      }
+    ],
+    "roots": [
+      "/private/tmp/tmpdfw9u3ar/synthetic-process-kit"
+    ],
+    "schema": "spiceowl.pdk-discovery.v1",
+    "scope_note": "Definition and include graph candidates only. Entry sections, polarity, terminal semantics, TMI platform and experiment intent require confirmation and a fresh dependency audit.",
+    "search_complete": true,
+    "search_hints": [
+      "entry"
+    ],
+    "search_policy": {
+      "candidate_extensions": [
+        ".inc",
+        ".lib",
+        ".scs",
+        ".sp",
+        ".spi",
+        ".spice"
+      ],
+      "directory_order": "root_round_robin_preferred_subtree_bfs",
+      "explicit_include_extensions_restricted": false,
+      "hidden_directories_scanned": false,
+      "priority_basis": "generic_model_spectre_spice_directory_names_and_explicit_hints",
+      "symlinks": "within_authorized_roots_only"
+    },
+    "section_graph": [
+      {
+        "include_targets": [],
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "node_id": "e411757ff75884bd2460eb45dc58f886a9293ddb982cf794f8ea0fe7e926c747",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+        "section": null,
+        "section_key": null,
+        "tmi_references": [],
+        "unknown_codes": []
+      },
+      {
+        "include_targets": [],
+        "master_coverage": [],
+        "node_id": "3debd946114028e516bd973566660675744ead8965c7bed33f65f7036f3865df",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "section": null,
+        "section_key": null,
+        "tmi_references": [],
+        "unknown_codes": []
+      },
+      {
+        "include_targets": [
+          [
+            "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+            null
+          ]
+        ],
+        "master_coverage": [],
+        "node_id": "3a4a21cf25bd99b8f278e26c873b57b5babcdf76c71c1a3ee6185f1c70793904",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "section": "Fast",
+        "section_key": "fast",
+        "tmi_references": [
+          {
+            "attribute": "tmipath",
+            "directory": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi",
+            "line": 7,
+            "platform_candidates": [
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformA/libTMImodel.so",
+                "platform": "platformA",
+                "relative_library": "platformA/libTMImodel.so",
+                "sha256": "0bf478b47dd795c59fbd438831d93422b0b3e8823adcd04ddd0b904416ef7f7f"
+              },
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformB/libTMImodel.so",
+                "platform": "platformB",
+                "relative_library": "platformB/libTMImodel.so",
+                "sha256": "c0df7ced4f20d6cc1e84848414ef5dc6c1c94d52ab2884e8c428a486f63e626f"
+              }
+            ],
+            "section": "Fast",
+            "source_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs"
+          }
+        ],
+        "unknown_codes": []
+      },
+      {
+        "include_targets": [
+          [
+            "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+            null
+          ]
+        ],
+        "master_coverage": [],
+        "node_id": "823aac8aeca608782f9c0abb442c1ad9e13c969677f08b7c6c4e5bfae4be9df8",
+        "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "section": "Nominal",
+        "section_key": "nominal",
+        "tmi_references": [
+          {
+            "attribute": "tmipath",
+            "directory": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi",
+            "line": 3,
+            "platform_candidates": [
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformA/libTMImodel.so",
+                "platform": "platformA",
+                "relative_library": "platformA/libTMImodel.so",
+                "sha256": "0bf478b47dd795c59fbd438831d93422b0b3e8823adcd04ddd0b904416ef7f7f"
+              },
+              {
+                "bytes": 42,
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/tmi/platformB/libTMImodel.so",
+                "platform": "platformB",
+                "relative_library": "platformB/libTMImodel.so",
+                "sha256": "c0df7ced4f20d6cc1e84848414ef5dc6c1c94d52ab2884e8c428a486f63e626f"
+              }
+            ],
+            "section": "Nominal",
+            "source_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs"
+          }
+        ],
+        "unknown_codes": []
+      }
+    ],
+    "selection_made": false,
+    "source_sha256": "81dd86062b699752bb8cb5ec3999549531888c895d70fe3e3345aa146ccaa263",
+    "status": "candidates",
+    "traversal": {
+      "directories_scanned": 4,
+      "effective_roots": [
+        "/private/tmp/tmpdfw9u3ar/synthetic-process-kit"
+      ],
+      "overlapping_roots_removed": 0,
+      "pending_directories": 0,
+      "requested_root_count": 1
+    },
+    "unknown": [],
+    "unknown_count": 0,
+    "unknown_truncated": false
+  },
+  "evidence_kind": "synthetic_local_fixture",
+  "fixture_note": "All files, accounts, resources and platform library bytes are original synthetic test data. The environment schema describes a simulated SSH observation; only local fixture code ran. Absolute paths and hashes are the actual generated temporary-file observations and are not live configuration.",
+  "generation": {
+    "discovery_execution": "local Python subprocess with bounded synthetic roots",
+    "discovery_program": "spiceowl.onboarding.pdk_discovery.build_pdk_discovery_script",
+    "environment_isolation": "tests.test_onboarding_environment.OnboardingEnvironmentTests.scan fixture-only filesystem and OS harness",
+    "environment_program": "spiceowl.onboarding.environment.REMOTE_PYTHON",
+    "environment_projection": "spiceowl.onboarding.environment.public_environment",
+    "file_hashes_verified_against_fixture_bytes": true,
+    "paths_rewritten_after_generation": false,
+    "requirements_function": "spiceowl.onboarding.pdk_discovery.inspect_netlist",
+    "selected_candidate_id": null,
+    "suggestion_function": "spiceowl.onboarding.pdk_discovery.profile_suggestions"
+  },
+  "profile_suggestions": {
+    "ambiguities": [
+      {
+        "candidate_ids": [
+          "5b148517c87580f5b7637902ac3d0e5cca2fb761232c7abc8921fbdc92826e1b",
+          "b542f33d64c72c29ccff146e248cab41c3aa9198e2c1432353cf3a84a8049570",
+          "5ddfafbc9eedb87f8c9d4bbba3b81784bd93ebb6ec6a27947977eb3b935da522"
+        ],
+        "code": "multiple_entry_or_section_candidates"
+      },
+      {
+        "code": "multiple_tmi_platforms",
+        "requires": "simulator_platform_evidence"
+      }
+    ],
+    "candidates": [
+      {
+        "candidate_id": "5b148517c87580f5b7637902ac3d0e5cca2fb761232c7abc8921fbdc92826e1b",
+        "discovery_id": "84ea1cb3f55790e951e033996e445f501ed7aa72676e30c394ab4c321323f2ce",
+        "entry_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+        "entry_role": "definition_only",
+        "entry_sha256": "c3639acb0d9b4206c43c1ede89a995c162f763466967f3fbb5deb16228e46271",
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "model_contract_evidence": {
+          "sample_high_device": [
+            {
+              "exact_name_match": true,
+              "kind": "inline_subckt",
+              "line": 5,
+              "name": "sample_high_device",
+              "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+              "port_count": 4,
+              "ports": [
+                "P1",
+                "P2",
+                "P3",
+                "P4"
+              ],
+              "section": null
+            }
+          ],
+          "sample_low_device": [
+            {
+              "exact_name_match": true,
+              "kind": "inline_subckt",
+              "line": 1,
+              "name": "sample_low_device",
+              "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+              "port_count": 4,
+              "ports": [
+                "P1",
+                "P2",
+                "P3",
+                "P4"
+              ],
+              "section": null
+            }
+          ]
+        },
+        "model_contract_source_verified": true,
+        "model_contract_suggestion": {
+          "sample_high_device": {
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p"
+          },
+          "sample_low_device": {
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n"
+          }
+        },
+        "models": [
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 5,
+                "name": "sample_high_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 6,
+                "master": "compact_high",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 7,
+                "name": "compact_high",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "-1"
+              }
+            ],
+            "name": "sample_high_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          },
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 1,
+                "name": "sample_low_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 2,
+                "master": "compact_low",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 3,
+                "name": "compact_low",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "1"
+              }
+            ],
+            "name": "sample_low_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          }
+        ],
+        "polarity_and_terminal_order_confirmed": false,
+        "ready_to_run": false,
+        "requires": [
+          "entrypoint_and_sections",
+          "experiment_intent",
+          "fresh_dependency_audit"
+        ],
+        "section_candidates": [
+          null
+        ],
+        "source_sha256": "81dd86062b699752bb8cb5ec3999549531888c895d70fe3e3345aa146ccaa263"
+      },
+      {
+        "candidate_id": "b542f33d64c72c29ccff146e248cab41c3aa9198e2c1432353cf3a84a8049570",
+        "discovery_id": "84ea1cb3f55790e951e033996e445f501ed7aa72676e30c394ab4c321323f2ce",
+        "entry_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "entry_role": "include_entry_candidate",
+        "entry_sha256": "5426d33c9d16bf766ba78f878824bafa145f2e881fd3425ab941f5a8e1d648e1",
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "model_contract_evidence": {
+          "sample_high_device": [
+            {
+              "exact_name_match": true,
+              "kind": "inline_subckt",
+              "line": 5,
+              "name": "sample_high_device",
+              "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+              "port_count": 4,
+              "ports": [
+                "P1",
+                "P2",
+                "P3",
+                "P4"
+              ],
+              "section": null
+            }
+          ],
+          "sample_low_device": [
+            {
+              "exact_name_match": true,
+              "kind": "inline_subckt",
+              "line": 1,
+              "name": "sample_low_device",
+              "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+              "port_count": 4,
+              "ports": [
+                "P1",
+                "P2",
+                "P3",
+                "P4"
+              ],
+              "section": null
+            }
+          ]
+        },
+        "model_contract_source_verified": true,
+        "model_contract_suggestion": {
+          "sample_high_device": {
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p"
+          },
+          "sample_low_device": {
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n"
+          }
+        },
+        "models": [
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 5,
+                "name": "sample_high_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 6,
+                "master": "compact_high",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 7,
+                "name": "compact_high",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "-1"
+              }
+            ],
+            "name": "sample_high_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          },
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 1,
+                "name": "sample_low_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 2,
+                "master": "compact_low",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 3,
+                "name": "compact_low",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "1"
+              }
+            ],
+            "name": "sample_low_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          }
+        ],
+        "polarity_and_terminal_order_confirmed": false,
+        "ready_to_run": false,
+        "requires": [
+          "entrypoint_and_sections",
+          "experiment_intent",
+          "fresh_dependency_audit",
+          "tmi_platform"
+        ],
+        "section_candidates": [
+          "Fast"
+        ],
+        "source_sha256": "81dd86062b699752bb8cb5ec3999549531888c895d70fe3e3345aa146ccaa263"
+      },
+      {
+        "candidate_id": "5ddfafbc9eedb87f8c9d4bbba3b81784bd93ebb6ec6a27947977eb3b935da522",
+        "discovery_id": "84ea1cb3f55790e951e033996e445f501ed7aa72676e30c394ab4c321323f2ce",
+        "entry_path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/entry.scs",
+        "entry_role": "include_entry_candidate",
+        "entry_sha256": "5426d33c9d16bf766ba78f878824bafa145f2e881fd3425ab941f5a8e1d648e1",
+        "master_coverage": [
+          "sample_high_device",
+          "sample_low_device"
+        ],
+        "model_contract_evidence": {
+          "sample_high_device": [
+            {
+              "exact_name_match": true,
+              "kind": "inline_subckt",
+              "line": 5,
+              "name": "sample_high_device",
+              "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+              "port_count": 4,
+              "ports": [
+                "P1",
+                "P2",
+                "P3",
+                "P4"
+              ],
+              "section": null
+            }
+          ],
+          "sample_low_device": [
+            {
+              "exact_name_match": true,
+              "kind": "inline_subckt",
+              "line": 1,
+              "name": "sample_low_device",
+              "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+              "port_count": 4,
+              "ports": [
+                "P1",
+                "P2",
+                "P3",
+                "P4"
+              ],
+              "section": null
+            }
+          ]
+        },
+        "model_contract_source_verified": true,
+        "model_contract_suggestion": {
+          "sample_high_device": {
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p"
+          },
+          "sample_low_device": {
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n"
+          }
+        },
+        "models": [
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 5,
+                "name": "sample_high_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 6,
+                "master": "compact_high",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 7,
+                "name": "compact_high",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "-1"
+              }
+            ],
+            "name": "sample_high_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "p",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          },
+          {
+            "confidence": "verified",
+            "evidence": [
+              {
+                "kind": "declaration",
+                "line": 1,
+                "name": "sample_low_device",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null
+              },
+              {
+                "kind": "direct_instance",
+                "line": 2,
+                "master": "compact_low",
+                "name": "inner",
+                "ordered_nets": [
+                  "P1",
+                  "P2",
+                  "P3",
+                  "P4"
+                ],
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc"
+              },
+              {
+                "evidence_rule": "explicit_supported_mos_type",
+                "family": "bsim4",
+                "line": 3,
+                "name": "compact_low",
+                "path": "/private/tmp/tmpdfw9u3ar/synthetic-process-kit/devices.inc",
+                "section": null,
+                "type_literal": "1"
+              }
+            ],
+            "name": "sample_low_device",
+            "needs_confirmation": false,
+            "ordered_terminal_roles": [
+              "d",
+              "g",
+              "s",
+              "b"
+            ],
+            "polarity": "n",
+            "reason": "single_mos_bijective_wrapper",
+            "scope": "static source contract only; no simulator or process qualification"
+          }
+        ],
+        "polarity_and_terminal_order_confirmed": false,
+        "ready_to_run": false,
+        "requires": [
+          "entrypoint_and_sections",
+          "experiment_intent",
+          "fresh_dependency_audit",
+          "tmi_platform"
+        ],
+        "section_candidates": [
+          "Nominal"
+        ],
+        "source_sha256": "81dd86062b699752bb8cb5ec3999549531888c895d70fe3e3345aa146ccaa263"
+      }
+    ],
+    "discovery_id": "84ea1cb3f55790e951e033996e445f501ed7aa72676e30c394ab4c321323f2ce",
+    "schema": "spiceowl.pdk-profile-suggestions.v1",
+    "search_complete": true,
+    "selected_candidate_id": null,
+    "source_sha256": "81dd86062b699752bb8cb5ec3999549531888c895d70fe3e3345aa146ccaa263",
+    "state": "requires_confirmation"
+  },
+  "public_environment": {
+    "activation": null,
+    "alias": "fixture-a",
+    "coverage": {
+      "bytes_read": 242,
+      "directory_cap_after_os_return": false,
+      "directory_listing_method": "bounded_scandir",
+      "files_read": 3,
+      "model_body_discovery": false,
+      "probe_kind": "python",
+      "scripts_evaluated": false,
+      "setup_script_side_effects": "not_evaluated"
+    },
+    "identity": {
+      "observed": true,
+      "verified": false
+    },
+    "library_root_count": 1,
+    "licenses": [
+      {
+        "configured": true,
+        "declared_in_scripts": false,
+        "name": "CDS_LIC_FILE",
+        "provenance": [
+          {
+            "basis": "observed_login_environment"
+          }
+        ],
+        "usable": "unknown"
+      },
+      {
+        "configured": false,
+        "declared_in_scripts": false,
+        "name": "LM_LICENSE_FILE",
+        "provenance": [],
+        "usable": "unknown"
+      }
+    ],
+    "observed_at": "2026-11-23T07:30:54.310+00:00",
+    "pdk_candidates": [
+      {
+        "basis": "observed_environment",
+        "candidate_id": "pdk-4c0d2f2b6cdeaf5801d9",
+        "exists": true,
+        "qualified": false
+      }
+    ],
+    "resources": {
+      "cpu_count": 8,
+      "load_1m": 0.5,
+      "memory_available_bytes": 25769803776,
+      "memory_total_bytes": 34359738368
+    },
+    "schema": "spiceowl.server-environment.v1",
+    "session_kind": "ssh_noninteractive_command",
+    "setup_candidates": [
+      {
+        "activation_supported": true,
+        "basis": "startup_or_source_reference",
+        "executed_by_probe": false,
+        "label": "setup.csh",
+        "shell_kind": "csh",
+        "source_id": "source-be801237b804145b3bd9"
+      }
+    ],
+    "simulation_started": false,
+    "simulator_invoked_by_probe": false,
+    "state": "observed",
+    "tools": [
+      {
+        "basis": "login_PATH",
+        "configured": true,
+        "kind": "spectre",
+        "tool_basename": "spectre",
+        "usable": "unknown",
+        "version": null
+      },
+      {
+        "basis": "probe_interpreter",
+        "configured": true,
+        "kind": "python",
+        "tool_basename": "python3",
+        "usable": "probe_executed",
+        "version": "3.12.9"
+      }
+    ],
+    "transport": "reachable",
+    "warnings": []
+  },
+  "real_simulator_performed": false,
+  "real_ssh_performed": false,
+  "requirements": {
+    "confirmation_required": [
+      "model_polarity",
+      "terminal_semantics",
+      "experiment_intent"
+    ],
+    "dimensions_scope": "source literals only; model scale and legal dimensions are unknown",
+    "instances": [
+      {
+        "dimensions": {
+          "l": {
+            "evaluated_expression": false,
+            "language": "spectre",
+            "literal": "30n",
+            "value_m": 3.0000000000000004e-08
+          },
+          "w": {
+            "evaluated_expression": false,
+            "language": "spectre",
+            "literal": "250n",
+            "value_m": 2.5000000000000004e-07
+          }
+        },
+        "line": 2,
+        "master": "sample_low_device",
+        "name": "M1",
+        "ordered_nets": [
+          "OUT",
+          "IN",
+          "LO",
+          "LO"
+        ],
+        "polarity": null,
+        "port_count": 4,
+        "terminal_semantics": null
+      },
+      {
+        "dimensions": {
+          "l": {
+            "evaluated_expression": false,
+            "language": "spectre",
+            "literal": "30n",
+            "value_m": 3.0000000000000004e-08
+          },
+          "w": {
+            "evaluated_expression": false,
+            "language": "spectre",
+            "literal": "250n",
+            "value_m": 2.5000000000000004e-07
+          }
+        },
+        "line": 3,
+        "master": "sample_high_device",
+        "name": "M2",
+        "ordered_nets": [
+          "OUT",
+          "IN",
+          "HI",
+          "HI"
+        ],
+        "polarity": null,
+        "port_count": 4,
+        "terminal_semantics": null
+      }
+    ],
+    "interfaces": [],
+    "issues": [],
+    "required_masters": [
+      "sample_high_device",
+      "sample_low_device"
+    ],
+    "schema": "spiceowl.netlist-model-requirements.v1",
+    "source_id": "synthetic-inverter.scs",
+    "source_sha256": "81dd86062b699752bb8cb5ec3999549531888c895d70fe3e3345aa146ccaa263",
+    "status": "parsed"
+  },
+  "schema": "spiceowl.onboarding-discovery.fixture.v1",
+  "source_text": "simulator lang=spectre\nM1 (OUT IN LO LO) sample_low_device w=250n l=30n\nM2 (OUT IN HI HI) sample_high_device w=250n l=30n\n"
+}

@@ -76,6 +76,50 @@ class ExperimentPreparationTests(unittest.TestCase):
         self.assertNotEqual(one['files']['netlist/input.scs'],lower['files']['netlist/input.scs'])
         self.assertEqual(lower['recipe']['spec']['supply']['positive_v'],.9)
 
+    def test_optional_multiplicity_is_preserved_when_absent(self):
+        for removed in (('nf',), ('multi',), ('nf', 'multi')):
+            raw = sources()['synthetic.scs']
+            for name in removed:
+                raw = raw.replace((' ' + name + '=1').encode(), b'')
+            result = self.prepare(sources={'synthetic.scs': raw})
+            self.assertEqual(result['status'], 'ready', result['missing'])
+            for name in removed:
+                self.assertNotIn((name + '=').encode(), result['files']['netlist/dut.scs'])
+            for instance in result['source']['instances']:
+                self.assertIn(instance['original_text'].encode(), result['files']['netlist/dut.scs'])
+                self.assertEqual(set(instance['parameters_literal']) & set(removed), set())
+        for removed in (b' w=2u', b' l=200n'):
+            result = self.prepare(sources={'synthetic.scs': sources()['synthetic.scs'].replace(removed, b'')})
+            self.assertEqual(result['missing'][0]['code'], 'mos_dimensions_missing')
+
+    def test_explicit_invalid_multiplicity_is_rejected_without_generated_files(self):
+        for name, value in (('nf', '0'), ('nf', '-1'), ('nf', '1.5'), ('nf', '2-3'),
+                            ('multi', '0'), ('multi', '-1'), ('multi', '(1/0)'),
+                            ('nf', '(1-2)'), ('multi', '1e100*1e100')):
+            with self.subTest(name=name, value=value):
+                raw = sources()['synthetic.scs'].replace((name + '=1').encode(), (name + '=' + value).encode())
+                result = self.prepare(sources={'synthetic.scs': raw})
+                self.assertEqual(result['status'], 'missing')
+                self.assertEqual(result['missing'][0]['code'], 'invalid_mos_multiplicity')
+                self.assertFalse(result['files'])
+
+    def test_positive_multiplicity_arithmetic_and_declared_parameters_keep_source_literals(self):
+        for nf, multi, parameters in (('2', '0.5', {}), ('(2+2)', '(1/2)', {}),
+                                      ('finger_count', 'multiplicity', {'finger_count': 4, 'multiplicity': .5}),
+                                      ('2k', '5m', {})):
+            raw = sources()['synthetic.scs'].replace(b'nf=1', ('nf=' + nf).encode()).replace(b'multi=1', ('multi=' + multi).encode())
+            changed = spec(); changed['parameters'] = parameters
+            result = self.prepare(sources={'synthetic.scs': raw}, spec=changed)
+            self.assertEqual(result['status'], 'ready', result['missing'])
+            self.assertIn(('nf=' + nf).encode(), result['files']['netlist/dut.scs'])
+            self.assertIn(('multi=' + multi).encode(), result['files']['netlist/dut.scs'])
+        raw = sources()['synthetic.scs'].replace(b'subckt Example IN OUT HI LO\n',
+            b'subckt Example IN OUT HI LO\nparameters fingers=(2+2) factor=.5\n')
+        raw = raw.replace(b'nf=1', b'nf=fingers').replace(b'multi=1', b'multi=factor')
+        result = self.prepare(sources={'synthetic.scs': raw}, selection={'mode':'cell', 'source_id':'synthetic.scs', 'subcircuit':'Example'})
+        self.assertEqual(result['status'], 'ready', result['missing'])
+        self.assertIn(b'nf=fingers', result['files']['netlist/dut.scs'])
+
     def test_negative_rail_stimulus_uses_explicit_absolute_voltages(self):
         target=spec();target['supply']={'positive_v':.5,'negative_v':-.5}
         target['stimuli'][0].update(low_v=-.5, high_v=.5)

@@ -450,7 +450,11 @@ class PdkDiscoveryTests(unittest.TestCase):
         self.write("tmi/platformA/libTMImodel.so", b"\x00synthetic-library")
         data = self.discover()
         candidate = next(c for c in data["entry_candidates"] if c["entry_path"] == str(entry))
-        refs = candidate["tmi_candidates"]
+        groups = candidate["tmi_candidates"]
+        self.assertEqual(len(groups), 1)
+        refs = [dict(row, source_path=group["source_path"], directory=group["directory"],
+                     platform_candidates=group["platform_candidates"])
+                for group in groups for row in group["declarations"]]
         self.assertEqual(len(refs), 3)
         globals_ = [r for r in refs if r["section"] is None]
         self.assertEqual(len(globals_), 2)
@@ -461,9 +465,49 @@ class PdkDiscoveryTests(unittest.TestCase):
         scoped = next(r for r in refs if r["section"] == "CornerA")
         self.assertEqual(scoped["applied_scopes"], ["CornerA"])
         shared_global = next(c for c in data["entry_candidates"] if c["entry_path"] == str(shared) and c["section_candidates"] == [None])
-        self.assertTrue(all(r["applied_scopes"] == [None] for r in shared_global["tmi_candidates"]))
+        self.assertTrue(all(r["applied_scopes"] == [None]
+                            for group in shared_global["tmi_candidates"] for r in group["declarations"]))
         config = audit_config_for_candidate(data, candidate["candidate_id"], sections=[None],
                                             tmi_relative_library="platformA/libTMImodel.so")
+        self.assertEqual(config["tmi_relative_library"], "platformA/libTMImodel.so")
+
+    def test_tmi_common_evidence_grouping_is_lossless_and_materially_smaller(self):
+        name = "model-source-" + "m" * 125 + ".scs"
+        sections = ["Corner%02d" % n for n in range(32)]
+        entry = self.write("entry.scs", "".join('include "' + name + '" section=' + section + '\n' for section in sections))
+        body = self.model_source()
+        expected = set()
+        for section in sections:
+            body += "section " + section + "\n"
+            for attribute in ("tmipath", "etmiUsrInput"):
+                line = len(body.splitlines()) + 1
+                body += '.option ' + attribute + '="tmi"\n'
+                expected.add((line, section, attribute, section))
+            body += "endsection " + section + "\n"
+        source = self.write(name, body)
+        for platform in ("platformA", "platformB"):
+            self.write("tmi/" + platform + "/libTMImodel.so", b"\x00synthetic-library-" + platform.encode())
+        data = self.discover()
+        candidate = next(c for c in data["entry_candidates"] if c["entry_path"] == str(entry))
+        groups = candidate["tmi_candidates"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["source_path"], str(source))
+        self.assertEqual(len(groups[0]["declarations"]), 64)
+        expanded = [dict(declaration, source_path=group["source_path"], directory=group["directory"],
+                         platform_candidates=group["platform_candidates"])
+                    for group in groups for declaration in group["declarations"]]
+        actual = {(row["line"], row["section"], row["attribute"], section)
+                  for row in expanded for section in row["applied_scopes"]}
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(expanded), len({(r["source_path"], r["line"], r["section"], r["attribute"]) for r in expanded}))
+        self.assertLess(len(json.dumps(groups).encode()), len(json.dumps(expanded).encode()) // 4)
+        self.assertEqual(len(data["entry_candidates"]), 34)
+        self.assertTrue(all(m["confidence"] == "verified" for m in candidate["models"]))
+        self.assertFalse(candidate["ready_to_run"])
+        self.assertTrue(profile_suggestions(data)["candidates"])
+        config = audit_config_for_candidate(data, candidate["candidate_id"], sections=[None],
+                                            tmi_relative_library="platformA/libTMImodel.so")
+        self.assertEqual(config["main"], str(entry))
         self.assertEqual(config["tmi_relative_library"], "platformA/libTMImodel.so")
 
     def test_budget_caps_and_read_limit_surface_incompleteness(self):

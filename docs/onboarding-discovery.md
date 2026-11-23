@@ -82,15 +82,16 @@ Each `tmi_candidates` row contains:
 
 | Field | Meaning |
 | --- | --- |
-| `source_path`, `section`, `line` | Location of the static TMI attribute. |
-| `applied_scopes` | Exact scopes in that same source file where this declaration participates in the candidate closure. A global declaration has `section:null`; its application in several scopes does not duplicate the platform array. |
-| `attribute` | Observed supported attribute, such as `tmipath` or `etmiUsrInput`. |
+| `source_path` | Common source file for the group's individually retained TMI declarations; private. |
 | `directory` | Resolved observed TMI directory; private. |
 | `platform_candidates` | Available `{platform, path, relative_library, sha256, bytes}` rows for immediate child directories containing `libTMImodel.so`. |
+| `declarations` | Separate `{line, section, attribute, applied_scopes}` records for every physical declaration in this source file that shares the same directory and platform evidence. No declaration is discarded by grouping. |
+
+Within each declaration, `section` is the exact declaration scope (`null` for a global directive), `line` is the original logical statement's source line, and `attribute` is the observed supported attribute such as `tmipath` or `etmiUsrInput`. `applied_scopes` retains all exact sections of this same source file where the declaration participates in this candidate's closure. These are section labels, not repeated path/section objects. The group header supplies the common source path once.
 
 `relative_library` is the selectable value passed to `audit_config_for_candidate`. It must occur in this candidate's observed platform options. No platform is selected from the UI machine's architecture. A file's presence/hash does not prove binary compatibility; an actual simulator/platform check remains necessary.
 
-Candidate TMI rows deduplicate only the same physical source declaration and identical platform evidence. Different source lines, declared sections, attributes or platform fingerprints remain distinct, and every applied scope is retained. Contract resolution similarly indexes each physical declaration by source location and wrapper ownership; equal model names in different wrappers or separate declarations remain distinct evidence.
+Repeated appearances of the same physical TMI declaration deduplicate only when their platform evidence is identical, retaining every applied scope. Common source/directory/platform metadata is then stored once per group, while different source lines, declared sections and attributes remain separate `declarations`. Different source files, directories or platform fingerprints cannot share a group. `platform_candidates` remains in the same location for existing platform-choice and dependency-audit consumers. Contract resolution similarly indexes each physical declaration by source location and wrapper ownership; equal model names in different wrappers or separate declarations remain distinct evidence.
 
 ## Model evidence and electrical profile mapping
 

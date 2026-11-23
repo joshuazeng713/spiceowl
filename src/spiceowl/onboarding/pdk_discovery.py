@@ -793,6 +793,19 @@ for node in graph:
                     if scope not in combined['applied_scopes']: combined['applied_scopes'].append(scope)
         pending.extend(current['include_targets'])
     if not covered: continue
+    # Several physical TMI directives can share a source file, directory and
+    # platform evidence. Store that common evidence once, while retaining every
+    # declaration and its exact applied sections as separate records.
+    tmi_groups=[];tmi_groups_by_key={}
+    for reference in candidate_tmi:
+        group_key=(reference['source_path'],reference['directory'],platform_signatures.get(reference['directory']))
+        if group_key not in tmi_groups_by_key:
+            group={'source_path':reference['source_path'],'directory':reference['directory'],
+                   'platform_candidates':reference['platform_candidates'],'declarations':[]}
+            tmi_groups_by_key[group_key]=group;tmi_groups.append(group)
+        tmi_groups_by_key[group_key]['declarations'].append({key:reference[key]
+            for key in ('line','section','attribute','applied_scopes')})
+    candidate_tmi=tmi_groups
     if len(entry_candidates)>=dl['max_candidates']:
         issue('entry_candidate_limit');break
     path=node['path']

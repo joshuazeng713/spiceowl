@@ -217,5 +217,110 @@ class PdkLibraryTests(unittest.TestCase):
                 library['library_id'] = _digest({key: value for key, value in library.items() if key != 'library_id'})
                 with self.assertRaises(DomainError): validate_pdk_library(library)
 
+    def test_logical_and_canonical_roots_reuse_one_observation_without_local_resolution(self):
+        logical = self.root / 'selected-pdk'; logical.symlink_to(self.models, target_is_directory=True)
+        library = library_scan(logical)
+        self.assertEqual(library['requested_roots'], [str(logical)])
+        self.assertEqual(library['roots'], [str(self.models)])
+        saved = self.lut.put_library(library, server_identity=IDENTITY, observed_at=101)
+        self.assertEqual(saved['root_resolutions'], [{'requested_root': str(logical), 'canonical_root': str(self.models)}])
+        with patch('os.path.realpath', side_effect=AssertionError('No client-side path resolution')):
+            for roots in ([str(logical)], [str(self.models)]):
+                for names in (['n_core_ulvt'], ['io_device'], ['p_core_ulvt', 'io_device']):
+                    result = self.lut.lookup_library_models(**{**self.scope, 'roots': roots},
+                        required_masters=names, requirements=requirements(names))
+                    self.assertEqual(result['status'], 'hit')
+                    self.assertEqual(result['record']['library_id'], library['library_id'])
+                    self.assertFalse(result['remote_freshness_verified'])
+            for change in ({'roots': [str(self.root / 'wrong-logical')]},
+                           {'server_identity': {**IDENTITY, 'hostname': 'different-host'}}):
+                result = self.lut.query_library_devices(**{**self.scope, 'roots': [str(logical)], **change})
+                self.assertEqual(result['status'], 'miss')
+
+    def test_root_aliases_are_complete_sets_from_one_observation_not_mixable_fragments(self):
+        other = self.root / 'other-library'; other.mkdir()
+        (other / 'device.scs').write_text('model other_primitive bsim4 type=n\n')
+        aliases = [self.root / 'alias-a', self.root / 'alias-b']
+        aliases[0].symlink_to(self.models, target_is_directory=True)
+        aliases[1].symlink_to(other, target_is_directory=True)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec(build_pdk_library_script(roots=[str(path) for path in aliases]), {})
+        library = validate_pdk_library(json.loads(output.getvalue()))
+        self.lut.put_library(library, server_identity=IDENTITY, observed_at=101)
+        for roots in ([str(path) for path in reversed(aliases)], [str(self.models), str(other)]):
+            self.assertEqual(self.lut.query_library_devices(**{**self.scope, 'roots': roots})['status'], 'hit')
+        for roots in ([str(aliases[0]), str(other)], [str(aliases[0])], [str(aliases[1])]):
+            self.assertEqual(self.lut.query_library_devices(**{**self.scope, 'roots': roots})['status'], 'miss')
+
+    def test_convergent_logical_roots_keep_a_complete_mapping_to_one_canonical_root(self):
+        aliases = [self.root / 'same-a', self.root / 'same-b']
+        for alias in aliases: alias.symlink_to(self.models, target_is_directory=True)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            exec(build_pdk_library_script(roots=[str(path) for path in aliases]), {})
+        library = validate_pdk_library(json.loads(output.getvalue()))
+        self.assertEqual(library['roots'], [str(self.models), str(self.models)])
+        self.lut.put_library(library, server_identity=IDENTITY, observed_at=101)
+        for roots in ([str(path) for path in aliases], [str(self.models)]):
+            self.assertEqual(self.lut.query_library_devices(**{**self.scope, 'roots': roots})['status'], 'hit')
+        self.assertEqual(self.lut.query_library_devices(**{**self.scope, 'roots': [str(aliases[0])]})['status'], 'miss')
+
+    def test_new_scan_of_retargeted_symlink_supersedes_previous_default_scope(self):
+        logical = self.root / 'moving-pdk'; logical.symlink_to(self.models, target_is_directory=True)
+        previous = library_scan(logical)
+        saved = self.lut.put_library(previous, server_identity=IDENTITY, observed_at=100)
+        other = self.root / 'replacement'; other.mkdir()
+        (other / 'device.scs').write_text('model replacement_model bsim4 type=p\n')
+        logical.unlink(); logical.symlink_to(other, target_is_directory=True)
+        newer = library_scan(logical)
+        self.lut.put_library(newer, server_identity=IDENTITY, observed_at=101)
+        scope = {**self.scope, 'roots': [str(logical)]}
+        result = self.lut.lookup_library_models(**scope, required_masters=['replacement_model'])
+        self.assertEqual(result['status'], 'hit')
+        self.assertEqual(result['record']['library_id'], newer['library_id'])
+        result = self.lut.lookup_library_models(**scope, required_masters=['n_core_ulvt'])
+        self.assertEqual(result['status'], 'miss')
+        self.assertEqual(result['record']['library_id'], newer['library_id'])
+        self.assertEqual(self.lut.query_library_devices(**scope, content_fingerprint=saved['content_fingerprint'])['status'], 'miss')
+        historical = self.lut.query_library_devices(**scope, library_id=previous['library_id'])
+        self.assertEqual(historical['record']['library_id'], previous['library_id'])
+        self.assertFalse(historical['remote_freshness_verified'])
+        self.assertEqual(self.lut.query_library_devices(**{**scope, 'now': 1000000})['status'], 'stale')
+
+    def test_equally_recent_different_root_resolutions_are_not_selected_by_digest_order(self):
+        logical = self.root / 'tied-pdk'; logical.symlink_to(self.models, target_is_directory=True)
+        self.lut.put_library(library_scan(logical), server_identity=IDENTITY, observed_at=100)
+        other = self.root / 'tied-replacement'; other.mkdir()
+        (other / 'device.scs').write_text('model tied_model bsim4 type=p\n')
+        logical.unlink(); logical.symlink_to(other, target_is_directory=True)
+        self.lut.put_library(library_scan(logical), server_identity=IDENTITY, observed_at=100)
+        result = self.lut.query_library_devices(**{**self.scope, 'roots': [str(logical)]})
+        self.assertEqual(result['status'], 'miss')
+        self.assertEqual(result['missing'][0]['code'], 'root_alias_ambiguous')
+
+    def test_legacy_library_without_requested_roots_remains_canonical_only(self):
+        from spiceowl.onboarding.pdk_discovery import _digest
+        legacy = copy.deepcopy(self.library); legacy.pop('requested_roots')
+        legacy['library_id'] = _digest({key: value for key, value in legacy.items() if key != 'library_id'})
+        self.lut.put_library(legacy, server_identity=IDENTITY, observed_at=101)
+        self.lut.connection.execute('DROP TABLE library_root_scopes')
+        with PdkLut(self.path, read_only=True) as reader:
+            result = reader.query_library_devices(**self.scope)
+            self.assertEqual(result['record']['library_id'], legacy['library_id'])
+        with PdkLut(self.path) as migrated:
+            self.assertTrue(migrated.library_root_index_available)
+            self.assertEqual(migrated.query_library_devices(**self.scope)['status'], 'hit')
+
+    def test_rehashed_incomplete_duplicate_or_colliding_root_mappings_fail(self):
+        from spiceowl.onboarding.pdk_discovery import _digest
+        cases = [([], self.library['roots']), ([str(self.models)] * 2, self.library['roots'] * 2),
+                 ([str(self.models), '/synthetic/other'], ['/synthetic/other', str(self.models)])]
+        for requested, canonical in cases:
+            changed = copy.deepcopy(self.library)
+            changed['requested_roots'], changed['roots'] = requested, canonical
+            changed['library_id'] = _digest({key: value for key, value in changed.items() if key != 'library_id'})
+            with self.assertRaises(DomainError): validate_pdk_library(changed)
+
 
 if __name__ == '__main__': unittest.main()

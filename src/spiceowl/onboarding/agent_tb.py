@@ -347,7 +347,7 @@ class _VerilogAParser:
         self.symbols, self.writable, self.nodes = set(), set(), set()
         self.constant_macros = set()
         self.result = {'includes': [], 'instances': [], 'interfaces': [], 'models': [],
-                       'analyses': [], 'saves': [], 'language': 'veriloga', 'standard_includes': []}
+                       'analyses': [], 'saves': [], 'info_requests': [], 'language': 'veriloga', 'standard_includes': []}
 
     def peek(self):
         return self.tokens[self.index][0] if self.index < len(self.tokens) else ''
@@ -568,7 +568,7 @@ class _VerilogAParser:
 
 
 def _parse(raw, path, issues):
-    result = {'includes': [], 'instances': [], 'interfaces': [], 'models': [], 'analyses': [], 'saves': []}
+    result = {'includes': [], 'instances': [], 'interfaces': [], 'models': [], 'analyses': [], 'saves': [], 'info_requests': []}
     stack, instances, count = [], set(), 0
     for line, text in _statements(raw, path, issues):
         count += 1
@@ -647,6 +647,19 @@ def _parse(raw, path, issues):
                 _issue(issues, 'unsupported_save', path, line)
             else:
                 result['saves'].append({'path': path, 'line': line, 'signals': signals})
+            continue
+        info = re.fullmatch(r'(\S+)\s+info(?:\s+(.*))?', text, re.I)
+        if info:
+            name, tail = info.groups()
+            if stack or not NAME.fullmatch(name):
+                _issue(issues, 'unsupported_info_request_scope', path, line)
+                continue
+            values = _parameters(tail or '', path, line, issues)
+            if values != {'what': 'oppoint', 'where': 'rawfile'}:
+                _issue(issues, 'unsupported_info_request', path, line)
+            else:
+                result['info_requests'].append({'name': name, 'what': 'oppoint',
+                    'where': 'rawfile', 'path': path, 'line': line})
             continue
         control = re.fullmatch(r'(\S+)\s+(tran|ac|dc|options)(?:\s+(.*))?', text, re.I)
         if control:
@@ -792,9 +805,17 @@ def _inventory(documents, entry, allow_pdk):
         completed.add(node)
     for node in hierarchy:
         check_hierarchy(node, set())
+    info_requests = [row for data in parsed.values() for row in data['info_requests']]
+    analysis_names = {row['name'] for data in parsed.values() for row in data['analyses']}
+    output_names = set()
+    for row in info_requests:
+        if row['name'] in output_names or row['name'] in analysis_names:
+            _issue(issues, 'ambiguous_info_request_name', row['path'], row['line'], name=row['name'])
+        output_names.add(row['name'])
     return {'issues': issues, 'documents': parsed, 'visited': sorted(visited), 'includes': edges,
             'instances': instances, 'interfaces': interfaces, 'required_masters': sorted(required),
-            'veriloga_modules': modules, 'veriloga_external_dependencies': external}
+            'veriloga_modules': modules, 'veriloga_external_dependencies': external,
+            'info_requests': info_requests}
 
 
 def _requirements(raw, source_id, inventory):
@@ -804,6 +825,7 @@ def _requirements(raw, source_id, inventory):
         'required_masters': inventory['required_masters'], 'includes': inventory['includes'],
         'veriloga_modules': inventory['veriloga_modules'],
         'veriloga_external_dependencies': inventory['veriloga_external_dependencies'],
+        'info_requests': inventory['info_requests'],
         'issues': inventory['issues'], 'confirmation_required': ['authored_testbench_and_objectives'],
         'dimensions_scope': 'generic source inventory only; no parameter evaluation or terminal-role inference'}
 
@@ -1010,6 +1032,7 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
         'veriloga_modules': inventory['veriloga_modules'],
         'veriloga_external_dependencies': external_dependencies,
         'veriloga_header_closure': binding.get('veriloga_header_closure'),
+        'info_requests': inventory['info_requests'],
         'static_check_scope': 'bounded syntax and source identity only; not a Verilog-A compiler or execution sandbox',
         'scientific_intent_inferred': False, 'source_rewritten': False,
         'simulation_verified': False, 'human_review_required': True}
@@ -1017,5 +1040,5 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
     return {'schema': VALIDATION_SCHEMA, 'mode': 'agent-tb',
         'status': 'blocked' if issues else 'static_ready', 'missing': issues,
         'manifest': manifest, 'requirements': _requirements(documents['dut.scs'], 'dut.scs', inventory),
-        'analyses': analyses, 'saves': saves, 'execution_authorized': False,
+        'analyses': analyses, 'saves': saves, 'info_requests': inventory['info_requests'], 'execution_authorized': False,
         'supported_scope': 'finite Spectre and scalar Verilog-A syntax; supplied relative includes and explicitly bound standard headers; no scripts, dynamic includes or compiler/sandbox claim'}

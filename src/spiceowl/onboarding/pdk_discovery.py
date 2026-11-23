@@ -390,6 +390,16 @@ def validate_pdk_library(library):
             or coverage.get('whole_pdk_qualified') is not False): _invalid()
     for root in library['roots']:
         if _path(root) == '/': _invalid()
+    if 'requested_roots' in library:
+        requested = library['requested_roots']
+        if (not isinstance(requested, list) or len(requested) != len(library['roots'])
+                or any(not isinstance(root, str) for root in requested)
+                or len(set(requested)) != len(requested)): _invalid('Requested roots must map the complete observed canonical root list.')
+        canonical = set(library['roots'])
+        for logical, resolved in zip(requested, library['roots']):
+            if (_path(logical) != logical or logical == '/' or _path(resolved) != resolved
+                    or logical in canonical and logical != resolved):
+                _invalid('Logical and canonical roots have inconsistent or colliding identities.')
     files = {}
     for row in library['files']:
         if (not isinstance(row, dict) or not isinstance(row.get('sha256'), str)
@@ -1253,6 +1263,7 @@ _LIBRARY_SERIALIZER = r'''
 result.pop('source_sha256',None)
 result.pop('required_masters',None)
 result.update(schema='spiceowl.pdk-library.v1',mode='full_library',
+    requested_roots=list(config['roots']),
     selection_made=False,profile_registered=False,
     cache_scope='observed per-device library metadata; never launch freshness',
     scope_note='Full-library attempt within the declared roots and finite parser/search policy; not process qualification.')

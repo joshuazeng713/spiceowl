@@ -120,6 +120,7 @@ def prepare_agent_testbench(sources, selection, spec, model_profile):
             'used_models': validation['manifest']['required_masters'], 'external_includes': includes,
             'files_sha256': {path: _sha(raw) for path, raw in files.items()},
             'agent_tb_manifest': validation['manifest'], 'analyses': validation['analyses'], 'saves': validation['saves'],
+            'info_requests': validation['info_requests'],
             'veriloga_modules': validation['manifest']['veriloga_modules'],
             'veriloga_external_dependencies': validation['manifest']['veriloga_external_dependencies'],
             'veriloga_header_closure': validation['manifest']['veriloga_header_closure'],

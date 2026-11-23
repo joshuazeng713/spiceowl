@@ -223,6 +223,60 @@ class AgentTestbenchTests(unittest.TestCase):
         self.assertEqual(result['status'], 'missing')
         self.assertEqual(result['missing'][0]['code'], 'unsupported_managed_pdk')
 
+    def test_dc_operating_point_info_request_is_hash_bound_output_not_an_analysis(self):
+        tb = '\n'.join(line for line in TB.splitlines() if ' tran ' not in line and ' ac ' not in line)
+        tb += '\ndcOpInfo info what=oppoint where=rawfile\n'
+        checked = self.validate(testbench=tb)
+        self.assertEqual(checked['status'], 'static_ready', checked['missing'])
+        self.assertEqual([row['kind'] for row in checked['analyses']], ['dc'])
+        expected = [{'name': 'dcOpInfo', 'what': 'oppoint', 'where': 'rawfile',
+                     'path': 'tb.scs', 'line': len(tb.splitlines())}]
+        self.assertEqual(checked['info_requests'], expected)
+        self.assertEqual(checked['requirements']['info_requests'], expected)
+        self.assertEqual(checked['manifest']['info_requests'], expected)
+        sources, selection, spec, profile = compile_inputs()
+        sources['source/tb.scs'] = tb.encode()
+        spec['criteria']['text'] = tb
+        sources['source/draft.json'] = json.dumps(spec['criteria']).encode()
+        compiled = prepare_experiment(sources, selection, spec, profile)
+        self.assertEqual(compiled['status'], 'ready', compiled['missing'])
+        self.assertEqual(compiled['files']['netlist/tb.scs'], tb.encode())
+        self.assertEqual(compiled['recipe']['info_requests'], expected)
+        self.assertEqual(validate_recipe(compiled['recipe']), spec)
+
+    def test_info_request_alone_cannot_supply_required_analysis_or_save(self):
+        no_analysis = '\n'.join(line for line in TB.splitlines()
+                                if not any(' ' + kind + ' ' in line for kind in ('tran', 'ac', 'dc')))
+        checked = self.validate(testbench=no_analysis + '\ndcOpInfo info what=oppoint where=rawfile\n')
+        self.assertEqual(checked['status'], 'blocked')
+        self.assertEqual(checked['analyses'], [])
+        self.assertIn('supported_analysis_missing', {row['code'] for row in checked['missing']})
+        checked = self.validate(testbench=TB.replace('save in_p in_n out supply bias\n', '') +
+                                'dcOpInfo info what=oppoint where=rawfile\n')
+        self.assertIn('explicit_save_missing', {row['code'] for row in checked['missing']})
+
+    def test_info_output_parameters_names_and_scope_are_restricted(self):
+        invalid = ['dcOpInfo info what=models where=rawfile',
+                   'dcOpInfo info what=oppoint where=file',
+                   'dcOpInfo info what=oppoint where="/tmp/output"',
+                   'dcOpInfo info what=oppoint where=rawfile filename="output"',
+                   'dcOpInfo info what=oppoint where=rawfile file="/tmp/output"',
+                   'dcOpInfo info what=oppoint where=rawfile path=output',
+                   '../dcOpInfo info what=oppoint where=rawfile',
+                   'dcOpInfo info where=rawfile']
+        for statement in invalid:
+            with self.subTest(statement=statement):
+                checked = self.validate(testbench=TB + statement + '\n')
+                self.assertEqual(checked['status'], 'blocked')
+                self.assertFalse(checked['info_requests'])
+        for statement in ('dcOpInfo info what=oppoint where=rawfile\n' * 2,
+                          'transfer info what=oppoint where=rawfile\n'):
+            checked = self.validate(testbench=TB + statement)
+            self.assertIn('ambiguous_info_request_name', {row['code'] for row in checked['missing']})
+        source = DUT.replace('Xleft (', 'dcOpInfo info what=oppoint where=rawfile\r\nXleft (')
+        checked = self.validate(source=source)
+        self.assertIn('unsupported_info_request_scope', {row['code'] for row in checked['missing']})
+
 
 if __name__ == '__main__':
     unittest.main()

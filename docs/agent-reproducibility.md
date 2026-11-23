@@ -14,7 +14,9 @@ No weak-model or other LLM evaluation is claimed here.
 | --- | --- | --- |
 | Registered `inverter-tran` / `prepared-transient` | `workflow prepare/run/inspect/execute`, frozen recipe compiler, PSF ASCII measurements, offline workflow tests | Requires a compatible CircuitGit service, registered recipe, explicit grant and working remote dependencies |
 | Authored `agent-testbench` | Local inventory, bounded static validator, exact-byte compiler and paired CircuitGit human-reviewed execution | Integration is published; supported result types and explicit postprocessing still bound the scientific conclusion. A generic no-LLM driver or weak-model benchmark has not been demonstrated |
+| Full-library PDK index / relative Verilog-A | Per-device lookup within an observed host/root scope, explicit missing-model results, source-bound bindings and reviewed helper/header closure | A cache hit does not establish current remote dependencies. Model selection, complete staging and the final dependency audit still belong to the paired execution route |
 | `spiceowl.adctools` | Offline JSON/CSV/Python analysis, explicit backend selection and synthetic mathematical tests | Caller owns dataset identity, experimental preconditions and specification comparison |
+| Native AC/DC | Typed PSF ASCII datasets and explicit `ac_metrics` / `dc_op_metrics` algorithms | Saved output alone does not define loop gain, a private model's region codes or the intended operating condition. CircuitGit must bind the selected dataset and measurement contract to the run |
 
 Use [workflow.md](workflow.md) for the registered route,
 [agent-testbench.md](agent-testbench.md) for the authored bundle contract, and
@@ -208,3 +210,62 @@ Require zero unauthorized dispatches, duplicate dispatches and unsupported
 scientific passes in this test set. Report failures and denominators alongside
 rates; even zero observed failures does not prove universal safety. This is an
 evaluation proposal, not an implemented benchmark runner or completed LLM eval.
+
+## Making the next step explicit
+
+The target for a smaller agent is to select a permitted next operation and fill
+bounded arguments. Deterministic code should enforce transitions and evidence;
+a prompt telling the model to be careful is insufficient as a workflow gate.
+The existing registered `workflow` driver implements its fixed sequence. A
+unified next-action interface for generic authored testbenches remains proposed.
+Do not treat the conceptual stages below as currently exposed API state names.
+
+| Stage | Evidence required before advancing | What a smaller agent needs to do |
+| --- | --- | --- |
+| Define experiment | Source selection, signal roles, PVT, stimulus/load, analysis, measurement and criteria are explicit | Select a reviewed recipe; request the exact missing fields for a new experiment |
+| Resolve dependencies | All required models and relative helpers map to recorded identities; ambiguities stay visible | Select from returned candidates without inferring private model semantics |
+| Validate and freeze | Static validation and a fresh site-bound dependency audit pass; exact bytes and parameters are hashed | Preserve the frozen plan and present the applicable review |
+| Dispatch | Execution-owner authorization and one persisted submission identity | Call the permitted submission operation once; retain its receipt |
+| Observe and collect | Original job identity, terminal status and native collection identity agree | Poll the same job; reconcile uncertain dispatch without creating another key |
+| Measure | Dataset identity, units, completeness and algorithm preconditions pass | Invoke the registered algorithm with frozen parameters |
+| Report | Each scientific and execution dimension has its own evidence | Explain the returned values, failures and missing evidence |
+
+In a future generic interface, return bounded `missing` fields and permitted
+next operations with their argument schemas. Enforce the same restrictions in
+the execution service, not only in model-visible descriptions. Set a finite
+attempt/time budget and preserve one action's identity across disconnects.
+Changing electrical conditions, a model binding or acceptance criteria creates a
+new reviewed experiment revision; a diagnosis is not permission to make that
+change automatically.
+
+Sampling is part of that frozen definition. Record the startup exclusion, clock
+phase, first/last sample, exact count, time tolerance and any row selection with
+the raw-artifact digest. The FFT validator checks its supplied array; it does
+not prove that the array represents the intended held output or clock phase.
+There is no generic clock-phase extraction tool in this package. A missing
+sample or an extra endpoint must not be repaired by an undocumented crop or
+interpolation.
+
+Reproduction has three different scopes. Replaying analysis uses the same raw
+artifact, algorithm version and parameters. Re-running a simulation additionally
+requires the source/model/tool versions, site environment, relevant seeds and
+sampling definition. Reusing a recipe for another circuit requires validating
+its interface and scientific assumptions again. Declare numerical comparison
+tolerances before a rerun; this project does not promise bitwise-identical
+solver output across different environments.
+
+## 中文：较弱 AI 可以复现到哪一步
+
+已登记的实验能够通过固定工具流程执行；“自动给陌生电路设计正确的实验”仍需
+明确的电路语义与人工／专家审阅。把第一次确认的实验保存为带版本和哈希的配方，
+后续 AI 就可以负责选配方、补齐明确字段、调用工具、观察原任务和解释报告。
+
+例如，自举栅压驱动模块的输出不能直接当作采样保持输出。要测采样性能，配方
+必须明确外接开关、保持电容、实际测量节点、采样相位、记录长度和频谱定义。
+对于 AC，相位裕度要求已声明的环路增益与反馈约定；对于 DC，私有模型的 region
+编码必须来自明确的模型约定。这些条件缺失时应返回缺项，而不是靠模型猜测补齐。
+
+下一步的验收重点是：先用没有 LLM 的脚本完成受支持配方，再让指定的小模型跑
+同一组任务，并注入断线、模型缺失、波形不完整、过期依赖和真实性能不达标等情况。
+同时统计正确完成率、缺项识别率、重复提交次数、错误通过次数和人工介入次数。
+目前还没有完成这项小模型端到端评测；单元测试通过不等于已经证明任意 AI 都可靠。

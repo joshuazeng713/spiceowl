@@ -23,6 +23,13 @@ NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_.$:+-]{0,127}\Z')
 DEFAULT_MAX_AGE_S = 86400
 MAX_DATABASE_BYTES = 128 * 1024 * 1024
 MAX_QUERY_BYTES = 2 * 1024 * 1024
+_LIBRARY_ROOT_INDEX = '''
+    CREATE TABLE IF NOT EXISTS library_root_scopes (
+        cache_id TEXT NOT NULL, scope_key TEXT NOT NULL,
+        PRIMARY KEY(cache_id, scope_key)
+    );
+    CREATE INDEX IF NOT EXISTS library_root_scope ON library_root_scopes(scope_key, cache_id);
+'''
 
 
 def _invalid(message='Use bounded observed server, root and model-scope evidence.'):
@@ -120,14 +127,19 @@ class PdkLut:
         if version not in ((1, 2, 3) if read_only else (0, 1, 2, 3)):
             self.connection.close(); _invalid('Unsupported PDK cache schema version.')
         self.index_version = version
+        self.library_root_index_available = False
         page_size = self.connection.execute('PRAGMA page_size').fetchone()[0]
         pages = self.connection.execute('PRAGMA page_count').fetchone()[0]
         if pages * page_size > MAX_DATABASE_BYTES:
             self.connection.close(); _invalid('The PDK cache exceeds its bounded database size.')
         if read_only:
+            self.library_root_index_available = self.connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='library_root_scopes'").fetchone() is not None
             return
         self.connection.execute('PRAGMA max_page_count=' + str(MAX_DATABASE_BYTES // page_size))
         if version == 3:
+            with self.connection: self.connection.executescript(_LIBRARY_ROOT_INDEX)
+            self.library_root_index_available = True
             return
         with self.connection:
             self.connection.executescript('''
@@ -175,6 +187,8 @@ class PdkLut:
                 PRAGMA user_version=3;
             ''')
         self.index_version = 3
+        with self.connection: self.connection.executescript(_LIBRARY_ROOT_INDEX)
+        self.library_root_index_available = True
 
     def close(self):
         self.connection.close()
@@ -388,6 +402,12 @@ class PdkLut:
             'audit_limits': library['audit_limits'], 'search_policy': library.get('search_policy', {}),
             'search_complete': library['search_complete'], 'fresh_audit_required': True,
             'remote_freshness_verified': False, 'ready_to_run': False}
+        scope_keys = {scope_key}
+        if 'requested_roots' in library:
+            metadata['requested_roots'] = list(library['requested_roots'])
+            metadata['root_resolutions'] = [{'requested_root': logical, 'canonical_root': canonical}
+                for logical, canonical in zip(library['requested_roots'], library['roots'])]
+            scope_keys.add(_digest({'server_identity': identity, 'roots': _roots(library['requested_roots']), 'mode': 'full_library'}))
         entries, devices = [], []
         for candidate in library['entry_candidates']:
             scopes = {(row['path'], row['section']) for row in candidate['dependency_scopes']}
@@ -407,6 +427,9 @@ class PdkLut:
                     (cache_id, scope_key, library['library_id'], fingerprint, observed, _json(metadata), _json(library)))
                 self.connection.execute('DELETE FROM library_entries WHERE cache_id=?', (cache_id,))
                 self.connection.execute('DELETE FROM library_devices WHERE cache_id=?', (cache_id,))
+                self.connection.execute('DELETE FROM library_root_scopes WHERE cache_id=?', (cache_id,))
+                self.connection.executemany('INSERT INTO library_root_scopes VALUES (?,?)',
+                    [(cache_id, key) for key in sorted(scope_keys)])
                 self.connection.executemany('INSERT INTO library_entries VALUES (?,?,?,?)', entries)
                 self.connection.executemany('INSERT INTO library_devices VALUES (?,?,?,?,?)', devices)
         except sqlite3.DatabaseError:
@@ -425,12 +448,24 @@ class PdkLut:
             'remote_freshness_verified': False, 'ready_to_run': False}
         if refresh or self.index_version < 3: return result
         key = _digest({'server_identity': identity, 'roots': roots, 'mode': 'full_library'})
-        query, values = 'SELECT metadata FROM library_observations WHERE scope_key=?', [key]
-        for column, value in (('library_id', library_id), ('content_fingerprint', content_fingerprint)):
-            if value is not None: query += ' AND '+column+'=?'; values.append(value)
+        query, values = 'SELECT metadata FROM library_observations WHERE (scope_key=?', [key]
+        if self.library_root_index_available:
+            query += ' OR cache_id IN (SELECT cache_id FROM library_root_scopes WHERE scope_key=?)'; values.append(key)
+        query += ')'
+        if library_id is not None: query += ' AND library_id=?'; values.append(library_id)
         row = self.connection.execute(query + ' ORDER BY observed_at DESC,cache_id LIMIT 1', values).fetchone()
         if row is None: return result
-        record = json.loads(row['metadata']); age = now - record['observed_at']
+        record = json.loads(row['metadata'])
+        if library_id is None:
+            collision_query = query.replace('SELECT metadata', 'SELECT COUNT(DISTINCT scope_key)', 1) + ' AND observed_at=?'
+            if self.connection.execute(collision_query, [*values, record['observed_at']]).fetchone()[0] > 1:
+                result['missing'] = [{'code': 'root_alias_ambiguous',
+                    'message': 'Equally recent observations resolve this root scope differently; select one observation or refresh.'}]
+                return result
+        # Match complete root sets from this one observation only. A newer scan
+        # with changed symlink targets must not fall back to older matching bytes.
+        if content_fingerprint is not None and record['content_fingerprint'] != content_fingerprint: return result
+        age = now - record['observed_at']
         stale = age < 0 or age > age_limit
         record['staleness'] = {'age_s': age, 'max_age_s': age_limit,
             'state': 'clock_skew' if age < 0 else 'expired' if stale else 'within_local_age_policy',

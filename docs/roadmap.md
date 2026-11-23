@@ -62,13 +62,18 @@ The [runtime guide](standalone-runtime.md) records the supported CLI, private gr
 ## Authored testbenches and saved-data analysis — implemented package slice
 
 - [x] Finite Spectre source/TB validation and registered `agent-testbench` compiler,
-  preserving authored source, support files and explicit criteria.
+  preserving authored source, support files and explicit criteria, with reviewed
+  relative Verilog-A helpers and complete standard-header closure.
 - [x] Private persistent PDK observation lookup with TTL, bounded coverage and
+  a full-library per-device index, observed logical/canonical root mapping and
   precomputed model-binding ranking; execution still requires a fresh audit.
-- [x] Eight optional ADC analysis operations, explicit backend selection,
+- [x] Ten optional analysis operations, explicit backend selection,
   Python/JSON/CSV CLI, and actual pinned ADCToolbox 0.9.3 integration.
 - [x] Synthetic analytic checks and paired full-resolution saved-CSV adapter tests.
-- [ ] Broad AC/DC/complex/multi-analysis waveform ingestion.
+- [x] Bounded native PSF ASCII AC, DC sweep and operating-point parsing, complex
+  output/reference normalization and explicit loop/device measurement contracts.
+- [ ] Broader binary and multidimensional waveform ingestion.
+- [ ] Unified next-action driver for generic authored testbenches.
 - [ ] Measured completion rates across weaker LLMs and interrupted live runs.
 
 CircuitGit owns the paired review, tool routing and Runner integration. Supported

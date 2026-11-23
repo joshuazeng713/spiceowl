@@ -46,6 +46,31 @@ model_name, candidate_id)`. `library_entries` retains shared closure metadata.
 The server/root scope contains no circuit model set. A filtered receipt cannot
 be relabeled, promoted or used to satisfy this library lookup.
 
+New library receipts also retain `requested_roots`, copied from the remote
+scanner's explicit input. Each position maps to the same position in `roots`,
+which contains the server-observed canonical path. The mapping is complete and
+receipt-bound; repeated canonical roots are allowed when distinct logical roots
+resolve to the same directory. Duplicate requested roots, incomplete mappings
+and colliding logical/canonical identities are rejected. No client-side
+`realpath` is performed.
+
+Within the same observed server identity, lookup accepts either that observation's
+complete requested-root set or its complete canonical-root set. It does not mix
+root aliases from different observations, assemble mixed logical/canonical sets,
+or infer a mapping for an unobserved prefix or subset. Cache metadata retains
+`requested_roots` and explicit `root_resolutions`; its scope index references the
+same immutable observation. Legacy receipts without `requested_roots` remain
+canonical-only, including read-only version-3 databases predating the additive
+root-scope index.
+
+A fresh scan after a symlink target changes becomes the default observation for
+the same requested-root set. A supplied fingerprint that differs from this
+newest observation returns a miss rather than falling back to older matching
+bytes. Equally recent observations with different canonical scopes return
+`root_alias_ambiguous`. An explicitly supplied `library_id` can still retrieve a
+historical snapshot for stable pagination. TTL and fresh-audit requirements
+apply to both forms; alias lookup never claims the remote symlink is unchanged.
+
 The scanner retains its finite file, graph, directory and byte policy. This mode
 stores at most 4096 device names, 256 candidate entries and 8192 device-entry
 bindings, with a 16 MiB receipt ceiling. It can index more than 128 devices in one

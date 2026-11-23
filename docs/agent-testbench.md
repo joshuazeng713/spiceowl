@@ -120,6 +120,19 @@ Unsupported syntax is not silently declared compatible. Limits are 64 supplied
 files, 1 MiB per file, 8 MiB total, 16,384 statements per file, 512 terminals per
 instance/interface and 64 levels of hierarchy.
 
+The bounded operating-point output directive `NAME info what=oppoint
+where=rawfile` is also supported at top level. These exact `what` and `where`
+values are required; arbitrary filenames, paths, extra parameters and other
+`info` types are rejected. It records a request for the simulator's controlled
+raw-result output, not an independent analysis: the TB still needs a real
+`tran`, `ac` or `dc` analysis and an explicit `save`. Inventory, validation,
+manifest and compiled recipe expose additive `info_requests` rows containing
+`name`, `what`, `where`, source `path` and `line`. The existing `analyses` list
+retains its meaning. Duplicate info names and collisions with analysis names
+are blocked. The execution owner must bind the resulting native artifact and
+its actual producer analysis; static readiness does not establish that the
+requested operating-point dataset was produced.
+
 ## Reviewed relative Verilog-A sources
 
 An authored Spectre file can contain `ahdl_include "behavior/library.va"`.

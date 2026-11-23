@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:spiceowl:simulation-runtime:v1",
   "title": "Stored standalone simulation runtime",
-  "x-contract-version": "1.0.0",
+  "x-contract-version": "1.1.0",
   "description": "GET /api/simulation/runtime?project_id=... reads stored evidence only. Remote operations use POST /api/simulation/control after installed connection authorization. read_at is not a fresh resource or execution observation.",
   "type": "object",
   "required": [
@@ -84,6 +84,53 @@
         },
         "direct_collect": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "experiments": {
+      "type": "object",
+      "required": [
+        "configured",
+        "recipes",
+        "prepare",
+        "run",
+        "inspect"
+      ],
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "prepare": {
+          "type": "boolean"
+        },
+        "run": {
+          "type": "boolean"
+        },
+        "inspect": {
+          "type": "boolean"
+        },
+        "recipes": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "required": [
+              "recipe_id",
+              "template"
+            ],
+            "properties": {
+              "recipe_id": {
+                "type": "string",
+                "maxLength": 180
+              },
+              "template": {
+                "type": "string",
+                "maxLength": 180
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -329,6 +376,9 @@
         },
         "collectable": {
           "type": "boolean"
+        },
+        "report": {
+          "$ref": "#/$defs/simulation_report"
         }
       },
       "additionalProperties": false
@@ -452,6 +502,566 @@
         }
       },
       "additionalProperties": false
+    },
+    "simulation_report": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Five independent simulation evidence dimensions",
+      "x-contract-version": "1.0.0",
+      "description": "Pure report of explicit caller evidence. No overall pass. Qualification requires a frozen scope, complete diagnostic bodies consistent with one completion footer, and no observed error or suppression gap. Dependency verification is confined to observed file bytes and registered directory references; post-run hashing cannot establish a pre-execution pin.",
+      "type": "object",
+      "required": [
+        "schema",
+        "run_id",
+        "advisory_only",
+        "execution_status",
+        "measurement_validity",
+        "functional_performance",
+        "operating_qualification",
+        "dependency_provenance",
+        "diagnostics"
+      ],
+      "properties": {
+        "schema": {
+          "const": "spiceowl.simulation-report.v1"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "advisory_only": {
+          "const": true
+        },
+        "execution_status": {
+          "type": "object",
+          "required": [
+            "status",
+            "scope",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/simulation_report/$defs/scope"
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 258,
+              "items": {
+                "$ref": "#/$defs/simulation_report/$defs/evidence"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "measurement_validity": {
+          "type": "object",
+          "required": [
+            "status",
+            "scope",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "valid",
+                "invalid",
+                "unknown"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/simulation_report/$defs/scope"
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 258,
+              "items": {
+                "$ref": "#/$defs/simulation_report/$defs/evidence"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "functional_performance": {
+          "type": "object",
+          "required": [
+            "status",
+            "scope",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "pass",
+                "fail",
+                "unknown"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/simulation_report/$defs/scope"
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 258,
+              "items": {
+                "$ref": "#/$defs/simulation_report/$defs/evidence"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "operating_qualification": {
+          "type": "object",
+          "required": [
+            "status",
+            "scope",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "passed_within_scope",
+                "violations_detected",
+                "unknown"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/simulation_report/$defs/scope"
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 258,
+              "items": {
+                "$ref": "#/$defs/simulation_report/$defs/evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "passed_within_scope"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "scope": {
+                    "required": [
+                      "kind",
+                      "scope_id",
+                      "manifest_sha256",
+                      "frozen_before_execution",
+                      "checks",
+                      "log_complete"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "declared_operating_checks"
+                      },
+                      "scope_id": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+                      },
+                      "manifest_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "frozen_before_execution": {
+                        "const": true
+                      },
+                      "checks": {
+                        "minItems": 1
+                      },
+                      "log_complete": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "dependency_provenance": {
+          "type": "object",
+          "required": [
+            "status",
+            "scope",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "verified_within_scope",
+                "incomplete",
+                "mismatch",
+                "unknown"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/simulation_report/$defs/scope"
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 258,
+              "items": {
+                "$ref": "#/$defs/simulation_report/$defs/evidence"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "verified_within_scope"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "scope": {
+                    "required": [
+                      "kind",
+                      "scope_id",
+                      "manifest_sha256",
+                      "run_bound",
+                      "inventory_complete"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "observed_files_with_directory_references"
+                      },
+                      "scope_id": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+                      },
+                      "manifest_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "run_bound": {
+                        "const": true
+                      },
+                      "inventory_complete": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "diagnostics": {
+          "$ref": "#/$defs/simulation_report/$defs/diagnostics"
+        }
+      },
+      "additionalProperties": false,
+      "$defs": {
+        "scope": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "scope_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "manifest_sha256": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "frozen_before_execution": {
+              "type": "boolean"
+            },
+            "checks": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "soa_voltage",
+                  "soa_current",
+                  "model_parameter_range",
+                  "model_bin",
+                  "scale_override"
+                ]
+              }
+            },
+            "log_complete": {
+              "type": "boolean"
+            },
+            "run_bound": {
+              "type": "boolean"
+            },
+            "inventory_complete": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "code",
+            "source",
+            "line_numbers"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+            },
+            "source": {
+              "enum": [
+                "execution_receipt",
+                "acceptance",
+                "spectre_log",
+                "qualification_scope",
+                "dependency_audit"
+              ]
+            },
+            "line_numbers": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2048
+              }
+            },
+            "dependency_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 999999999999999
+            }
+          },
+          "additionalProperties": false
+        },
+        "diagnostics": {
+          "type": "object",
+          "required": [
+            "schema",
+            "observed_context",
+            "diagnostics",
+            "scientific_acceptance",
+            "agent_proposal",
+            "advisory_only"
+          ],
+          "properties": {
+            "schema": {
+              "const": "spiceowl.spectre-diagnostics.v1"
+            },
+            "observed_context": {
+              "type": "object"
+            },
+            "diagnostics": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/simulation_report/$defs/finding"
+              }
+            },
+            "scientific_acceptance": {
+              "$ref": "#/$defs/simulation_report/$defs/acceptance"
+            },
+            "agent_proposal": {
+              "type": "null"
+            },
+            "advisory_only": {
+              "const": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "finding": {
+          "type": "object",
+          "required": [
+            "category",
+            "code",
+            "severity",
+            "evidence_line_numbers",
+            "redacted_excerpt",
+            "suggested_actions"
+          ],
+          "properties": {
+            "category": {
+              "type": "string",
+              "maxLength": 180
+            },
+            "code": {
+              "type": "string",
+              "maxLength": 180
+            },
+            "severity": {
+              "enum": [
+                "error",
+                "warning",
+                "info"
+              ]
+            },
+            "evidence_line_numbers": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "redacted_excerpt": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "suggested_actions": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "maxLength": 500
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "acceptance": {
+          "type": "object",
+          "required": [
+            "execution",
+            "data_validity",
+            "specification"
+          ],
+          "properties": {
+            "execution": {
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "cancelled",
+                "unknown"
+              ]
+            },
+            "data_validity": {
+              "enum": [
+                "valid",
+                "invalid",
+                "unknown"
+              ]
+            },
+            "specification": {
+              "enum": [
+                "pass",
+                "fail",
+                "unknown"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "dependency_provenance": {
+                "properties": {
+                  "status": {
+                    "const": "verified_within_scope"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "run_id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "functional_performance": {
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "pass",
+                      "fail"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "measurement_validity": {
+                "properties": {
+                  "status": {
+                    "const": "valid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

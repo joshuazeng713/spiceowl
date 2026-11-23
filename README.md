@@ -33,10 +33,10 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Native Codex Q&A, fake agent/API management, MCP queries and SSH host/resource checks implemented |
 | Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
-| Validate | Check inputs, required signals, measurement windows, and result completeness | Bounded transient PSF ASCII checks and inverter-specific acceptance; general measurement-window and specification recipes remain planned |
+| Validate | Check inputs, required signals, measurement windows, and result completeness | Registered inverter and prepared-transient recipes with frozen conditions, PSF ASCII coverage and explicit signal-window checks |
 | Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; automatic restart, migration and parameter repair are not implemented |
 | Diagnose | Explain evidence and propose actions | Deterministic Spectre failure classification; native agent Q&A and synthetic diagnosis remain separate |
-| Report | Separate execution outcome, measurement validity, and circuit performance | Real execution/observation/data/specification dimensions, separate synthetic reports and developer smoke reports |
+| Report | Separate execution outcome, measurement validity, and circuit performance | Five independent experiment dimensions: execution, measurement, performance, operating qualification and dependency provenance |
 
 ### A morning report should answer three different questions
 
@@ -94,6 +94,7 @@ spiceowl/
 │   ├── domain/                # Experiment, attempt, receipt, and event models
 │   ├── adapters/              # Execution and simulator integrations
 │   ├── integrations/          # CircuitGit client/pool, diagnostics and PSF ASCII parsing
+│   ├── experiments/           # Source extraction, frozen recipes and deterministic measurements
 │   ├── monitoring/            # Durable observation of existing real runs
 │   ├── validation/            # Input and measurement acceptance checks
 │   ├── recovery/              # Policy evaluation and action proposals
@@ -140,6 +141,8 @@ spiceowl serve --live-client-config /absolute/private/live-client.json
 ```
 
 The [standalone runtime guide](docs/standalone-runtime.md) covers server grants, exact project/configuration/commit identity, explicit submission and collection, and unknown-request lookup. This path executes prepared netlists with remote Spectre without launching Virtuoso or OCEAN. The local client needs no PDK files; licensed models, alias mappings, hash pins and a working simulator license must exist in the remote execution environment when the circuit needs them. Keep the CircuitGit service running for background observation. Current `watch` observes an existing run; it does not automatically collect, restart a solver or change parameters.
+
+For registered experiments, [`spiceowl workflow`](docs/workflow.md) provides a deterministic `prepare → run → inspect` CLI, plus `execute` to wait through collection and five-dimensional reporting. It needs no LLM and preserves the original plan/job/key on timeout or uncertain dispatch. Recipe preparation checks remote dependencies; inspection can collect terminal results. Scientific conditions remain frozen and automatic parameter repair is not implemented.
 
 ## Developer inverter smoke test
 

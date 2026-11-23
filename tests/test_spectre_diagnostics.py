@@ -191,6 +191,115 @@ class SpectreDiagnosticsTests(unittest.TestCase):
         self.assertIsNone(result["agent_proposal"])
         self.assertEqual(set(result), {"schema", "observed_context", "diagnostics", "scientific_acceptance", "agent_proposal", "advisory_only"})
 
+    def test_exact_soa_voltage_codes_are_warnings_not_execution_failures(self):
+        for code in range(2751, 2756):
+            result = self.diagnose(f"WARNING (CMI-{code}): Example terminal limit violation.", state="completed", code=0)
+            self.assertEqual(self.categories(result), ["soa_voltage"])
+            self.assertEqual(result["diagnostics"][0]["evidence_line_numbers"], [1])
+            self.assertEqual(result["scientific_acceptance"]["execution"], "completed")
+        for code in (2750, 2756):
+            self.assertEqual(self.categories(self.diagnose(f"WARNING (CMI-{code}): Example diagnostic.")), ["unknown"])
+
+    def test_explicit_soa_current_voltage_and_negated_messages(self):
+        for message, category in [
+            ("WARNING: SOA terminal current exceeded the maximum limit.", "soa_current"),
+            ("WARNING: Drain current exceeds safe operating area limit.", "soa_current"),
+            ("WARNING: Safe-operating-area voltage violation detected.", "soa_voltage"),
+            ("WARNING: Vgs has exceeded vgs_max.", "soa_voltage"),
+        ]:
+            with self.subTest(message=message):
+                self.assertEqual(self.categories(self.diagnose(message)), [category])
+        for message in ["SOA voltage violation documentation", "WARNING: No SOA voltage violations detected.",
+                        "WARNING: If SOA current exceeds its limit, inspect the model.",
+                        "WARNING: Voltage does not exceed the SOA maximum.",
+                        "WARNING: SOA voltage limit has not been exceeded.",
+                        "WARNING: This is not an SOA voltage violation."]:
+            self.assertNotIn("soa_voltage", self.categories(self.diagnose(message)))
+            self.assertNotIn("soa_current", self.categories(self.diagnose(message)))
+
+    def test_model_geometry_ranges_and_model_bins(self):
+        for message, category in [
+            ("WARNING: channel width is outside the model range.", "parameter_bounds"),
+            ("ERROR: W=5n is less than wmin.", "parameter_bounds"),
+            ("ERROR: length is above the maximum.", "parameter_bounds"),
+            ("ERROR: No valid model bin for W and L.", "model_bin"),
+            ("ERROR: No model matches width and length.", "model_bin"),
+            ("ERROR: Width and length do not fall into any model bin.", "model_bin"),
+        ]:
+            self.assertEqual(self.categories(self.diagnose(message)), [category])
+
+    def test_scalefactor_duplicate_does_not_invent_a_geometry_conflict(self):
+        for message, relation in [
+            ("WARNING (SFE-1131): Scope option scalefactor has also been specified.", "unknown"),
+            ("WARNING: scalefactor=0.9 redefined as scalefactor=0.90.", "same"),
+            ("WARNING: scalefactor=0.9 redefined as scalefactor=1.0.", "conflict"),
+        ]:
+            result = self.diagnose(message, state="completed", code=0)
+            self.assertEqual(self.categories(result), ["scale_override"])
+            self.assertEqual(result["observed_context"]["classification_details"]["scale_override"],
+                             {"duplicate_seen": True, "values_relation": relation})
+            self.assertEqual(result["scientific_acceptance"]["data_validity"], "unknown")
+        self.assertNotIn("scale_override", self.categories(self.diagnose("WARNING (SFE-1131): Scope option temperature has also been specified.")))
+        huge = self.diagnose("WARNING: scalefactor=1e999999999999999999999999999999 redefined as scalefactor=1.")
+        self.assertEqual(huge["observed_context"]["classification_details"]["scale_override"]["values_relation"], "unknown")
+
+    def test_warning_counts_are_observed_separately_without_double_counting(self):
+        footer = "spectre completes with 0 errors, 7 warnings, and 2 notices."
+        result = self.diagnose("13 warnings suppressed.\n13 warnings suppressed.\n" + footer + "\n" + footer)
+        counters = result["observed_context"]["warning_summary"]
+        self.assertEqual(counters, {"reported_errors": 0, "reported_warnings": 7, "reported_notices": 2,
+            "suppressed_warnings": 13, "footer_line_numbers": [3, 4], "suppression_line_numbers": [1, 2], "count_conflict": False})
+        self.assertEqual(self.categories(result), ["warnings_suppressed"])
+        inconsistent = self.diagnose("13 warnings suppressed.\n14 warnings suppressed.\n" + footer + "\nspectre completes with 1 error, 7 warnings.")
+        self.assertTrue(inconsistent["observed_context"]["warning_summary"]["count_conflict"])
+        self.assertIsNone(inconsistent["observed_context"]["warning_summary"]["suppressed_warnings"])
+        self.assertIsNone(inconsistent["observed_context"]["warning_summary"]["reported_errors"])
+
+    def test_prefixed_suppression_messages_keep_the_same_observed_count(self):
+        for prefix in ["", "WARNING: ", "NOTICE: ", "spectre: WARNING: ", "WARNING (SPECTRE-9999): "]:
+            with self.subTest(prefix=prefix):
+                result = self.diagnose(prefix + "25 warnings suppressed.", state="completed", code=0)
+                self.assertEqual(result["observed_context"]["warning_summary"]["suppressed_warnings"], 25)
+                self.assertIn("warnings_suppressed", self.categories(result))
+
+    def test_canonical_coverage_deduplicates_records_and_preserves_no_private_text(self):
+        result = self.diagnose("Warning from spectre during circuit read-in.\n"
+                               "    WARNING (SPECTRE-9999): PRIVATE_DEVICE arbitrary diagnostic.\n"
+                               "    WARNING (SPECTRE-9999): PRIVATE_DEVICE arbitrary diagnostic.\n"
+                               "ERROR: PRIVATE_ERROR.\n"
+                               "spectre completes with 1 error, 1 warning, and 0 notices.")
+        coverage = result["observed_context"]["diagnostic_coverage"]
+        self.assertEqual(coverage["observed_warnings"], 1)
+        self.assertEqual(coverage["observed_errors"], 1)
+        self.assertEqual(coverage["duplicate_record_count"], 1)
+        self.assertEqual(coverage["warning_line_numbers"], [2])
+        self.assertFalse(coverage["structure_complete"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+
+    def test_only_complete_fixed_countdown_is_progress_instead_of_truncation(self):
+        progress = ''.join('......' + str(number) for number in range(9, -1, -1))
+        footer = 'spectre completes with 0 errors, 0 warnings, and 0 notices.'
+        for line in [progress, '  ' + progress + '  ']:
+            coverage = self.diagnose(line + '\n' + footer)['observed_context']['diagnostic_coverage']
+            self.assertTrue(coverage['structure_complete'])
+            self.assertEqual(coverage['coverage_gap_line_numbers'], [])
+        for line in ['...', '[truncated]', progress[:-7], progress + '...',
+                     progress.replace('......5', '......4'), progress.replace('......', '...', 1),
+                     progress + ' omitted text']:
+            with self.subTest(line=line):
+                coverage = self.diagnose(line + '\n' + footer)['observed_context']['diagnostic_coverage']
+                self.assertFalse(coverage['structure_complete'])
+                self.assertEqual(coverage['coverage_gap_line_numbers'], [1])
+
+    def test_new_categories_never_export_paths_instance_names_or_instructions(self):
+        result = self.diagnose("WARNING (CMI-2752): PRIVATE_DEVICE Vgs exceeded vgs_max in /PRIVATE/model.scs\n"
+                               "WARNING (SFE-1131): scalefactor in /PRIVATE/setup.scs also been specified.\n"
+                               "2 warnings suppressed.")
+        encoded = json.dumps(result)
+        self.assertNotIn("PRIVATE", encoded)
+        self.assertNotIn("/PRIVATE", encoded)
+        self.assertIsNone(result["agent_proposal"])
+
 
 if __name__ == "__main__":
     unittest.main()

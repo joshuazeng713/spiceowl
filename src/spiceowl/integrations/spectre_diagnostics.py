@@ -28,6 +28,16 @@ _ACTIONS = {
                "Prepare a reviewed source correction before creating another run."),
     "parameter_bounds": ("Check parameter units and the documented model operating range.",
                          "Review the original bounds before proposing any parameter change."),
+    "soa_voltage": ("Inspect the cited terminal-voltage violation against the selected model's SOA limits.",
+                    "Keep the original bias and model settings in this result; review any new experiment separately."),
+    "soa_current": ("Inspect the cited terminal-current violation against the selected model's SOA limits.",
+                    "A completed simulation does not establish operating qualification."),
+    "model_bin": ("Check the original width, length and geometry against the selected model bins.",
+                  "Do not substitute a model or change geometry merely to remove the diagnostic."),
+    "scale_override": ("Inspect duplicate scalefactor declarations and the effective selected configuration.",
+                       "A duplicate declaration alone does not prove conflicting values or changed device geometry."),
+    "warnings_suppressed": ("Retain the reported suppression count separately from the footer warning count.",
+                            "Suppressed messages limit conclusions based on the absence of diagnostics."),
     "convergence": ("Inspect the operating point, floating nodes, initial conditions and model compatibility.",
                     "Review numerical-setting changes separately from scientific acceptance criteria."),
     "oom": ("Inspect this run's memory limit and its frozen input size.",
@@ -51,7 +61,24 @@ _PATTERNS = {
     "parameter_bounds": re.compile(
         r"\bparameter\b.{0,160}\b(?:out of range|outside (?:the )?(?:allowed |valid )?range|range violation|out of bounds)\b"
         r"|\bparameter\b.{0,160}\b(?:must|should) be (?:positive|nonnegative|non-negative|greater|less)\b"
-        r"|\bparameter\b.{0,160}\b(?:below (?:the )?minimum|above (?:the )?maximum)\b", re.I),
+        r"|\bparameter\b.{0,160}\b(?:below (?:the )?minimum|above (?:the )?maximum)\b"
+        r"|\b(?:width|length|weff|leff|w|l)\b.{0,120}\b(?:out of range|out of bounds|outside (?:the )?(?:valid |allowed |model )?range|below (?:the )?minimum|above (?:the )?maximum)\b"
+        r"|\b(?:width|length|weff|leff|w|l)\b.{0,80}\b(?:less than|greater than|below|above)\b.{0,40}\b(?:wmin|wmax|lmin|lmax)\b", re.I),
+    "soa_voltage": re.compile(
+        r"\bCMI-275[1-5]\b"
+        r"|(?=.{0,1000}\b(?:SOA|safe[- ]operating[- ]area)\b)(?=.{0,1000}\b(?:voltage|vgs|vds|vgd|vgb|vbs|vbd|overvoltage)\b).{0,1000}\b(?:exceeded|exceeds|above|outside|violation|violated)\b"
+        r"|\bv(?:gs|ds|gd|gb|bs|bd)\b.{0,160}\b(?:exceeded|exceeds)\b.{0,80}\bv(?:gs|ds|gd|gb|bs|bd)_max\b", re.I),
+    "soa_current": re.compile(
+        r"(?=.{0,1000}\b(?:SOA|safe[- ]operating[- ]area)\b)(?=.{0,1000}\b(?:current|ids|id|ig|is|ib|overcurrent)\b).{0,1000}\b(?:exceeded|exceeds|above|outside|violation|violated)\b"
+        r"|\bi(?:ds|d|g|s|b)\b.{0,160}\b(?:exceeded|exceeds)\b.{0,80}\bi(?:ds|d|g|s|b)_max\b", re.I),
+    "model_bin": re.compile(
+        r"\b(?:no|cannot find|could not find|unable to find)\b.{0,100}\b(?:model\s+)?bin\b"
+        r"|\b(?:model[- ]bin|binning)\b.{0,120}\b(?:not found|out of range|no matching|failed)\b"
+        r"|\bno\b.{0,60}\bmodel\b.{0,60}\bmatches\b.{0,100}\b(?:width|length|geometry|w|l)\b"
+        r"|\b(?:width|length|w|l)\b.{0,120}\b(?:outside|out of|do not fall|does not fall|do not fit|does not fit)\b.{0,100}\b(?:model\s+)?bins?\b", re.I),
+    "scale_override": re.compile(
+        r"\bSFE-1131\b(?=.{0,500}\bscalefactor\b)"
+        r"|\bscalefactor\b.{0,200}\b(?:redefined|duplicate|overridden|also been specified|specified again)\b", re.I),
     "convergence": re.compile(
         r"\bSPECTRE-(?:16080|11005)\b|\bno (?:DC )?solution found\b|\bno convergence\b"
         r"|\b(?:did not|failed to) converge\b|\bconvergence (?:failed|failure)\b"
@@ -64,12 +91,136 @@ _NEGATED_OOM = re.compile(
     r"\b(?:no|not|without)\s+(?:an?\s+)?(?:out[- ]of[- ]memory|memory allocation (?:failed|failure))\b"
     r"|\b(?:if|unless)\b.{0,80}\b(?:out[- ]of[- ]memory|memory allocation (?:failed|failure))\b", re.I)
 _SENSITIVE = re.compile(r"[/\\@]|licen[cs]|\b(?:password|secret|token|credential|authorization)\b|CDS_LIC|LM_LIC", re.I)
-_VENDOR_CODE = re.compile(r"\b(?:SFE-(?:23|874)|SPECTRE-(?:16080|11005))\b", re.I)
+_VENDOR_CODE = re.compile(r"\b(?:SFE-(?:23|874|1131)|CMI-275[1-5]|SPECTRE-(?:16080|11005))\b", re.I)
+_NEGATED_QUALIFICATION = re.compile(
+    r"\b(?:no|without)\b.{0,32}\b(?:violations?|overvoltage|overcurrent|out of range)\b"
+    r"|\b(?:has not|did not|does not|do not|not)\s+(?:been\s+)?exceed(?:ed|s)?\b"
+    r"|\bnot\s+(?:an?\s+)?(?:SOA\s+)?(?:(?:voltage|current)\s+)?(?:limit\s+)?violation\b"
+    r"|\b(?:if|unless)\b.{0,80}\b(?:exceeds?|out of range|violation)\b", re.I)
+_SUPPRESSED = re.compile(
+    r"^\s*(?:(?:spectre|simerror)\s*:\s*)?"
+    r"(?:(?:warning|notice)(?:\s+\([A-Za-z][A-Za-z0-9]*-[0-9]+\))?\s*:\s*)?"
+    r"([0-9]{1,15})\s+warnings?\s+suppressed[.!]?\s*$", re.I)
+_FOOTER = re.compile(r"^\s*spectre completes with ([0-9]{1,15}) errors?, ([0-9]{1,15}) warnings?(?:,? and ([0-9]{1,15}) notices?)?\.\s*$", re.I)
+_CANONICAL_MESSAGE = re.compile(
+    r"^\s*(?:(?:spectre|simerror)\s*:\s*)?(error|fatal(?: error)?|warning|notice)"
+    r"(?:\s+\(([A-Za-z][A-Za-z0-9]*-[0-9]+)\))?\s*:\s*(.*?)\s*$", re.I)
+_CONTEXT_HEADER = re.compile(
+    r"^\s*(error|fatal(?: error)?|warning|notice)\s+(?:from spectre|found by spectre)\b.*$", re.I)
+_TRUNCATION = re.compile(r"^\s*(?:\[?(?:log |output )?truncated\]?|<truncated>|\.\.\.|…).*$", re.I)
+# Only the complete fixed Spectre countdown is progress, not omitted evidence.
+_COMPLETE_PROGRESS = re.compile(r"\s*\.{6}9\.{6}8\.{6}7\.{6}6\.{6}5\.{6}4\.{6}3\.{6}2\.{6}1\.{6}0\s*")
+_SCALE_VALUE = re.compile(r"\bscalefactor\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\b", re.I)
 _SAFE_WORDS = frozenset("""error fatal warning notice spectre syntax unexpected end of line file token equals
     undefined model subcircuit instance is referencing not found defined no dc solution convergence failed failure
     did converge matrix singular time step too small below minimum above maximum parameter outside the allowed
     valid range violation out bounds must should be positive nonnegative greater less memory allocation cannot
     allocate detected at during circuit read in flattening""".split())
+
+
+def _warning_summary(lines):
+    """Report observed counters independently; repeated excerpts are not summed."""
+    footers, suppression, footer_lines, suppression_lines = [], [], [], []
+    for number, line in enumerate(lines, 1):
+        footer, suppressed = _FOOTER.fullmatch(line), _SUPPRESSED.fullmatch(line)
+        if footer:
+            footers.append(tuple(int(x) if x is not None else None for x in footer.groups()))
+            footer_lines.append(number)
+        if suppressed:
+            suppression.append(int(suppressed[1])); suppression_lines.append(number)
+    unique_footer, unique_suppression = set(footers), set(suppression)
+    counts = next(iter(unique_footer)) if len(unique_footer) == 1 else (None, None, None)
+    return {"reported_errors": counts[0], "reported_warnings": counts[1], "reported_notices": counts[2],
+            "suppressed_warnings": next(iter(unique_suppression)) if len(unique_suppression) == 1 else None,
+            "footer_line_numbers": footer_lines[:MAX_EVIDENCE_LINES],
+            "suppression_line_numbers": suppression_lines[:MAX_EVIDENCE_LINES],
+            "count_conflict": len(unique_footer) > 1 or len(unique_suppression) > 1}
+
+
+def _diagnostic_coverage(lines):
+    """Count distinct diagnostic bodies, never a Spectre context header twice.
+
+    The legacy classifier inspects a header and its immediate indented body.
+    Longer continuations, unparsed headers, duplicates and truncation therefore
+    remain explicit coverage gaps for an absence-based qualification verdict.
+    Canonical text is used only for in-memory deduplication and is not exported.
+    """
+    records, consumed, gaps, footer_lines = {}, set(), [], []
+    duplicates, after_footer = 0, False
+    counts = {"error": 0, "warning": 0, "notice": 0}
+    body_lines = {key: [] for key in counts}
+    for index, line in enumerate(lines):
+        if _FOOTER.fullmatch(line):
+            footer_lines.append(index + 1)
+            continue
+        if ((_TRUNCATION.match(line) and not _COMPLETE_PROGRESS.fullmatch(line))
+                or re.match(r"^\s*spectre completes\b", line, re.I)):
+            gaps.append(index + 1)
+        if index in consumed:
+            continue
+        canonical, context = _CANONICAL_MESSAGE.fullmatch(line), _CONTEXT_HEADER.fullmatch(line)
+        if context:
+            following = lines[index + 1] if index + 1 < len(lines) else ""
+            if _CANONICAL_MESSAGE.fullmatch(following):
+                # "Warning from spectre ..." merely introduces the next record.
+                continue
+            # The classifier still observes an immediate uncoded body, but a
+            # context-only shape cannot establish complete canonical coverage.
+            gaps.append(index + 1)
+            continue
+        elif canonical:
+            severity, identity, body_index = canonical[1], (canonical[2] or "") + ":" + canonical[3], index
+            following = lines[index + 1] if index + 1 < len(lines) else ""
+            if following.strip() and following[:1].isspace() and not _MESSAGE.match(following) and not _FOOTER.fullmatch(following):
+                identity += " " + following.strip()
+                body_index = index + 1
+                consumed.add(body_index)
+            if not canonical[3] and body_index == index:
+                gaps.append(index + 1)
+        elif _EXPLICIT_OOM.fullmatch(line):
+            severity, identity, body_index = "error", line.strip(), index
+        else:
+            if _MESSAGE.match(line):
+                gaps.append(index + 1)
+            continue
+        following = lines[body_index + 1] if body_index + 1 < len(lines) else ""
+        if following.strip() and following[:1].isspace() and not _MESSAGE.match(following) and not _FOOTER.fullmatch(following):
+            gaps.append(body_index + 2)
+        severity = severity.lower()
+        severity = "error" if severity.startswith("fatal") else severity
+        key = (severity, " ".join(identity.split()))
+        if key in records:
+            duplicates += 1
+        else:
+            records[key] = index + 1
+            counts[severity] += 1
+            body_lines[severity].append(body_index + 1)
+        if footer_lines:
+            after_footer = True
+    return {"observed_errors": counts["error"], "observed_warnings": counts["warning"],
+            "observed_notices": counts["notice"], "completion_footer_count": len(footer_lines),
+            "duplicate_record_count": duplicates, "coverage_gap_line_numbers": sorted(set(gaps))[:MAX_EVIDENCE_LINES],
+            "records_after_footer": after_footer,
+            "structure_complete": not gaps and not duplicates and not after_footer,
+            "error_line_numbers": body_lines["error"][:MAX_EVIDENCE_LINES],
+            "warning_line_numbers": body_lines["warning"][:MAX_EVIDENCE_LINES],
+            "notice_line_numbers": body_lines["notice"][:MAX_EVIDENCE_LINES]}
+
+
+def _scale_relation(lines, numbers):
+    relations = []
+    for number in numbers:
+        values = _SCALE_VALUE.findall(lines[number-1])
+        if len(values) < 2:
+            relations.append("unknown")
+        else:
+            # Comparison only: model values are never exported in public prose.
+            from decimal import Decimal, DecimalException
+            try:
+                relations.append("same" if len({Decimal(value) for value in values}) == 1 else "conflict")
+            except (DecimalException, OverflowError, ValueError):
+                relations.append("unknown")
+    return "conflict" if "conflict" in relations else "unknown" if "unknown" in relations else "same"
 
 
 def _invalid(message="Invalid or oversized Spectre diagnostic evidence."):
@@ -158,8 +309,11 @@ def diagnose_spectre(log_text, *, execution_state, exit_code, acceptance=None, o
     accepted, acceptance_source = _acceptance(acceptance)
     oom, confirmed_oom = _oom_evidence(oom_evidence)
     matches = {}
+    warnings = _warning_summary(lines)
     previous_severity = None
     for number, line in enumerate(lines, 1):
+        if _SUPPRESSED.fullmatch(line) and int(_SUPPRESSED.fullmatch(line)[1]) > 0:
+            matches.setdefault("warnings_suppressed", {"severity": "warning", "lines": []})["lines"].append(number)
         header = _MESSAGE.match(line)
         severity = ("warning" if header and header[1].lower() in {"warning", "notice"} else "error")
         # Spectre emits an error header followed by an indented message. Limit
@@ -173,6 +327,8 @@ def diagnose_spectre(log_text, *, execution_state, exit_code, acceptance=None, o
             continue
         for category, pattern in _PATTERNS.items():
             if pattern.search(line):
+                if category in {"soa_voltage", "soa_current", "parameter_bounds"} and _NEGATED_QUALIFICATION.search(line):
+                    continue
                 if category == "oom" and (severity != "error" or _NEGATED_OOM.search(line)):
                     continue
                 entry = matches.setdefault(category, {"severity": severity, "lines": []})
@@ -199,9 +355,15 @@ def diagnose_spectre(log_text, *, execution_state, exit_code, acceptance=None, o
             or execution_state in {"queued", "running"} and exit_code is not None
             or execution_state == "failed" and exit_code == 0):
         execution = "unknown"
+    details = {}
+    if "scale_override" in matches:
+        details["scale_override"] = {"duplicate_seen": True,
+                                     "values_relation": _scale_relation(lines, matches["scale_override"]["lines"])}
     return {"schema": SCHEMA,
             "observed_context": {"execution_state": execution_state, "exit_code": exit_code,
                 "log_line_count": len(lines), "log_bytes": byte_count, "log_scope": "caller_supplied_segment",
-                "acceptance_source": acceptance_source, "oom_evidence": oom},
+                "acceptance_source": acceptance_source, "oom_evidence": oom,
+                "warning_summary": warnings, "diagnostic_coverage": _diagnostic_coverage(lines),
+                "classification_details": details},
             "diagnostics": diagnostics, "scientific_acceptance": {"execution": execution, **accepted},
             "agent_proposal": None, "advisory_only": True}

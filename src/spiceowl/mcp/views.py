@@ -179,12 +179,20 @@ def _ic_hash(value, size=64):
 
 
 def _ic_summary(record):
+    context = {}
+    for name in ("library_id", "cell_id"):
+        if name in record:
+            value = record[name]
+            if value is not None and (not isinstance(value, str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value)):
+                raise DomainError("A stored IC library/cell identifier is invalid.", "storage_record")
+            context[name] = value
     raw_execution = record.get("execution") if isinstance(record.get("execution"), dict) else {}
     raw_data = record.get("data") if isinstance(record.get("data"), dict) else {}
     raw_specification = record.get("specification") if isinstance(record.get("specification"), dict) else {}
     raw_state = raw_execution.get("raw_state")
     native_state = raw_state if isinstance(raw_state, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", raw_state) else None
-    return {"run_id": require_ic_run_id(record.get("run_id")), "gateway_id": _id(record.get("gateway_id")),
+    return {**context, "run_id": require_ic_run_id(record.get("run_id")), "gateway_id": _id(record.get("gateway_id")),
             "project_id": _text(record.get("project_id"), 180), "original_project_id": _text(record.get("original_project_id"), 240),
             "association_basis": _enum(record.get("association_basis"), {"recorded_project_id", "recorded_plan_design_id"}),
             "source_commit": _ic_hash(record.get("source_commit"), 40),

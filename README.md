@@ -149,6 +149,8 @@ Keep `.spiceowl/smoke/` private. The original educational models represent no fa
 
 SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three optional MCP tools expose the local cache to agents. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. This does not enable continuous monitoring or automatic recovery. See the [IC Workbench integration guide](docs/ic-workbench.md).
 
+CircuitGit can reference the [versioned external integration profile](docs/circuitgit-integration.md) to carry optional historical library/cell IDs through saved run records. SpiceOwl stays in its own repository and retains the same read-only integration boundary.
+
 ## Contributing
 
 We welcome analog designers, CAD engineers, and developers working on reliable scientific computing. Useful first contributions include sanitized failure cases, measurement validators, and small implementations with failure-injection tests.

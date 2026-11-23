@@ -28,7 +28,7 @@ MAX_CACHED_RUNS = 100
 ARTIFACT_NAMES = frozenset({"full-results.tar.gz", "result-summary.json", "archive-files.json",
                             "latest-status.log", "waveforms.csv", "waveforms.json", "waveforms.png"})
 IDENTITY_FIELDS = frozenset({"run_id", "project_id", "original_project_id", "source_commit",
-                             "configuration", "compiled_inputs_sha256"})
+                             "configuration", "compiled_inputs_sha256", "library_id", "cell_id"})
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
@@ -95,8 +95,9 @@ def _check(condition, *, identity=False):
                           "ic_gateway_identity" if identity else "ic_gateway_protocol")
 
 
-def _fields(value, names):
-    _check(isinstance(value, dict) and set(value) == set(names.split()))
+def _fields(value, names, optional=""):
+    required = set(names.split())
+    _check(isinstance(value, dict) and required <= set(value) <= required | set(optional.split()))
 
 
 def _enum(value, choices):
@@ -129,7 +130,10 @@ def validate_run(data, project_id, expected=None):
     """Validate IC's frozen v1 projection without inventing missing evidence."""
     _fields(data, "run_id project_id original_project_id association_basis source_commit configuration "
                   "compiled_inputs_sha256 state execution observation data specification latest_observed_at "
-                  "record_updated_at issues waveform_run_id artifacts")
+                  "record_updated_at issues waveform_run_id artifacts", optional="library_id cell_id")
+    for name in ("library_id", "cell_id"):
+        value = data.get(name)
+        _check(value is None or isinstance(value, str) and _PROJECT.fullmatch(value), identity=True)
     _check(isinstance(data["run_id"], str) and re.fullmatch(r"[A-Za-z0-9_-]{1,180}", data["run_id"]), identity=True)
     for name in ("project_id", "original_project_id", "configuration", "state", "latest_observed_at", "record_updated_at", "waveform_run_id"):
         _text(data[name])
@@ -201,7 +205,7 @@ def validate_run(data, project_id, expected=None):
     if expected is not None:
         _check(isinstance(expected, dict) and set(expected) <= IDENTITY_FIELDS, identity=True)
         for key, value in expected.items():
-            _check(data[key] == value, identity=True)
+            _check(data.get(key) == value, identity=True)
     return copy.deepcopy(data)
 
 
@@ -389,8 +393,8 @@ class ICGatewayBackend:
             # New explicit evidence can fill a historical null; known identity
             # cannot change or disappear on a later gateway read.
             for field in IDENTITY_FIELDS:
-                if prior[field] is not None:
-                    _check(prior[field] == run[field], identity=True)
+                if prior.get(field) is not None:
+                    _check(prior[field] == run.get(field), identity=True)
         observation = run["observation"] | {"source_state": run["observation"]["state"],
             "checked_at": checked_at, "last_success_at": checked_at, "error": None}
         projection = run | {"schema": "spiceowl.ic-run.v1", "gateway_id": gateway_id,

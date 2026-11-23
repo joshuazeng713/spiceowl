@@ -1,6 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "ic.spiceowl-supervision.v1",
+  "x-contract-version": "1.1.0",
+  "x-library-context-profile": "spiceowl.circuitgit-library-context.v1",
   "title": "IC Workbench stored supervision and submission lookup",
   "oneOf": [{"$ref": "#/$defs/snapshot"}, {"$ref": "#/$defs/lookup"}],
   "x-http": {
@@ -12,12 +14,14 @@
     "prepare_reuse": "Use the installed IC MCP ic_sim_submit(project_id,configuration,source_commit,idempotency_key) with its existing configured Service ledger. It only prepares a pending_approval request. Query ic_request_status(request_id); human review stays in ic_request_review. No machine approval endpoint is added.",
     "timestamps": "read_at is this read time. observed_at/latest_observed_at are original recorded observations and are never replaced by read_at.",
     "legacy_identity": "project_id is the registered association: recorded project_id if registered, otherwise recorded plan.design_id if registered. original_project_id preserves the record. source_commit and compiled_inputs_sha256 are recorded values, never rebound to current HEAD or recomputed for legacy runs. Missing evidence remains null.",
+    "library_context": "Optional library_id/cell_id are explicit historical run associations, never inferred from the current registry or paths. Omitted/null means unknown. Known cached associations cannot change or disappear. No library discovery, source access or execution authority is granted. Older strict v1 consumers require both fields omitted; pin a consumer supporting revision 1.1.0 before emitting them.",
     "artifact_identity": "Metadata only; recorded digests are not freshly verified. waveform_run_id is non-null only when the bounded stored waveforms.json binds the same run_id and source_commit. No current schematic mapping is inferred.",
     "unknown_lookup": "Returns HTTP 200 with found:false, run_id:null, run:null. This does not authorize resubmission of an uncertain operation."
   },
   "$defs": {
     "nullable_text": {"type": ["string", "null"], "maxLength": 240},
     "nullable_hash": {"anyOf": [{"type": "string", "pattern": "^[a-f0-9]{64}$"}, {"type": "null"}]},
+    "nullable_library_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9]", "not": {"pattern": "[^A-Za-z0-9_.-]"}}, {"type": "null"}]},
     "artifact": {
       "type": "object", "additionalProperties": false,
       "required": ["name", "bytes", "sha256", "url", "digest_source"],
@@ -42,6 +46,7 @@
       "properties": {
         "run_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,180}$"},
         "project_id": {"$ref": "#/$defs/nullable_text"}, "original_project_id": {"$ref": "#/$defs/nullable_text"},
+        "library_id": {"$ref": "#/$defs/nullable_library_id"}, "cell_id": {"$ref": "#/$defs/nullable_library_id"},
         "association_basis": {"enum": ["recorded_project_id", "recorded_plan_design_id", "unregistered"]},
         "source_commit": {"anyOf": [{"type": "string", "pattern": "^[a-f0-9]{40}$"}, {"type": "null"}]},
         "configuration": {"$ref": "#/$defs/nullable_text"}, "compiled_inputs_sha256": {"$ref": "#/$defs/nullable_hash"},

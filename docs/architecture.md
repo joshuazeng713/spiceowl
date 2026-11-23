@@ -1,6 +1,14 @@
 # Architecture
 
-Status: a local console with separate synthetic demos and an optional [real standalone Spectre runtime](standalone-runtime.md). CLI and web share one signed client to CircuitGit’s existing Runner. SpiceOwl supplies host-pool checks, durable existing-run monitoring, Spectre diagnostics and PSF ASCII parsing; CircuitGit retains materialization, run/submission identity, remote execution and native collection. Automatic solver restart, parameter repair and general scientific measurement recipes remain planned. The [local console](local-console.md), [server pool](server-pool.md), [native Q&A](native-agent.md), passive [IC cache](ic-workbench.md) and separate [developer inverter smoke](../examples/inverter/README.md) retain their documented scopes.
+Status: a local console with separate synthetic demos and an optional [real standalone Spectre runtime](standalone-runtime.md). CLI and web share one signed client to CircuitGit’s existing Runner. SpiceOwl supplies host-pool checks, durable existing-run monitoring, Spectre diagnostics and PSF ASCII parsing; CircuitGit retains materialization, run/submission identity, remote execution and native collection. Automatic solver restart, parameter repair and automatic discovery of scientific intent remain planned. The [local console](local-console.md), [server pool](server-pool.md), [native Q&A](native-agent.md), passive [IC cache](ic-workbench.md) and separate [developer inverter smoke](../examples/inverter/README.md) retain their documented scopes.
+
+The [authored-TB compiler](agent-testbench.md) validates a finite grammar and
+preserves supplied electrical source and criteria. The [PDK LUT](pdk-lut.md)
+stores scoped observations without treating cache age as a current dependency
+audit. Optional [ADC algorithms](adctools.md) take explicit sample arrays, units
+and measurement definitions. CircuitGit binds these algorithms to full saved run
+data and owns human review and execution. The generic recipe does not reuse an
+inverter measurement or execute arbitrary authored postprocessing scripts.
 
 The connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific version probes. Private profiles and explicit pool members can be registered through the CLI or [browser onboarding](host-onboarding.md); listing never probes a server. MCP clients query existing SQLite records through an independent read-only connection, without starting a controller or recovering its active turns. The separate native Q&A adapter sends text to an ephemeral Codex thread with restricted tools and preserves uncertain request outcomes. See the [P0.2 contract](contracts/p02-connectivity.md) and [P0.3 contract](contracts/p03-pool-agent.md).
 

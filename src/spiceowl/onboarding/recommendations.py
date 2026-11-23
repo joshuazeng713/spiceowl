@@ -300,7 +300,7 @@ def _tmi(candidate, remote_platform):
     return field
 
 
-def recommend_onboarding(discovery, requirements, remote_platform=None, *, preset='inverter_smoke'):
+def _recommend(discovery, requirements, remote_platform=None, *, preset='inverter_smoke', with_intent=True):
     """Rank observed candidates and return overridable, non-executing drafts."""
     requirements = _requirements(requirements)
     try: profile_suggestions(discovery)
@@ -317,7 +317,8 @@ def recommend_onboarding(discovery, requirements, remote_platform=None, *, prese
             if sections['model_contract_scope_expanded']:
                 field['basis'].append(_basis('additional_sections_need_contract_revalidation', 'inference',
                     original_candidate_scope_only=True, fresh_audit_required=True))
-        intent = suggest_intent(requirements, candidate, preset=preset); tmi = _tmi(candidate, remote_platform)
+        intent = suggest_intent(requirements, candidate, preset=preset) if with_intent else None
+        tmi = _tmi(candidate, remote_platform)
         coverage = candidate.get('master_coverage', [])
         if not isinstance(coverage, list) or len(coverage) > 128 or any(not isinstance(name, str) for name in coverage): _invalid()
         complete = (required <= set(coverage) and candidate.get('coverage_complete') is True
@@ -339,22 +340,41 @@ def recommend_onboarding(discovery, requirements, remote_platform=None, *, prese
             add(8, 'no_observed_incoming_include', 'heuristic', top_level_entry_proven=False)
         verified = sum(field['auto_prefill_allowed'] for field in contracts.values())
         add(min(30, verified * 10), 'source_backed_required_contracts', verified_count=verified)
+        wrapper_count = sum(model.get('name') in required and model.get('confidence') == 'verified'
+            and model.get('suggestion_basis') == 'single_mos_bijective_wrapper'
+            for model in candidate.get('models', []) if isinstance(model, dict))
+        if usage and complete and wrapper_count == len(required) and required:
+            add(20, 'source_backed_required_wrapper_usage', required_wrapper_count=wrapper_count)
         corner = _corner_class(candidate['section_candidates'])
         add({'typical': 25, 'statistical': -25, 'extreme': -10, 'unspecified': 0}[corner], 'section_name_convention', 'heuristic', corner_class=corner,
             process_corner_qualification_proven=False)
         if sections['model_contract_scope_expanded']: add(3, 'observed_optional_prelude', 'heuristic')
+        if usage and complete and corner == 'typical' and sections['model_contract_scope_expanded']:
+            add(30, 'observed_prelude_typical_usage', 'heuristic',
+                setup_necessity_proven=False, final_combination_requires_audit=True)
         name = PurePosixPath(str(candidate.get('entry_path', ''))).name
         if re.search(r'(?i)(^|[_\-.])(usage|entry)([_\-.]|$)', name): add(2, 'filename_entry_convention', 'heuristic')
-        if intent['fields']['supply_v']['confidence'] == 'observed': add(5, 'explicit_nominal_voltage_evidence')
+        # Device/entry labels only assist ordering after actual required closure
+        # evidence. In particular, voltage-looking filenames establish no Vdd.
+        family_names = {'core', 'ulvt', 'lvt', 'svt', 'hvt', 'io'}
+        required_hints = {token for master in required for token in re.split(r'[_.$:+-]', master.lower())} & family_names
+        entry_hints = set(re.split(r'[_\-.]', name.lower())) & family_names
+        if complete and required_hints & entry_hints:
+            add(8, 'required_model_entry_name_hint', 'heuristic',
+                matching_tokens=sorted(required_hints & entry_hints), device_family_proven=False)
+        if 'io' in entry_hints and required_hints - {'io'} and 'io' not in required_hints:
+            add(-8, 'unmatched_io_entry_name_hint', 'heuristic', device_incompatibility_proven=False)
+        if intent and intent['fields']['supply_v']['confidence'] == 'observed': add(5, 'explicit_nominal_voltage_evidence')
         if conflict: add(-2000, 'conflicting_model_contracts')
-        if intent['status'] == 'blocked': add(-2000, 'declared_voltage_incompatibility')
-        missing = [gap for field in contracts.values() for gap in field['missing']] + tmi['missing'] + intent['missing']
+        if intent and intent['status'] == 'blocked': add(-2000, 'declared_voltage_incompatibility')
+        missing = [gap for field in contracts.values() for gap in field['missing']] + tmi['missing'] + (intent['missing'] if intent else [])
         if not complete: missing.append(_issue('candidate', 'model_closure_incomplete', 'Resolve this candidate dependency closure before a fresh audit.'))
         ranked.append({'candidate_id': candidate['candidate_id'], 'label': name, 'entry_role': candidate.get('entry_role'), 'score': score, 'rank_basis': basis,
-            'eligible_for_recommendation': complete and not conflict and intent['status'] != 'blocked',
-            'sections': sections, 'model_contracts': contracts, 'tmi_relative_library': tmi, 'intent': intent,
+            'eligible_for_recommendation': complete and not conflict and (not intent or intent['status'] != 'blocked'),
+            'sections': sections, 'model_contracts': contracts, 'tmi_relative_library': tmi,
             'corner_class': corner, 'dependency_file_count': len(candidate.get('dependency_paths', [])),
             'missing': missing, 'ready_to_run': False, 'fresh_audit_required': True})
+        if intent is not None: ranked[-1]['intent'] = intent
     if len({row['candidate_id'] for row in ranked}) != len(ranked): _invalid()
     def policy_key(row):
         return (-int(row['entry_role'] == 'include_entry_candidate'), -int(row['sections']['model_contract_scope_expanded']),
@@ -370,24 +390,28 @@ def recommend_onboarding(discovery, requirements, remote_platform=None, *, prese
         all_verified = all(row['model_contracts'] and all(field['auto_prefill_allowed'] for field in row['model_contracts'].values()) for row in tied)
         corners = {row['corner_class'] for row in tied}
         same_sections = len({tuple(row['sections']['value']) for row in tied}) == 1
-        supplies = {row['intent']['fields']['supply_v']['value'] for row in tied}
-        known_limits = {row['intent']['fields']['supply_v']['declared_upper_bound_v'] for row in tied if 'declared_upper_bound_v' in row['intent']['fields']['supply_v']}
+        supplies = {row['intent']['fields']['supply_v']['value'] for row in tied} if with_intent else set()
+        known_limits = {row['intent']['fields']['supply_v']['declared_upper_bound_v'] for row in tied
+            if 'declared_upper_bound_v' in row['intent']['fields']['supply_v']} if with_intent else set()
+        compatible_intent = (len(supplies) == 1 and None not in supplies and len(known_limits) <= 1
+            and all(row['intent']['status'] == 'suggested' for row in tied)) if with_intent else True
         compatible = (all_verified and len(set(signatures)) == 1 and len(corners) == 1 and 'unspecified' not in corners
             and (corners == {'typical'} or same_sections)
-            and len(supplies) == 1 and None not in supplies and len(known_limits) <= 1
-            and all(row['intent']['status'] == 'suggested' for row in tied))
+            and compatible_intent)
         if compatible:
             selected = min(tied, key=policy_key); confidence = 'policy_default'; equivalent_unknown = True
             choice_basis.append(_basis('compatible_draft_policy_default', 'policy_default',
                 ordering=['entry_role', 'observed_prelude', 'smaller_dependency_closure', 'basename', 'candidate_id'],
-                model_equivalence_proven=False, foundry_qualification_proven=False))
+                model_equivalence_proven=False, foundry_qualification_proven=False,
+                operating_conditions_assessed=with_intent))
     if selected and confidence == 'inferred': choice_basis = copy.deepcopy(selected['rank_basis'])
     missing = []
     if not ranked: missing.append(_issue('candidate_id', 'no_observed_candidates', 'Complete bounded model discovery or choose a narrower observed search root.'))
     elif not selected: missing.append(_issue('candidate_id', 'candidate_ambiguous' if tied else 'no_compatible_candidate',
         'Choose an entry explicitly; the observed candidates do not support one compatible default.'))
     if selected: missing.extend(selected['missing'])
-    return {'schema': SCHEMA, 'discovery_id': discovery['discovery_id'], 'source_sha256': requirements['source_sha256'],
+    return {'schema': SCHEMA if with_intent else 'spiceowl.model-binding-recommendations.v1',
+        'discovery_id': discovery['discovery_id'], 'source_sha256': requirements['source_sha256'],
         'status': 'draft' if selected and not missing else 'missing' if selected or not tied else 'ambiguous',
         'recommended_candidate_id': selected['candidate_id'] if selected else None,
         'selection_confidence': confidence, 'choice_basis': choice_basis,
@@ -395,3 +419,26 @@ def recommend_onboarding(discovery, requirements, remote_platform=None, *, prese
         'equivalence_not_proven': equivalent_unknown, 'candidates': ranked, 'missing': missing,
         'requires_acceptance': True, 'ready_to_run': False, 'fresh_audit_required': True,
         'scientific_intent_discovered': False, 'foundry_qualification_proven': False}
+
+
+def recommend_onboarding(discovery, requirements, remote_platform=None, *, preset='inverter_smoke'):
+    """Backward-compatible inverter preset and source-backed model suggestions."""
+    return _recommend(discovery, requirements, remote_platform, preset=preset)
+
+
+def recommend_model_bindings(discovery, required_masters=None, remote_platform=None):
+    """Pure generic binding suggestions, without topology or experiment presets.
+
+    The exact model set must match the original bounded scan. Suggestions retain
+    missing model/TMI evidence and require a fresh audit of the final selection.
+    """
+    if not isinstance(discovery, dict): _invalid()
+    models = discovery.get('required_masters') if required_masters is None else required_masters
+    if (not isinstance(models, list) or not 1 <= len(models) <= 128
+            or any(not isinstance(name, str) or not NAME.fullmatch(name) for name in models)
+            or len(models) != len(set(models))
+            or set(models) != set(discovery.get('required_masters', []))): _invalid()
+    requirements = {'schema': 'spiceowl.netlist-model-requirements.v1',
+        'source_sha256': discovery.get('source_sha256'), 'required_masters': discovery['required_masters'],
+        'instances': []}
+    return _recommend(discovery, requirements, remote_platform, with_intent=False)

@@ -59,6 +59,23 @@ Acceptance:
 
 The [runtime guide](standalone-runtime.md) records the supported CLI, private grant, service lifecycle and scientific limits. Existing live watches disable automatic collection. CircuitGit and SpiceOwl are tested and pinned together; actual sites still need authorized qualification.
 
+## Authored testbenches and saved-data analysis — implemented package slice
+
+- [x] Finite Spectre source/TB validation and registered `agent-testbench` compiler,
+  preserving authored source, support files and explicit criteria.
+- [x] Private persistent PDK observation lookup with TTL, bounded coverage and
+  precomputed model-binding ranking; execution still requires a fresh audit.
+- [x] Eight optional ADC analysis operations, explicit backend selection,
+  Python/JSON/CSV CLI, and actual pinned ADCToolbox 0.9.3 integration.
+- [x] Synthetic analytic checks and paired full-resolution saved-CSV adapter tests.
+- [ ] Broad AC/DC/complex/multi-analysis waveform ingestion.
+- [ ] Measured completion rates across weaker LLMs and interrupted live runs.
+
+CircuitGit owns the paired review, tool routing and Runner integration. Supported
+syntax and local algorithm tests do not establish a real simulation result or
+automatic repair. See [authored TBs](agent-testbench.md), [PDK lookup](pdk-lut.md),
+[ADC algorithms](adctools.md), and [agent reproducibility](agent-reproducibility.md).
+
 ## M1 — Read-only monitoring (partially implemented)
 
 The shared monitor and structured report are implemented for existing CircuitGit runs. Incremental log-stream accounting, rotation handling and broader executor support remain open. Python 3.11+ is supported.

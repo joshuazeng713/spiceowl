@@ -19,9 +19,11 @@ classifiers = [
 
 [project.optional-dependencies]
 mcp = ["mcp==1.30.0"]
+adctools = ["numpy>=1.26,<3", "scipy>=1.11,<2", "adctoolbox==0.9.3"]
 
 [project.scripts]
 spiceowl = "spiceowl.cli.main:main"
+spiceowl-adctools = "spiceowl.adctools.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/joshuazeng713/spiceowl"

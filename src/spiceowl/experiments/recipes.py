@@ -11,7 +11,7 @@ from .source import ExperimentIssue, ID, NUMBER, PRIMITIVES, extract_circuit, id
 SPEC_SCHEMA = 'spiceowl.experiment-spec.v1'
 PROFILE_SCHEMA = 'spiceowl.experiment-model-profile.v1'
 RECIPE_SCHEMA = 'spiceowl.experiment-recipe.v1'
-RECIPES = {'inverter-tran', 'prepared-transient'}
+RECIPES = {'inverter-tran', 'prepared-transient', 'agent-testbench'}
 SOLVER = {'reltol': 1e-4, 'vabstol_v': 1e-7, 'iabstol_a': 1e-13,
           'gmin_s': 1e-12, 'method': 'gear2only', 'errpreset': 'conservative'}
 
@@ -112,6 +112,9 @@ def _stable_pulse_window(pulse, window):
 
 
 def validate_spec(spec, profile, ports=None):
+    if isinstance(spec, dict) and spec.get('recipe') == 'agent-testbench':
+        from .agent_testbench import validate_agent_spec
+        return validate_agent_spec(spec, profile)[0]
     required = {'schema', 'recipe', 'roles', 'supply', 'temperature_k', 'nominal_temperature_k',
                 'corner', 'stimuli', 'loads', 'analysis', 'parameters', 'acceptance'}
     fields(spec, required, 'spec')
@@ -346,6 +349,9 @@ def _num(value):
 
 def prepare_experiment(sources, selection, spec, model_profile):
     """Return ready files/recipe or structured missing evidence; never write files."""
+    if isinstance(spec, dict) and spec.get('recipe') == 'agent-testbench':
+        from .agent_testbench import prepare_agent_testbench
+        return prepare_agent_testbench(sources, selection, spec, model_profile)
     try:
         # Report all missing top-level conditions before doing any extraction.
         required = {'schema', 'recipe', 'roles', 'supply', 'temperature_k', 'nominal_temperature_k',
@@ -423,6 +429,21 @@ def validate_recipe(recipe):
     body = {key:value for key,value in recipe.items() if key != 'recipe_sha256'}
     require(isinstance(claim, str) and re.fullmatch(r'[a-f0-9]{64}', claim) and sha(canonical(body)) == claim,
             'recipe.recipe_sha256', 'recipe_digest_mismatch', 'The frozen recipe changed; use the original pre-run recipe.')
+    if recipe.get('recipe') == 'agent-testbench':
+        from .agent_testbench import validate_agent_spec
+        spec, profile = validate_agent_spec(recipe['spec'], recipe['model_profile'])
+        require(sha(canonical(profile)) == recipe['model_profile_sha256'], 'recipe.model_profile_sha256',
+                'recipe_digest_mismatch', 'Model profile binding changed.')
+        manifest = recipe['agent_tb_manifest']
+        body = {key: value for key, value in manifest.items() if key != 'manifest_sha256'}
+        require(sha(canonical(body)) == manifest.get('manifest_sha256') and
+                manifest.get('criteria_sha256') == sha(canonical(spec['criteria'])) and
+                manifest.get('pdk_binding') == spec['pdk_binding'] and
+                manifest.get('source_sha256') == recipe['files_sha256'].get('netlist/dut.scs') and
+                manifest.get('tb_sha256') == recipe['files_sha256'].get('netlist/tb.scs') and
+                manifest.get('managed_pdk', {}).get('sha256') == recipe['files_sha256'].get('netlist/pdk.scs'),
+                'recipe.agent_tb_manifest', 'recipe_digest_mismatch', 'Authored byte, criteria or PDK manifest binding changed.')
+        return spec
     profile = validate_model_profile(recipe['model_profile'])
     require(sha(canonical(profile)) == recipe['model_profile_sha256'], 'recipe.model_profile_sha256', 'recipe_digest_mismatch', 'Model profile binding changed.')
     return validate_spec(recipe['spec'], profile, recipe['source']['ports'])

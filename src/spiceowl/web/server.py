@@ -3,6 +3,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
+import re
 import secrets
 from urllib.parse import parse_qs, urlsplit
 
@@ -18,8 +19,34 @@ def _unique(pairs):
     return result
 
 
-def make_server(controller, port=0):
+def _live_request(body):
+    if set(body) - {"operation", "args", "idempotency_key"} or not {"operation", "args"} <= set(body):
+        raise DomainError("Live control requires only operation, args and an optional idempotency_key.")
+    operation, args = body["operation"], body["args"]
+    if not isinstance(operation, str) or operation not in {"scan", "submit", "status", "collect", "watch", "unwatch"} or not isinstance(args, dict):
+        raise DomainError("Unsupported live simulation operation.")
+    expected = set() if operation == "scan" else {"configuration", "source_commit"}
+    if operation in {"status", "collect", "watch", "unwatch"}:
+        expected.add("run_id")
+    if set(args) - {"project_id"} != expected:
+        raise DomainError("Live control requires the exact project, configuration, commit and run identity for this operation.")
+    for field in ("project_id", "configuration", "run_id"):
+        if field in args and (not isinstance(args[field], str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}", args[field])):
+            raise DomainError("Invalid live simulation identity: " + field)
+    if "source_commit" in args and (not isinstance(args["source_commit"], str) or not re.fullmatch("[a-f0-9]{40}", args["source_commit"])):
+        raise DomainError("A full lowercase source commit is required.")
+    key = body.get("idempotency_key")
+    if "idempotency_key" in body and (operation not in {"submit", "collect"} or not isinstance(key, str) or not 8 <= len(key) <= 160 or not key.isprintable()):
+        raise DomainError("A stable printable key is accepted only for submit or collect.")
+    return operation, args, key
+
+
+def make_server(controller, port=0, live_client_config=None):
     token = secrets.token_urlsafe(32)
+    live_client = None
+    if live_client_config is not None:
+        from spiceowl.integrations.live import LiveSimulationClient
+        live_client = LiveSimulationClient(live_client_config)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "SpiceOwl"
@@ -95,6 +122,26 @@ def make_server(controller, port=0):
                 return self.send_content(200, files("spiceowl.web").joinpath("static", name).read_bytes(), media)
             if self.command == "GET" and path == "/api/state":
                 return self.reply(controller.state() | {"csrf_token": token})
+            if path == "/api/live/runtime" and self.command == "GET":
+                if url.query:
+                    raise DomainError("Live runtime reads do not accept browser configuration or query parameters.")
+                if live_client is None:
+                    return self.reply({"enabled": False, "project_id": None, "runtime": None})
+                return self.reply({"enabled": True, "project_id": live_client.project_id, "runtime": live_client.runtime()})
+            if path == "/api/live/control" and self.command == "POST":
+                if url.query:
+                    raise DomainError("Live control does not accept query parameters.")
+                operation, args, key = _live_request(self.body())
+                if live_client is None:
+                    raise DomainError("Real simulation is not enabled by this server's operator configuration.", "live_not_configured")
+                return self.reply(live_client.execute(operation, args, idempotency_key=key), 202)
+            if path == "/api/live/submission" and self.command == "GET":
+                query = parse_qs(url.query, keep_blank_values=True)
+                if set(query) != {"key"} or len(query["key"]) != 1 or not 8 <= len(query["key"][0]) <= 160 or not query["key"][0].isprintable():
+                    raise DomainError("An exact saved submission key is required.")
+                if live_client is None:
+                    raise DomainError("Real simulation is not enabled by this server's operator configuration.", "live_not_configured")
+                return self.reply(live_client.lookup_submission(query["key"][0]))
             if self.command == "POST" and path == "/api/demo":
                 if self.body():
                     raise DomainError("Demo loading takes an empty object.")

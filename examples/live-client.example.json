@@ -1,0 +1,6 @@
+{
+  "schema": "spiceowl.live-client.v1",
+  "base_url": "http://127.0.0.1:18881",
+  "project_id": "example-inverter",
+  "authority_key_file": "/absolute/private/simulation-authority.key"
+}

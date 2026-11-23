@@ -158,7 +158,7 @@ Both routes return `origin`, `source_kind`, `route`, `status`, `host_id`, `propo
 
 ## What is still required before a real launch
 
-A pool recommendation or native route is not an experiment submission. A later execution implementation must freeze the actual input and transitive include/model identities, validate licenses/environment and present resource availability, obtain concrete launch authorization, establish remote ownership, and durably record the submission operation and receipt. Unknown outcomes must be reconciled before any retry. No netlist or actual run is supplied by the examples above.
+A pool recommendation or native route is not an experiment submission. The optional [standalone live runtime](standalone-runtime.md) uses CircuitGit’s existing Runner to freeze input/model and execution-site identity, validate the remote environment, check resources and record keyed dispatch within the installed operator grant. Placement-only commands in this guide do not perform those operations. Unknown outcomes must be reconciled before another attempt. No netlist or actual run is supplied by the examples above.
 
 Native agent Q&A is a separate P0.3 workstream. An answer or explanation does not reserve a server, approve a plan, rewrite an origin, or authorize a simulation. Existing read-only MCP queries remain query-only. The state of a diagnostic conversation does not own a simulator task.
 

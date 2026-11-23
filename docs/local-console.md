@@ -2,9 +2,9 @@
 
 SpiceOwl 0.3.0a1 is a single-user alpha for macOS and Linux with Python 3.11 or newer. It provides a browser console and CLI backed by the same SQLite records. The core uses Python's standard library; browser assets ship in the package and do not require Node.js. Optional MCP support uses the pinned official Python SDK; native Q&A requires a separately installed, compatible Codex runtime.
 
-The web console's simulation run list and run diagnoses still use **synthetic data**. Simulation hosts can make explicit SSH identity/version/resource checks and evaluate placement. Agent chat sends real text questions through a registered native runtime. MCP clients query saved local records. See the [server pool guide](server-pool.md), [native agent guide](native-agent.md), and [SSH/MCP guide](real-connections.md). General product web/CLI simulation submission, unattended monitoring and recovery remain unimplemented. Its local HTTP server is intended for alpha use on loopback, not public or shared production hosting.
+The console has separate **synthetic demo runs** and an optional **real standalone Spectre view**. Start with `serve --live-client-config PRIVATE_CONFIG` to use the shared client for CircuitGit’s existing Runner, explicit resource scans, submission, status, collection and background watches. The [standalone runtime guide](standalone-runtime.md) covers private grants, exact identities and limits. Simulation hosts, [native agent Q&A](native-agent.md) and read-only MCP remain separate. Automatic solver restart and parameter repair remain unimplemented. The HTTP server is intended for alpha use on loopback, not public or shared production hosting.
 
-A separate, explicitly authorized [developer inverter smoke utility](../examples/inverter/README.md) can execute the original MOS1 example on licensed Spectre. The [IC Workbench integration](ic-workbench.md) reads stored native records into a separate passive cache; IC Workbench retains submission and approval ownership. Neither capability turns the web console's synthetic runs into a general simulation executor.
+A separate, explicitly authorized [developer inverter smoke utility](../examples/inverter/README.md) can execute the original MOS1 example on licensed Spectre. The [IC Workbench integration](ic-workbench.md) reads stored native records into a separate passive cache; IC Workbench retains submission and approval ownership. The real-client panel is configured separately; demo runs always retain their synthetic identity.
 
 ![Actual offline prototype with synthetic observations](images/local-console.png)
 
@@ -32,7 +32,7 @@ PYTHONPATH=src python3 -m spiceowl --data-dir .spiceowl serve --demo
 
 ## Browser workflow
 
-1. Load the demo workspace. Every run card and chart represents authored synthetic observations; real host checks live in a separate Simulation hosts view.
+1. Load the demo workspace. Its run cards and charts represent authored synthetic observations; real host checks and the optional real-simulation panel have separate views.
 2. Open Connections. Add a fake agent or model API and choose success, denied inference, interrupted response, or denied tool request. Probe metadata to see transport/auth/catalog separately from inference verification.
 3. Open a run. Select Next observation to advance its finite scenario. Disconnect preserves the same execution identity; OOM records failure; target miss ends with valid measurement and failed specification.
 4. Ask the demo diagnostic assistant about the current snapshot. Its response is deterministic fixture output, not an LLM. Inspect stored events, evidence citations and an advisory policy decision.
@@ -40,7 +40,7 @@ PYTHONPATH=src python3 -m spiceowl --data-dir .spiceowl serve --demo
 6. Use Simulation hosts → Add host or Import pool to register a private profile or preview an explicit pool; the CLI remains available. Then explicitly check connections/resources and evaluate requested CPU/memory. [Host onboarding](host-onboarding.md) explains the fields and separate diagnostic states. Results are timestamped; there is no automatic remote polling. Execution plans preserve standalone versus Virtuoso-native ownership and do not launch jobs.
 7. Import a native agent profile, open Agent chat and submit a short real question. The saved result records its actual provider/model and completion state. This is separate from per-run fixture diagnosis.
 
-Read-only suggestions can receive an allow decision, but **dispatch remains disabled**. There is no Execute fix button. Cancelling a diagnosis only stops that local fake turn; it does not change the run.
+In the synthetic diagnosis workflow, read-only suggestions can receive an allow decision, but **diagnostic action dispatch remains disabled**. There is no Execute fix button. Cancelling a diagnosis only stops that local fake turn; it does not change the run.
 
 An unresolved turn blocks another diagnosis on its connection or run. This prototype offers inspection, not a pretend reconciliation of an unknown provider operation. Explore another run/connection or a separate demo state directory to test an independent scenario. Production resolution workflows belong to the real-provider milestone.
 
@@ -56,7 +56,7 @@ spiceowl runs list
 spiceowl session SESSION_ID --after 0
 ```
 
-Host registration/probes and read-only MCP queries also work alongside the web controller. For the standalone synthetic mutation workflow below, stop the web controller first. Only one controller can own a state directory; this prevents one process from declaring another process's active turn interrupted.
+Host registration/probes, read-only MCP queries and `live` CLI operations also work alongside the web controller. Point CLI and web at the same private live-client configuration to share their request journal. For the standalone synthetic mutation workflow below, stop the web controller first. Only one controller can own a state directory; this prevents one process from declaring another process's active turn interrupted.
 
 ```bash
 spiceowl demo
@@ -70,15 +70,15 @@ The final command prints the persisted session. Repeating the same request key a
 
 ## What is durable
 
-SQLite stores connection metadata, private host profiles and their last probes, synthetic run snapshots, frozen diagnostic evidence, requests, turns, ordered events, proposals and policy decisions. A transaction claims a unique request key before starting work. One active or unresolved turn per connection/run prevents competing diagnosis. Event display uses a persistent cursor; identical text is not used as a deduplication key. Credentials and provider secrets are not accepted by this build; SSH authentication stays in OpenSSH configuration.
+SQLite stores connection metadata, private host profiles and their last probes, synthetic run snapshots, frozen diagnostic evidence, requests, turns, ordered events, proposals and policy decisions. A transaction claims a unique request key before starting work. One active or unresolved turn per connection/run prevents competing diagnosis. Event display uses a persistent cursor; identical text is not used as a deduplication key. Browser forms do not accept credentials or provider secrets; SSH authentication stays in OpenSSH configuration. The optional live connection loads its operator-provisioned private HMAC key from the server-side startup configuration, never from a browser request.
 
-Shutting down the HTTP interface does not erase data. This prototype does not implement a real background simulation monitor: run advancement is explicit replay. Future deployment of real monitoring/execution on an always-on host remains required for unattended simulations.
+Shutting down the SpiceOwl HTTP interface does not erase data or cancel a remote simulation. Synthetic run advancement is still explicit replay. Real observation runs inside the CircuitGit service using SpiceOwl’s shared monitor, so that service must stay running and connected overnight. Watch recovery after gateway restart is explicit by default, with operator-configured authorized resumption available. Watches do not automatically collect or restart simulations; see [monitor lifecycle](standalone-runtime.md#keeping-watch-overnight).
 
 ## Local HTTP boundary
 
 The console checks loopback Host and Origin, requires an unpredictable token for writes, limits JSON request size, rejects duplicate keys and nonfinite numbers, and serves only named packaged assets. It never serves arbitrary paths or accepts shell commands. Scripts/fonts/assets are local; no analytics or third-party CDN is used. These controls do not make a shared computer or public deployment a supported security boundary. No user authentication, TLS termination, multi-user isolation, or network exposure is provided.
 
-The API is an alpha implementation interface, documented in [P0.1 contracts](contracts/p01-runtime.md). It is not a stable external integration API yet.
+The API is an alpha implementation interface: the original demo is documented in [P0.1 contracts](contracts/p01-runtime.md), while the optional real client is documented in [standalone runtime](standalone-runtime.md). It is not a stable external integration API yet.
 
 ## Verification
 

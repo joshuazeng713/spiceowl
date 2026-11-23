@@ -184,8 +184,10 @@ class HostRegistry:
             self.store.update("host", host_id, lambda current: current | {"last_resources": observation})
             return observation
 
-    def scan(self, host_ids=None):
+    def scan(self, host_ids=None, *, simulator=None):
         from spiceowl.adapters.hosts import probe_host, probe_resources
+        if simulator not in (None, "spectre", "ngspice"):
+            raise DomainError("Unsupported simulator for resource scan.")
         ids = host_ids if host_ids is not None else [h["host_id"] for h in self.store.list("host")]
         ids = [record["host_id"] for record in self._selected_records(ids)]
         started = utcnow()
@@ -195,7 +197,8 @@ class HostRegistry:
                 return {"host_id": host_id, "error": {"code": "scan_budget", "message": "This host was not attempted within the scan budget."}}
             try:
                 with self._guard(host_id) as profile:
-                    probe = probe_host(profile)
+                    probe_profile = profile if simulator is None else profile | {"tools": [tool for tool in profile["tools"] if tool["kind"] == simulator]}
+                    probe = probe_host(probe_profile)
                     self.store.update("host", host_id, lambda h: h | {"last_probe": probe})
                     if probe["identity"]["verified"] and probe["transport"] == "reachable":
                         resources = probe_resources(profile)

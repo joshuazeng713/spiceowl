@@ -1,6 +1,6 @@
 # CircuitGit external integration
 
-Integration profiles: **`spiceowl.circuitgit-library-context.v1`** and **`spiceowl.resource-selection.v1`**. Supervision contract revision: **1.2.0**, identified by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json). SpiceOwl remains independently maintained in [its own repository](https://github.com/joshuazeng713/spiceowl). CircuitGit should reference a reviewed SpiceOwl commit and these documents; it does not need to vendor the SpiceOwl implementation.
+Integration profiles: **`spiceowl.circuitgit-library-context.v1`**, **`spiceowl.resource-selection.v1`**, and the optional **`spiceowl.live-client.v1`** described in [standalone runtime](standalone-runtime.md). Supervision contract revision: **1.2.0**, identified by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json). SpiceOwl remains independently maintained in [its own repository](https://github.com/joshuazeng713/spiceowl). CircuitGit should reference a reviewed SpiceOwl commit and these documents; it does not need to vendor the SpiceOwl implementation.
 
 ## Compatibility and ownership
 
@@ -39,7 +39,7 @@ A missing/null cached value may gain an explicit value on a later read. Once non
 1. Resolve the selected cell using CircuitGit's validated library manifest. A cell with `project_id: null` is a browsing entry; it cannot register or select a simulation project through this integration.
 2. Use the explicit registered `project_id` and native `run_id`. Use the run's recorded source commit for historical waveform identity. Do not choose a latest run or manufacture an ID from a cell name.
 3. Show library/cell metadata only when it was returned for that run. Resolve navigation through CircuitGit's own validated catalog and matching project association. A missing entry remains unresolved; metadata does not permit arbitrary file access.
-4. Keep submission, cancellation, collection and approval in CircuitGit's existing IC Service workflow. Refer to the [existing action boundary](ic-workbench.md#agent-access). This extension adds no execution or approval backend.
+4. The library-context extension adds no execution or approval backend. Existing IC Service actions retain their [review boundary](ic-workbench.md#agent-access). The separate [standalone live client](standalone-runtime.md) invokes the same Runner under an explicit installed project/host/caller grant; it does not replace the Service ledger or expose arbitrary commands.
 
 The public GitHub Pages demo does not mount the full local simulation submission panel; its RC analytic view is separate. A connected library/AI helper is not evidence of resource-pool submission. Installing this commit does not update an already-running MCP process or prove that CircuitGit's producer has begun emitting the fields; reload only through the operator's existing lifecycle procedure.
 
@@ -58,7 +58,7 @@ The tests cover the serialized gateway envelope, cache/CLI/MCP round trip, old c
 
 ## Resource-aware execution through CircuitGit
 
-`spiceowl.integrations.circuitgit_pool.CircuitGitPool` is an optional Python API for an operator-configured CircuitGit gateway. It uses SpiceOwl's existing SSH probes and recommendation policy. It does not add a submission command to the SpiceOwl web console, CLI or MCP catalog.
+`spiceowl.integrations.circuitgit_pool.CircuitGitPool` is an optional Python API for an operator-configured CircuitGit gateway. It uses SpiceOwl's existing SSH probes and recommendation policy. This API owns only selection/recheck. The separate [live client](standalone-runtime.md) supplies real CLI/web submission through CircuitGit’s existing Runner; the MCP catalog remains read-only.
 
 ```python
 from spiceowl.integrations.circuitgit_pool import CircuitGitPool
@@ -78,13 +78,13 @@ The paired CircuitGit adapter performs the rest of the sequence:
 1. Plan and validate the committed/materialized inputs and explicit simulator thread budget locally.
 2. Select from registered hosts mapped to private CircuitGit site files, then perform the chosen site's normal preflight.
 3. Freeze the selected site, selection evidence, input identity and preflight result into an HMAC-signed `execution_plan_id`.
-4. Include that same plan and host in the existing browser confirmation or Service human-review request.
+4. Carry that same plan and host through the selected authority path: existing browser/Service review, or the explicit installed grant for the finite standalone runtime.
 5. Reserve the existing submission key, recheck the same host before staging, and dispatch through the existing Runner.
 6. Query and collect using the saved run ID and frozen site. A lost launch response stays uncertain and is reconciled without resubmission.
 
 A resource refusal before staging records a failed preflight with zero launch attempts. Reusing its key returns that same outcome; a deliberate new attempt needs a new plan/key and review. No background queue, automatic migration, resource allocation, cgroup memory cap, license reservation, OOM recovery or scientific parameter repair is provided. Memory is an operator-supplied planning estimate. Increasing a simulator's thread count beyond the pool request is rejected before any scan.
 
-The matching CircuitGit implementation and private configuration format are documented in its `docs/spiceowl-resource-submission.md`. Its integration lock pins a reviewed external SpiceOwl commit; the source is not vendored.
+The matching CircuitGit implementation and private configuration format are documented in its `docs/spiceowl-resource-submission.md`. Its integration lock pins a reviewed external SpiceOwl commit; the source is not vendored. CircuitGit also imports SpiceOwl’s shared monitor, diagnostic classifier and PSF ASCII parser for the optional real runtime. The [standalone guide](standalone-runtime.md) covers the signed client and preserves the single-Runner boundary.
 
 ## Optional stored execution target
 

@@ -164,7 +164,7 @@ class CircuitGitPool:
             raise DomainError("The selected host has an invalid resource profile.", "resource_profile_invalid") from None
 
     def _refresh(self, host_ids, request, profiles):
-        scan = self._call("scan", host_ids)
+        scan = self._call("scan", host_ids, simulator="spectre")
         _check(type(scan) is dict and scan.get("simulation_actions") is False, "resource_unavailable")
         started, completed = _time(scan.get("started_at")), _time(scan.get("completed_at"))
         _check(started <= completed <= _now(), "resource_unavailable")
@@ -230,3 +230,62 @@ class CircuitGitPool:
         _check(latest["host_id"] == host_id and latest["simulator_version"] == frozen["simulator_version"],
                "resource_version_changed")
         return latest
+
+
+    def scan_resources(self, host_ids):
+        """Explicit Spectre-only scan; returns safe observations, never routes."""
+        _check(type(host_ids) is list and 1 <= len(host_ids) <= MAX_HOSTS)
+        ids = [require_id(value, "host ID") for value in host_ids]
+        _check(len(set(ids)) == len(ids))
+        profiles = {host_id: self._registered(host_id) for host_id in ids}
+        scan = self._call("scan", ids, simulator="spectre")
+        _check(type(scan) is dict and scan.get("simulation_actions") is False, "resource_unavailable")
+        started, completed = _time(scan.get("started_at")), _time(scan.get("completed_at"))
+        _check(started <= completed <= _now(), "resource_unavailable")
+        results = scan.get("results")
+        _check(type(results) is list and len(results) == len(ids)
+               and all(type(item) is dict and set(item) == {"host_id", "error"}
+                       and type(item["host_id"]) is str for item in results), "resource_unavailable")
+        _check({item["host_id"] for item in results} == set(ids), "resource_unavailable")
+        rows = []
+        failures = {item["host_id"] for item in results if item["error"] is not None}
+        for host_id in ids:
+            record = self._call("inspect", host_id)
+            _check(type(record) is dict, "resource_unavailable")
+            observed = record.get("last_resources")
+            observed = observed if type(observed) is dict else {}
+            identity = observed.get("identity")
+            identity = identity if type(identity) is dict else {}
+            try:
+                observed_at = _time(observed.get("observed_at"))
+                same_profile = _profile(profile_from_record(record), host_id) == profiles[host_id]
+            except (DomainError, KeyError, TypeError):
+                observed_at, same_profile = None, False
+            # A scan receipt cannot promote another host's, or an older scan's,
+            # saved observation into fresh evidence for this request.
+            good = (host_id not in failures and same_profile and observed_at is not None
+                    and started <= observed_at <= completed and observed.get("host_id") == host_id
+                    and observed.get("scope") == "host_resources" and observed.get("synthetic") is False
+                    and observed.get("transport") == "reachable" and identity.get("verified") is True
+                    and identity.get("hostname") == profiles[host_id]["expected_host"]
+                    and identity.get("username") == profiles[host_id]["expected_user"]
+                    and "error" in observed and observed["error"] is None)
+            raw = observed.get("resources")
+            raw = raw if type(raw) is dict else {}
+            metrics = {}
+            for key in ("cpu_busy_percent", "load_1m", "cpu_count", "memory_available_bytes", "memory_total_bytes"):
+                value = raw.get(key)
+                numeric = type(value) in (int, float) and 0 <= value <= 2**53 - 1 and math.isfinite(value)
+                if key == "cpu_busy_percent":
+                    numeric = numeric and value <= 100
+                elif key in ("cpu_count", "memory_available_bytes", "memory_total_bytes"):
+                    numeric = numeric and type(value) is int and (key != "cpu_count" or value >= 1)
+                metrics[key] = value if good and numeric else None
+            available, total = metrics["memory_available_bytes"], metrics["memory_total_bytes"]
+            if available is not None and total is not None and available > total:
+                metrics["memory_available_bytes"] = None
+            rows.append({"host_id": host_id, "label": profiles[host_id]["label"],
+                         "reachable": good, **metrics,
+                         "observed_at": observed_at.isoformat() if good else None,
+                         "error_code": None if good else "scan_failed"})
+        return {"schema": "spiceowl.host-pool.snapshot.v1", "checked_at": completed.isoformat(), "hosts": rows}

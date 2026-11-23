@@ -1,6 +1,6 @@
 # Examples
 
-The connection/supervision and experiment examples below are design artifacts, explicitly disabled and not executable configurations. The [SSH host example](hosts/ssh.example.json) is an importable P0.2 profile with fictional values: copy it to an ignored private file, select your own alias/identity/tool paths, then follow the [real connection guide](../docs/real-connections.md). Importing it performs no network operation.
+The four design examples in the table below are explicitly disabled and not executable configurations. The [SSH host example](hosts/ssh.example.json) is an importable P0.2 profile with fictional values: copy it to an ignored private file, select your own alias/identity/tool paths, then follow the [real connection guide](../docs/real-connections.md). Importing it performs no network operation.
 
 | Example | Purpose | Design |
 | --- | --- | --- |
@@ -15,4 +15,8 @@ The `synthetic:` input reference and `proposed:` recipe deliberately identify de
 
 The analytical RC time constant is 1 microsecond; a first-order ideal RC response reaches a 1% band after approximately 4.605 microseconds from the step. This is a planning sanity check, not a simulator result or an implemented validator. The example observes the response from a 1 microsecond step until a 10 microsecond stop time.
 
-See the [run contract](../docs/run-contract.md) for field meanings and the [roadmap](../docs/roadmap.md) for the first executable mock demo.
+## Optional real-client configuration template
+
+[live-client.example.json](live-client.example.json) is the exact supported `spiceowl.live-client.v1` shape with fictional values and no secret. Copy it to an owner-private writable location, replace the gateway port/project/key-file path, and use an operator-provisioned private key and CircuitGit grant. It is not ready to execute from the public checkout. Follow the [standalone runtime guide](../docs/standalone-runtime.md); no PDK files or credentials belong in this example.
+
+The [original inverter](inverter/README.md) has a separate opt-in developer smoke workflow and explicit toy acceptance. See the [run contract](../docs/run-contract.md) for draft field meanings and the [roadmap](../docs/roadmap.md) for implemented slices and remaining work.

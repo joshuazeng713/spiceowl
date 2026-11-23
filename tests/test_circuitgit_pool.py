@@ -4,10 +4,11 @@ import copy
 from datetime import timedelta
 import hashlib
 import json
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from spiceowl.domain.common import DomainError
+from spiceowl.domain.common import DomainError, utcnow
 from spiceowl.hosts import HostRegistry, profile_from_record
 from spiceowl.integrations.circuitgit_pool import CircuitGitPool, SCHEMA
 from spiceowl.scheduling.placement import recommend_hosts
@@ -41,7 +42,7 @@ class CircuitGitPoolTests(unittest.TestCase):
             raise DomainError("PRIVATE sentinel must not leak", "not_found")
         return copy.deepcopy(self.records[host_id])
 
-    def scan(self, ids):
+    def scan(self, ids, *, simulator=None):
         started = self.clock
         observed = started + timedelta(milliseconds=10)
         for host_id in ids:
@@ -68,7 +69,7 @@ class CircuitGitPoolTests(unittest.TestCase):
         self.assertEqual(set(result), {"schema", "host_id", "requirements", "selected_at", "profile",
                                       "profile_sha256", "simulator_version", "recommendation"})
         self.assertEqual((result["schema"], result["host_id"]), (SCHEMA, "host-b"))
-        self.registry.scan.assert_called_once_with(["host-a", "host-b"])
+        self.registry.scan.assert_called_once_with(["host-a", "host-b"], simulator="spectre")
         self.registry.recommend.assert_called_once_with(requirements(), host_ids=["host-a", "host-b"])
         profile = profile_from_record(self.records["host-b"])
         encoded = json.dumps(profile, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -111,7 +112,7 @@ class CircuitGitPoolTests(unittest.TestCase):
         self.registry.reset_mock()
         latest = self.pool.recheck(selected)
         self.assertEqual(selected, frozen)
-        self.registry.scan.assert_called_once_with(["host-a"])
+        self.registry.scan.assert_called_once_with(["host-a"], simulator="spectre")
         self.registry.recommend.assert_called_once_with(requirements(), host_ids=["host-a"])
         for field in ("host_id", "requirements", "profile", "profile_sha256", "simulator_version"):
             self.assertEqual(latest[field], frozen[field])
@@ -135,18 +136,18 @@ class CircuitGitPoolTests(unittest.TestCase):
         self.after_scan = lambda ids: self.records[ids[0]].update(label="Changed")
         with self.assertRaises(DomainError):
             self.pool.recheck(selected)
-        self.registry.scan.assert_called_once_with(["host-a"])
+        self.registry.scan.assert_called_once_with(["host-a"], simulator="spectre")
         self.records["host-a"]["label"] = selected["profile"]["label"]
         self.after_scan = lambda ids: self.records[ids[0]]["last_probe"]["tools"][0].update(version="99.1.0.124.isr4")
         self.registry.reset_mock()
         with self.assertRaises(DomainError) as raised:
             self.pool.recheck(selected)
         self.assertEqual(raised.exception.code, "resource_version_changed")
-        self.registry.scan.assert_called_once_with(["host-a"])
+        self.registry.scan.assert_called_once_with(["host-a"], simulator="spectre")
 
     def test_failed_host_not_selected_using_its_old_fresh_observations(self):
         self.failed = {"host-b"}
-        def private_failure(ids):
+        def private_failure(ids, *, simulator=None):
             result = self.scan(ids)
             for row in result["results"]:
                 if row["error"] is not None:
@@ -195,7 +196,7 @@ class CircuitGitPoolTests(unittest.TestCase):
         self.failed = {"host-a"}
         with self.assertRaises(DomainError):
             self.pool.recheck(selected)
-        self.registry.scan.assert_called_once_with(["host-a"])
+        self.registry.scan.assert_called_once_with(["host-a"], simulator="spectre")
         self.registry.recommend.assert_not_called()
 
     def test_stale_unknown_or_busy_evidence_has_no_selection(self):
@@ -249,6 +250,81 @@ class CircuitGitPoolTests(unittest.TestCase):
             self.registry.scan.return_value = result
             with self.assertRaises(DomainError):
                 self.selection()
+
+
+class MixedToolRegistryIntegrationTests(unittest.TestCase):
+    """Real registry/storage/select/recheck; only remote probes are synthetic."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.pool = CircuitGitPool(self.temp.name)
+        self.profiles = {}
+        for identifier in ('host-a', 'host-b'):
+            profile = profile_from_record(host(identifier))
+            profile['tools'].append({'kind': 'virtuoso', 'executable': '/opt/example/virtuoso'})
+            self.profiles[identifier] = copy.deepcopy(profile)
+            self.pool.registry.add(profile)
+        version = patch('spiceowl.adapters.hosts.probe_host', side_effect=self.probe)
+        resources = patch('spiceowl.adapters.hosts.probe_resources', side_effect=self.resources)
+        self.version_probe = version.start(); self.addCleanup(version.stop)
+        self.resource_probe = resources.start(); self.addCleanup(resources.stop)
+
+    def probe(self, profile):
+        kinds = [tool['kind'] for tool in profile['tools']]
+        self.assertNotIn('virtuoso', kinds, 'A standalone Spectre resource scan must not start Virtuoso')
+        return {'host_id': profile['host_id'], 'scope': 'connectivity_only', 'synthetic': False,
+                'observed_at': utcnow(), 'transport': 'reachable', 'error': None,
+                'identity': {'verified': True, 'hostname': profile['expected_host'], 'username': profile['expected_user']},
+                'tools': [{'kind': kind, 'status': 'available', 'version': '99.1.0.123.isr4'} for kind in kinds]}
+
+    def resources(self, profile):
+        value = copy.deepcopy(host(profile['host_id'])['last_resources'])
+        value['observed_at'] = utcnow()
+        return value
+
+    def test_mixed_profiles_select_and_same_host_recheck_probe_spectre_only(self):
+        selected = self.pool.select(['host-a', 'host-b'], requirements())
+        selected_host = selected['host_id']
+        self.assertEqual({call.args[0]['host_id'] for call in self.version_probe.call_args_list}, {'host-a', 'host-b'})
+        self.assertTrue(all([tool['kind'] for tool in call.args[0]['tools']] == ['spectre'] for call in self.version_probe.call_args_list))
+        self.assertEqual([tool['kind'] for tool in selected['profile']['tools']], ['spectre', 'virtuoso'])
+        self.version_probe.reset_mock(); self.resource_probe.reset_mock()
+        rechecked = self.pool.recheck(selected)
+        self.assertEqual(rechecked['host_id'], selected_host)
+        self.assertEqual(self.version_probe.call_count, 1)
+        self.assertEqual(self.version_probe.call_args.args[0]['host_id'], selected_host)
+        self.assertEqual([tool['kind'] for tool in self.version_probe.call_args.args[0]['tools']], ['spectre'])
+        self.assertEqual(self.resource_probe.call_count, 1)
+        for identifier, profile in self.profiles.items():
+            self.assertEqual(profile_from_record(self.pool.registry.inspect(identifier)), profile)
+
+    def test_explicit_filtered_scan_supports_identity_only_hosts_without_virtuoso_probe(self):
+        profile = self.profiles['host-a'] | {'host_id': 'identity-only', 'tools': [self.profiles['host-a']['tools'][1]]}
+        self.pool.registry.add(profile)
+        result = self.pool.registry.scan(['identity-only'], simulator='spectre')
+        self.assertFalse(result['simulation_actions'])
+        self.assertEqual(self.version_probe.call_args.args[0]['tools'], [])
+        self.assertEqual([tool['kind'] for tool in self.pool.registry.inspect('identity-only')['tools']], ['virtuoso'])
+
+    def test_invalid_simulator_filter_fails_before_any_probe(self):
+        for simulator in ('virtuoso', 'spectre; run', {}, False):
+            with self.subTest(simulator=simulator), self.assertRaises(DomainError):
+                self.pool.registry.scan(['host-a'], simulator=simulator)
+        self.version_probe.assert_not_called(); self.resource_probe.assert_not_called()
+
+    def test_failed_identity_does_not_query_resources_or_use_stored_old_metrics(self):
+        self.pool.select(['host-a'], requirements())
+        self.version_probe.reset_mock(); self.resource_probe.reset_mock()
+        self.version_probe.side_effect = lambda profile: self.probe(profile) | {
+            'transport': 'unknown', 'identity': {'verified': False}, 'error': {'code': 'ssh_timeout'}}
+        snapshot = self.pool.scan_resources(['host-a'])
+        self.resource_probe.assert_not_called()
+        row = snapshot['hosts'][0]
+        self.assertFalse(row['reachable'])
+        for key in ('cpu_busy_percent', 'load_1m', 'cpu_count', 'memory_available_bytes', 'memory_total_bytes', 'observed_at'):
+            self.assertIsNone(row[key])
+        self.assertEqual(row['error_code'], 'scan_failed')
 
 
 if __name__ == "__main__":

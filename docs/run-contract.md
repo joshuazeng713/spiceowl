@@ -1,6 +1,6 @@
 # Run contract
 
-Status: design draft `0.1-draft`. The [JSON example](../examples/run-manifest.example.json) illustrates the vocabulary; it is not a validated schema or an executable configuration. The example uses a synthetic circuit identity and cannot submit a job.
+Status: design draft `0.1-draft`. The [JSON example](../examples/run-manifest.example.json) illustrates the vocabulary; it is not a validated schema or an executable configuration. The example uses a synthetic circuit identity and cannot submit a job. The implemented [standalone runtime](standalone-runtime.md) instead uses CircuitGit’s registered configuration, frozen source/run identity and existing Runner receipts. It does not make this draft manifest executable.
 
 ## Why freeze intent
 
@@ -10,7 +10,7 @@ Keep three identities separate:
 
 - **Experiment ID:** the intended scientific question and its accepted requirements.
 - **Attempt ID:** one execution under that experiment, including recovery attempts.
-- **Submission key:** the stable identity of one SpiceOwl submission operation. Reuse it only when reconciling/retrying that same operation; a genuinely new SpiceOwl submission gets a new key after the prior outcome is resolved.
+- **Submission key:** the stable identity of one submission operation. Preserve it for exact lookup and reconciliation. The current live client does not resend an unknown request; even a matching key cannot authorize that replay. A deliberate new submission has its own key after prior uncertainty is resolved.
 
 An explicitly imported external run has a null submission key and a native import binding. Unknown historical input/launch fingerprints remain null. A future native scheduler restart is a child attempt with an execution generation and original submission reference; no new key is invented unless SpiceOwl actually submits a new operation. Initial profiles do not enable automatic requeue recovery. See [shared identities and receipts](contracts/interface-boundaries.md).
 
@@ -53,7 +53,7 @@ For the illustrative settling experiment:
 4. The settling-time recipe must verify its declared preconditions and record any uncertainty.
 5. Only a valid measurement is compared against the settling-time target.
 
-The illustrative measurement recipe is not implemented yet. Missing data must produce `invalid` or `indeterminate`, not a fabricated value or a specification pass. A measured target violation produces a valid measurement with a specification failure.
+The illustrative measurement recipe is not implemented yet. Current transient PSF ASCII checks establish bounded readability, finite/aligned samples, monotonic time and requested signal presence; they do not infer experiment-specific window coverage or specification acceptance. Missing data must produce `invalid`, `unknown` or `indeterminate` according to the specific contract, not a fabricated value or a specification pass. A measured target violation produces a valid measurement with a specification failure.
 
 ## Observations
 
@@ -97,4 +97,4 @@ runs/<experiment-id>/
     └── artifacts.json
 ```
 
-Names above are proposed record locations, not files written by current code. Store large native outputs separately and reference them from `artifacts.json` with integrity and retention metadata.
+Names above are proposed record locations, not files written by current code. The implemented live path preserves Runner records, separate monitor receipts, and a private client request journal as documented in [standalone runtime](standalone-runtime.md#unknown-requests-and-keys). Store large native outputs separately and reference them from `artifacts.json` with integrity and retention metadata.

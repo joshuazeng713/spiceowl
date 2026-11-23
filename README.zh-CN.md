@@ -12,9 +12,9 @@
 
 > **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH、真实 Agent 和仿真执行需要本地安装。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/joshuazeng713/spiceowl/blob/main/docs/github-pages.md)。
 
-> **早期 Alpha：服务器池、原生 Agent 问答与开发者反相器 smoke 测试。** 可以比较有范围限制的 SSH 资源观测、生成独立网表或 Virtuoso 来源的执行计划，并向已安装的 Codex runtime 发送简短问题。网页中的仿真任务和任务诊断仍使用合成数据。独立、显式调用的[开发者脚本](examples/inverter/README.md)可在具有许可证的 Spectre 环境执行原创 MOS1 反相器；网页/CLI 通用仿真提交和无人值守监控待实现。可选 MCP 工具读取已保存的记录。见[控制台指南](docs/local-console.md)、[服务器池指南](docs/server-pool.md)和[原生问答指南](docs/native-agent.md)。
+> **早期 Alpha：通过可选 CircuitGit 连接运行真实的独立 Spectre 仿真。** 本地 CLI 和单独的真实仿真面板可以检查已授权的服务器池，经 CircuitGit 原有 Runner 提交已固定 Git 版本的输入、后台观察已有任务，并显式收集结果。SpiceOwl 提供共用的监控器、Spectre 诊断、PSF ASCII 解析器和签名客户端。合成演示继续保留；公开演示不执行仿真。自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[原生问答指南](docs/native-agent.md)。
 
-![SpiceOwl 本地控制台，所有任务均为明确标注的合成数据](docs/images/local-console.png)
+![SpiceOwl 本地控制台的合成演示任务](docs/images/local-console.png)
 
 *实际原型界面，使用项目编写的合成观测数据。*
 
@@ -31,12 +31,12 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 | 能力 | 目标行为 | 当前状态 |
 | --- | --- | --- |
 | 接入 | 管理用户自带的 Agent 与模型 API，明确登录、能力和用量边界 | 已实现原生 Codex 问答、模拟 Agent/API 管理、MCP 查询及 SSH 主机/资源检查 |
-| 观察 | 跟踪任务身份、仿真进度、日志、内存和磁盘使用 | 已有真实主机快照和开发者 smoke 回执；网页任务仍为合成场景 |
-| 重连 | 在客户端或控制器中断后核对并找回原任务 | 已实现本地记录恢复和原 smoke 任务状态查询；通用仿真任务重连待实现 |
-| 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 已实现验收汇总和反相器专用波形检查；通用波形验证器待实现 |
-| 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 仅提供建议性策略；不执行操作 |
-| 诊断 | 由可选 Agent 解释证据并提出处理建议 | 已实现离线模拟诊断 |
-| 报告 | 分别呈现执行结果、测量有效性和电路性能 | 已有网页合成报告和独立反相器 smoke 报告 |
+| 观察 | 跟踪任务身份与观测的新鲜程度 | 已有任务的后台状态监控、有限查询与退避、Spectre 日志证据和主机总体资源快照 |
+| 重连 | 在客户端或控制器中断后核对并找回原任务 | 原提交 key 精确查询、固定任务状态查询与持久请求记录；结果未知的派发不重放 |
+| 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 已有有限的瞬态 PSF ASCII 检查与反相器专用验收；通用测量窗口和指标配方待实现 |
+| 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 仅提供建议性策略；自动重启、迁移和参数修复未实现 |
+| 诊断 | 解释证据并提出处理建议 | 已有确定性的 Spectre 故障分类；原生 Agent 问答与合成诊断保持独立 |
+| 报告 | 分别呈现执行结果、测量有效性和电路性能 | 真实任务的执行、观测、数据与指标维度，以及独立的合成报告和开发者 smoke 报告 |
 
 ### 一份报告需要区分三个问题
 
@@ -72,7 +72,8 @@ spiceowl/
 ├── src/spiceowl/              # 可安装的 Python 软件包
 │   ├── domain/                # 实验、尝试、回执与事件模型
 │   ├── adapters/              # 执行环境与仿真器适配
-│   ├── monitoring/            # 状态观察与故障分类
+│   ├── integrations/          # CircuitGit 客户端／资源池、诊断与 PSF ASCII 解析
+│   ├── monitoring/            # 已有真实任务的持久化观测
 │   ├── validation/            # 输入和测量验收
 │   ├── recovery/              # 恢复策略与动作提案
 │   ├── storage/               # 持久化记录与产物引用
@@ -84,9 +85,9 @@ spiceowl/
 └── tests/                     # 离线测试与合成案例
 ```
 
-软件包目前包含模拟 AI 连接、SQLite 控制器、合成回放、验收与策略函数、私有主机配置、有限 SSH 检查、可选 MCP 查询、CLI 和网页资源。[本地控制台指南](docs/local-console.md)区分已实现能力与后续任务监控；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
+软件包目前包含合成回放、原生问答、私有主机配置、有限 SSH 检查、可选只读 MCP、共用的真实任务监控／诊断／PSF 解析，以及 CLI 和网页复用的签名客户端。CircuitGit 负责项目物化、执行身份、派发和原生产物收集。[本地控制台指南](docs/local-console.md)说明独立的演示与真实仿真视图；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
 
-当前切片加入 **服务器池、仿真来源计划和原生问答**，接口见 [P0.3 约定](docs/contracts/p03-pool-agent.md)；[P0.2 约定](docs/contracts/p02-connectivity.md)记录 SSH/MCP 基础。更广的[整合实施方案](docs/design/integration-plan.md)还计划加入独立 API-key 路线与 ACP。[三个专题设计](docs/design/README.md)通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
+当前[独立仿真入口](docs/standalone-runtime.md)建立在 **服务器池、仿真来源计划和原生问答** 之上，基础接口见 [P0.3 约定](docs/contracts/p03-pool-agent.md)；[P0.2 约定](docs/contracts/p02-connectivity.md)记录 SSH/MCP 基础。更广的[整合实施方案](docs/design/integration-plan.md)还计划加入独立 API-key 路线与 ACP。[三个专题设计](docs/design/README.md)通过[共享接口边界](docs/contracts/interface-boundaries.md)对齐。
 
 ## 从哪里开始
 
@@ -110,6 +111,17 @@ python3 -m venv .venv
 
 真实问答使用 `agents add --file PROFILE.json` 注册私有 runtime 配置，再打开 **Agent chat**。它复用 runtime 现有的服务提供商和认证配置，可能是订阅，也可能是另外配置的 API 路由。请求有持久化标识，不自动切换提供商，也不提供仿真操作工具。见[原生问答指南](docs/native-agent.md)。
 
+## 接入真实仿真控制台
+
+为已授权且正在运行的 CircuitGit 网关准备私有 [live-client 配置](examples/live-client.example.json)，然后让 CLI 和网页使用同一文件：
+
+```bash
+spiceowl live --client-config /absolute/private/live-client.json runtime
+spiceowl serve --live-client-config /absolute/private/live-client.json
+```
+
+[独立仿真指南](docs/standalone-runtime.md)说明服务器授权、精确的项目／配置／提交身份、显式提交与收集，以及未知请求的原 key 查询。这条路线直接用远端 Spectre 执行准备好的网表，不启动 Virtuoso 或 OCEAN。本地客户端无需 PDK 文件；电路需要的授权模型、别名映射、哈希固定值和仿真许可证仍须在远端执行环境正确配置。后台观察需要 CircuitGit 服务持续运行。当前 `watch` 只观察已有任务，不自动收集、重启求解器或修改参数。
+
 ## 开发者反相器 smoke 测试
 
 源码仓库中的 [run_inverter_smoke.py](scripts/run_inverter_smoke.py) 为[原创教学 MOS1 反相器](examples/inverter/README.md)提供显式的 `prepare → stage → launch → status → collect` 流程。它需要已登记且有使用授权的 Linux 主机，以及具有许可证的 Spectre、GNU `timeout` 和可运行的 Python 3.6+。将 `HOST_ID` 替换为已登记主机 ID，将 `PYTHON_ABSOLUTE_PATH` 替换为远端 Python 解释器的绝对路径。逐条运行，并检查每一步结果再继续：
@@ -126,11 +138,11 @@ PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py collect --run-dir 
 
 `prepare` 会主动检查选定主机并在本地冻结源文件和验收规则，不预留资源或启动任务。`stage` 把冻结输入写入独立远端目录。`launch` 重新检查资源余量、验证远端身份和版本，并为这一次限时仿真取得唯一启动占位。如果提交结果不明，使用同一保存目录执行 `status`；不要另建 key 或盲目重新启动。确认任务终止后再 `collect`。收集过程核对哈希与完成证据，保存原生 PSF ASCII 和日志，并分别报告执行结果、测量有效性及教学反相器行为。可选 `collect --plots` 需要另行安装本地 matplotlib。
 
-请将 `.spiceowl/smoke/` 保持为私有数据。原创教学模型不代表任何制造工艺，smoke 通过也不能证明 PDK 或无人值守恢复已得到验证。这个工具独立于产品的网页/CLI 执行计划和只读 MCP；这些产品接口仍不派发仿真。资源限制与固定验收标准见[示例说明](examples/inverter/README.md)。
+请将 `.spiceowl/smoke/` 保持为私有数据。原创教学模型不代表任何制造工艺，smoke 通过也不能证明 PDK 或无人值守恢复已得到验证。这个工具仍是独立的开发者流程。可选的真实 CLI／网页入口经 CircuitGit 原有 Runner 派发；MCP 缓存查询和仅生成选址计划的命令保持原有的只读或规划范围。资源限制与固定验收标准见[示例说明](examples/inverter/README.md)。
 
-SpiceOwl 还可通过有限的只读适配器连接 IC Workbench。使用 `ic register`、`ic sync`、`ic runs` 保留原任务 ID 并查看已保存的观测；三个可选 MCP 工具向 Agent 提供本地缓存查询。提交与审批继续由 IC Workbench 原流程负责，简化监督卡片嵌入其仿真面板。此接口不代表已实现持续监控或自动恢复。见 [IC Workbench 对接指南](docs/ic-workbench.md)。
+SpiceOwl 还可通过有限的只读适配器连接 IC Workbench。使用 `ic register`、`ic sync`、`ic runs` 保留原任务 ID 并查看已保存的观测；三个可选 MCP 工具向 Agent 提供本地缓存查询。提交与审批继续由 IC Workbench 原流程负责，简化监督卡片嵌入其仿真面板。这条被动缓存接口不会开启监控或自动恢复；可选的真实客户端单独提供显式 watch。见 [IC Workbench 对接指南](docs/ic-workbench.md)。
 
-CircuitGit 可使用[外部资源选择 API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit)，扫描配置的服务器池，将选中的站点固定到待审核计划，提交前复查，再由原有 Runner 执行。保存的记录可携带历史库／单元及执行目标信息。SpiceOwl 网页／CLI 任务仍为合成数据，MCP 仍只读；两个仓库的仿真接口一起交付和测试。
+CircuitGit 可使用[外部资源选择 API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit)，扫描配置的服务器池，将选中的站点固定到待审核计划，提交前复查，再由原有 Runner 执行。保存的记录可携带历史库／单元及执行目标信息。SpiceOwl 可选的真实 CLI／网页入口复用同一 Runner，MCP 保持只读；两个仓库的仿真接口一起交付和测试。
 
 ## 参与贡献
 

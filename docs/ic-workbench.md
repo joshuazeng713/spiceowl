@@ -52,6 +52,8 @@ Preserve the following distinctions:
 
 Historical `source_commit` and `original_project_id` remain intact. The registered project association is explicit. Missing compiled-input hashes stay null. A waveform can only be opened with matching project/run/source identity; selecting an unrelated current schematic must not relabel a historical waveform.
 
+Contract revision 1.2.0 additionally accepts optional recorded `library_id` and `cell_id` on runs. The [CircuitGit external integration profile](circuitgit-integration.md) defines their historical meaning, cache guards and compatibility with older strict consumers. The fields pass through CLI and cached MCP reads without enabling library discovery or execution.
+
 ## Scope and tests
 
 This slice supports the configured IC site's stored records and existing controlled action channel. It does not implement multi-host reservations, continuous remote polling, process recovery, checkpoint migration, automatic parameter edits, or automatic resubmission.
@@ -59,3 +61,5 @@ This slice supports the configured IC site's stored records and existing control
 Run `PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_ic_*.py'`. MCP tests exercise the actual optional stdio server against synthetic local state. IC Workbench has separate gateway and supervision-component tests.
 
 An explicitly requested live read check is available as `python3 scripts/verify_ic_integration.py --help`. Its report belongs in ignored private state. Do not publish actual circuit metadata, site files, run archives, PDK contents, or license settings.
+
+Contract revision 1.2.0 also supports a bounded saved `execution_target` and pool-configured `single_site: false`. Resource selection is an explicitly invoked external Python adapter; the snapshot/CLI/MCP read path remains passive. See the [resource execution and paired-delivery profile](circuitgit-integration.md#resource-aware-execution-through-circuitgit).

@@ -130,6 +130,8 @@ PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py collect --run-dir 
 
 SpiceOwl 还可通过有限的只读适配器连接 IC Workbench。使用 `ic register`、`ic sync`、`ic runs` 保留原任务 ID 并查看已保存的观测；三个可选 MCP 工具向 Agent 提供本地缓存查询。提交与审批继续由 IC Workbench 原流程负责，简化监督卡片嵌入其仿真面板。此接口不代表已实现持续监控或自动恢复。见 [IC Workbench 对接指南](docs/ic-workbench.md)。
 
+CircuitGit 可使用[外部资源选择 API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit)，扫描配置的服务器池，将选中的站点固定到待审核计划，提交前复查，再由原有 Runner 执行。保存的记录可携带历史库／单元及执行目标信息。SpiceOwl 网页／CLI 任务仍为合成数据，MCP 仍只读；两个仓库的仿真接口一起交付和测试。
+
 ## 参与贡献
 
 欢迎模拟设计、CAD 和科学计算方向的贡献者。脱敏故障案例、测量验证器以及带故障注入测试的小功能，都是有价值的起点。

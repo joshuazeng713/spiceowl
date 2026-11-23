@@ -1,0 +1,68 @@
+{
+  "schema": "ic.supervision.snapshot.v1",
+  "project_id": "fixture-project",
+  "read_at": "2026-11-20T00:00:00+00:00",
+  "source": "stored_observations",
+  "runs": [
+    {
+      "run_id": "fixture-native-run",
+      "project_id": "fixture-project",
+      "original_project_id": "old-project",
+      "association_basis": "recorded_plan_design_id",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuration": "tran",
+      "compiled_inputs_sha256": null,
+      "state": "collected",
+      "execution": {
+        "state": "succeeded",
+        "raw_state": "simulator_complete_pending_measurements",
+        "exit_code": 0,
+        "observed_at": "2026-10-01T00:00:00+00:00"
+      },
+      "observation": {
+        "state": "recorded",
+        "observed_at": "2026-10-01T00:00:00+00:00"
+      },
+      "data": {
+        "state": "collected",
+        "raw_retained": true
+      },
+      "specification": {
+        "state": "reported",
+        "metrics": [
+          {
+            "name": "toy metric",
+            "value": 0.1,
+            "unit": null,
+            "passed": true,
+            "scope": "one node"
+          }
+        ]
+      },
+      "latest_observed_at": "2026-10-01T00:00:00+00:00",
+      "record_updated_at": "2026-10-01T00:00:00+00:00",
+      "issues": [
+        {
+          "code": "synthetic_fixture",
+          "message": "Authored offline fixture."
+        }
+      ],
+      "waveform_run_id": "fixture-native-run",
+      "artifacts": [
+        {
+          "name": "waveforms.json",
+          "bytes": 12,
+          "sha256": null,
+          "url": "/api/jobs/fixture-native-run/artifacts/waveforms.json",
+          "digest_source": "unavailable"
+        }
+      ],
+      "library_id": "Example_ADC",
+      "cell_id": "tb.inverter-1"
+    }
+  ],
+  "scanned_records": 1,
+  "unavailable_records": 0,
+  "truncated": false,
+  "single_site": true
+}

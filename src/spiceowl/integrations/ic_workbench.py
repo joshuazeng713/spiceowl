@@ -6,6 +6,7 @@ submits work, collects artifacts, follows redirects, or retries a failed read.
 
 from contextlib import contextmanager
 import copy
+from datetime import datetime
 import fcntl
 import http.client
 import json
@@ -28,7 +29,7 @@ MAX_CACHED_RUNS = 100
 ARTIFACT_NAMES = frozenset({"full-results.tar.gz", "result-summary.json", "archive-files.json",
                             "latest-status.log", "waveforms.csv", "waveforms.json", "waveforms.png"})
 IDENTITY_FIELDS = frozenset({"run_id", "project_id", "original_project_id", "source_commit",
-                             "configuration", "compiled_inputs_sha256"})
+                             "configuration", "compiled_inputs_sha256", "library_id", "cell_id", "execution_target"})
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
@@ -95,8 +96,9 @@ def _check(condition, *, identity=False):
                           "ic_gateway_identity" if identity else "ic_gateway_protocol")
 
 
-def _fields(value, names):
-    _check(isinstance(value, dict) and set(value) == set(names.split()))
+def _fields(value, names, optional=""):
+    required = set(names.split())
+    _check(isinstance(value, dict) and required <= set(value) <= required | set(optional.split()))
 
 
 def _enum(value, choices):
@@ -110,6 +112,19 @@ def _text(value, limit=240, nullable=True):
 
 def _hash(value, length=64):
     _check(value is None or isinstance(value, str) and re.fullmatch(r"[a-f0-9]{%d}" % length, value))
+
+
+def _resource_timestamp(value):
+    if value is None:
+        return
+    _check(isinstance(value, str) and len(value) <= 64 and re.fullmatch(
+        r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T"
+        r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?"
+        r"(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])", value))
+    try:
+        _check(datetime.fromisoformat(value).utcoffset() is not None)
+    except (ValueError, OverflowError):
+        _check(False)
 
 
 def _run_id(value):
@@ -129,7 +144,22 @@ def validate_run(data, project_id, expected=None):
     """Validate IC's frozen v1 projection without inventing missing evidence."""
     _fields(data, "run_id project_id original_project_id association_basis source_commit configuration "
                   "compiled_inputs_sha256 state execution observation data specification latest_observed_at "
-                  "record_updated_at issues waveform_run_id artifacts")
+                  "record_updated_at issues waveform_run_id artifacts", optional="library_id cell_id execution_target")
+    for name in ("library_id", "cell_id"):
+        value = data.get(name)
+        _check(value is None or isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}", value), identity=True)
+    if "execution_target" in data:
+        target = data["execution_target"]
+        _fields(target, "mode host_id plan_id resource_observed_at resource_reservation")
+        _enum(target["mode"], {"fixed_site", "resource_pool"})
+        _resource_timestamp(target["resource_observed_at"])
+        _check(target["resource_reservation"] is False)
+        if target["mode"] == "fixed_site":
+            _check(target["host_id"] is None and target["plan_id"] is None and target["resource_observed_at"] is None, identity=True)
+        else:
+            _check(isinstance(target["host_id"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}", target["host_id"]), identity=True)
+            _check(isinstance(target["plan_id"], str), identity=True)
+            _hash(target["plan_id"])
     _check(isinstance(data["run_id"], str) and re.fullmatch(r"[A-Za-z0-9_-]{1,180}", data["run_id"]), identity=True)
     for name in ("project_id", "original_project_id", "configuration", "state", "latest_observed_at", "record_updated_at", "waveform_run_id"):
         _text(data[name])
@@ -201,7 +231,7 @@ def validate_run(data, project_id, expected=None):
     if expected is not None:
         _check(isinstance(expected, dict) and set(expected) <= IDENTITY_FIELDS, identity=True)
         for key, value in expected.items():
-            _check(data[key] == value, identity=True)
+            _check(data.get(key) == value, identity=True)
     return copy.deepcopy(data)
 
 
@@ -210,7 +240,7 @@ def validate_supervision(data, project_id):
     _check(data["schema"] == "ic.supervision.snapshot.v1" and data["source"] == "stored_observations")
     _check(data["project_id"] == project_id, identity=True)
     _text(data["read_at"], 240, False)
-    _check(data["single_site"] is True and type(data["truncated"]) is bool)
+    _check(type(data["single_site"]) is bool and type(data["truncated"]) is bool)
     _check(type(data["scanned_records"]) is int and 0 <= data["scanned_records"] <= 200)
     _check(type(data["unavailable_records"]) is int and 0 <= data["unavailable_records"] <= data["scanned_records"])
     _check(isinstance(data["runs"], list) and len(data["runs"]) <= 25)
@@ -389,8 +419,8 @@ class ICGatewayBackend:
             # New explicit evidence can fill a historical null; known identity
             # cannot change or disappear on a later gateway read.
             for field in IDENTITY_FIELDS:
-                if prior[field] is not None:
-                    _check(prior[field] == run[field], identity=True)
+                if prior.get(field) is not None:
+                    _check(prior[field] == run.get(field), identity=True)
         observation = run["observation"] | {"source_state": run["observation"]["state"],
             "checked_at": checked_at, "last_success_at": checked_at, "error": None}
         projection = run | {"schema": "spiceowl.ic-run.v1", "gateway_id": gateway_id,

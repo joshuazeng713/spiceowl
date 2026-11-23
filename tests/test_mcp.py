@@ -54,10 +54,10 @@ def add_host(app):
     })
 
 
-def add_ic(app):
+def add_ic(app, context=None):
     backend = ICGatewayBackend(app.store.directory)
     backend.register(IC_CONFIG)
-    with patch.object(LoopbackGatewayClient, "supervision", return_value=ic_snapshot_fixture(ic_run_fixture())):
+    with patch.object(LoopbackGatewayClient, "supervision", return_value=ic_snapshot_fixture(ic_run_fixture() | (context or {}))):
         backend.refresh(IC_CONFIG["id"])
     return backend
 
@@ -287,7 +287,8 @@ class MCPIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, Controller(directory) as app:
             app.seed_demo()
             add_host(app)
-            add_ic(app)
+            context = {"library_id": "Example_ADC", "cell_id": "tb.inverter-1"}
+            add_ic(app, context)
             # An accepted but unexecuted turn must not be recovered by a reader.
             turn, _ = app.store.claim_turn("live-pending", digest("live"), "demo-agent", "demo-disconnect", SENTINEL, {})
             app.store.append_event(turn["turn_id"], "turn.fixture", {}, {"status": "running"})
@@ -323,6 +324,10 @@ class MCPIntegrationTests(unittest.TestCase):
                                 self.assertIsInstance(result.structuredContent, dict)
                                 self.assertTrue(result.structuredContent["read_only"])
                                 self.assertNotIn(SENTINEL, json.dumps(result.structuredContent))
+                                if name in {"spiceowl_list_ic_runs", "spiceowl_get_ic_run"}:
+                                    record = (result.structuredContent["runs"][0] if name == "spiceowl_list_ic_runs"
+                                              else result.structuredContent["run"])
+                                    self.assertEqual({key: record[key] for key in context}, context)
                             # Strict rejection is enforced by the handler as well
                             # as the advertised JSON schema. No tool may add actions.
                             invalid = [

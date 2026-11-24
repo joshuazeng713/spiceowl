@@ -5,22 +5,36 @@
 <h1 align="center">SpiceOwl · 仿真夜枭</h1>
 
 <p align="center"><strong>你去休息，仿真我盯。</strong></p>
-<p align="center">服务于 CircuitGit Codex 工作流的开源仿真引擎 SDK 与 CLI。</p>
+<p align="center">面向工程师与 AI Agent 的独立仿真管理工具。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>直接体验在线交互演示</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>查看产品展示</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/">体验交互控制台</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>查看 Bootstrap／Inverter 十阶段实战流程</strong></a></p>
+SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，帮助你检查服务器资源、配置 PDK 依赖、准备实验、监督长任务并解释仿真结果。工程师可以直接使用这些工具，也可以与 Agent 协作；将工具嵌入电路设计环境是可选的集成方式。
+
+## 产品展示
+
+**[打开 SpiceOwl 展示页：让 Agent 帮你管理好每一次仿真](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+
+- 交互体验 CPU、内存和观测时效如何影响服务器选择，了解 PDK 发现、配置与 LUT 复用。
+- 看清用户、Agent 与执行工具如何协作：Agent 配置、测试平台编写、提交身份、长任务监督和断连诊断。
+- 查看真实 Spectre 波形与指标，包括频谱改善后仍存在的 SOA 告警，并了解资源检查、监控和数值分析背后的工程实现。
+
+展示页区分合成教学交互与已保存的原生仿真结果，说明当前能力边界。打开页面不会提交仿真。
+
+**可选设计集成：** [CircuitGit · AI-native 本地电路设计与 Git 版本管理](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html)。其展示页说明设计工作台如何结合本地电路编辑、Git 历史和测试平台 CI，调用 SpiceOwl 的仿真管理工具。
+
+## 体验控制台
 
 > **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH 和仿真执行需要已配置的本地环境；独立使用时提供自己的 Codex 窗口，嵌入时复用 CircuitGit 的同一窗口。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md)。
 
 **双模式 Agent：** 独立 SpiceOwl 在显式 Connect 后启动自己的 Codex App-Server 对话；作为 CircuitGit 子模块时只导出工具，复用其原有窗口，绝不启动第二个 Agent。认证由所选 Codex runtime 管理。见[双模式指南](docs/dual-mode-agent.md)。配对与子模块约定见[集成指南](docs/circuitgit-integration.md)。
 
-配套 CircuitGit 开发分支新增[从零接入仿真](docs/onboarding-discovery.md)：解析导入的反相器、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
+[从零接入仿真](docs/onboarding-discovery.md)：通过已配置的后端解析导入电路源、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
 
-> **早期 Alpha：通过可选 CircuitGit 连接运行真实的独立 Spectre 仿真。** 本地 CLI 和单独的真实仿真面板可以检查已授权的服务器池，经 CircuitGit 原有 Runner 提交已固定 Git 版本的输入、后台观察已有任务，并显式收集结果。SpiceOwl 提供共用的监控器、Spectre 诊断、PSF ASCII 解析器和签名客户端。合成演示继续保留；公开演示不执行仿真。自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[统一 Agent 通道指南](docs/native-agent.md)。
+> **早期 Alpha：在 SpiceOwl 自己的控制台或 CLI 中管理仿真。** 检查已授权的服务器池、提交已固定 Git 版本的输入、后台观察已有任务并显式收集结果。SpiceOwl 提供监控、Spectre 诊断、PSF ASCII 解析和数值分析。当前远端执行适配器使用 CircuitGit Service/Runner；使用这一后端不要求在 CircuitGit 的设计界面中工作。公开演示不执行仿真，自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[Agent 配置指南](docs/dual-mode-agent.md)。
 
-[引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。配套 CircuitGit 工作台及其工具返回明确的下一步动作；新 intake 使用自己的网表及明确绑定来源的观测，缺失证据和提交结果不确定的状态会明确保留。
+[引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。接入工具返回明确的下一步动作；新 intake 使用自己的网表及明确绑定来源的观测，缺失证据和提交结果不确定的状态会明确保留。
 
 纯函数[缓存作用域选择 SDK](docs/pdk-scope-selection.md)可组合同一已观察 PDK 入口中明确选定的多个 section，检查完整依赖中的模型重名与 TMI 选项，并逐项比较后续审计的文件哈希及作用域。全库的部分覆盖状态仍然保留，执行前始终需要运行方获取新审计并完成审阅。
 
@@ -47,7 +61,7 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 | 重连 | 在客户端或控制器中断后核对并找回原任务 | 原提交 key 精确查询、固定任务状态查询与持久请求记录；结果未知的派发不重放 |
 | 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 固定条件的反相器／预备瞬态配方、有限语法的用户 TB 校验及可选 ADC 算法；通用 TB 仍须明确实验目的 |
 | 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 仅提供建议性策略；自动重启、迁移和参数修复未实现 |
-| 诊断 | 解释证据并提出处理建议 | 确定性的 Spectre 分类与五维报告；CircuitGit 在同一个 Codex 对话中呈现证据 |
+| 诊断 | 解释证据并提出处理建议 | 确定性的 Spectre 分类与五维报告；可在独立 Agent 会话或嵌入宿主的会话中读取证据 |
 | 报告 | 分别呈现执行结果、测量有效性和电路性能 | 五个独立实验维度：执行、测量、性能、工作条件检查与依赖来源 |
 
 ### 一份报告需要区分三个问题

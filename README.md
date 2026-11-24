@@ -5,22 +5,36 @@
 <h1 align="center">SpiceOwl</h1>
 
 <p align="center"><strong>You sleep. SpiceOwl keeps watch.</strong></p>
-<p align="center">An open-source simulation engine SDK and CLI for CircuitGit's Codex workflow.</p>
+<p align="center">An independent simulation management tool for engineers and AI agents.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Current alpha source</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>Explore the product showcase</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/">Open the interactive console demo</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Current alpha source</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>Explore the full Bootstrap/Inverter workflow</strong></a></p>
+SpiceOwl has its own web console, Agent conversation, CLI and Python SDK. It helps you check server capacity, configure PDK dependencies, prepare experiments, supervise long runs and interpret simulation results. Engineers can use its tools directly or work with an Agent; embedding those tools in a circuit design environment is an optional integration.
+
+## Product showcase
+
+**[Explore SpiceOwl: let an Agent help manage every simulation](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+
+- Try server selection with CPU, memory and observation freshness, and follow PDK discovery, configuration and LUT reuse.
+- See how users, Agents and execution tools cooperate: Agent setup, testbench preparation, submission identity, long-running supervision and disconnect diagnosis.
+- Inspect real Spectre waveforms and metrics, including an improved spectrum with remaining SOA warnings, and explore the engineering behind resource checks, monitoring and numerical analysis.
+
+The showcase distinguishes synthetic teaching controls from saved native simulation results and explains current capability boundaries. Opening it does not submit a simulation.
+
+**Optional design integration:** [CircuitGit — AI-native local circuit design and Git version management](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html). Its showcase explains how a design workbench can use SpiceOwl's tools alongside local circuit editing, Git history and testbench CI.
+
+## Try the console
 
 > **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use the standalone Codex window or CircuitGit's existing window in embedded mode. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
-> **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [unified Agent channel guide](docs/native-agent.md).
+> **Early alpha — simulation management from SpiceOwl's own console or CLI.** Scan an authorized server pool, submit committed inputs, observe existing runs in the background, and explicitly collect results. SpiceOwl provides monitoring, Spectre diagnostics, PSF ASCII parsing and numerical analysis. The current remote execution adapter uses CircuitGit's Service/Runner; using that backend does not require working in CircuitGit's design interface. The public demo executes no simulation; automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [Agent setup guide](docs/dual-mode-agent.md).
 
 **Two Agent modes:** standalone SpiceOwl owns one explicitly connected Codex App-Server window; embedded SpiceOwl exports tools into CircuitGit's existing window and never starts a second Agent. Authentication stays with the selected Codex runtime. See the [dual-mode guide](docs/dual-mode-agent.md). See the [paired integration and submodule contract](docs/circuitgit-integration.md).
 
-The paired CircuitGit development branch also provides a [fresh simulation intake](docs/onboarding-discovery.md): parse an imported inverter, discover selected SSH environments and model candidates, then freeze explicit experiment conditions. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
+[Simulation intake](docs/onboarding-discovery.md) parses imported circuit source, discovers selected SSH environments and model candidates, then freezes explicit experiment conditions through the configured backend. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
 
-[Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired CircuitGit workbench and its tools return exact next actions; missing evidence and uncertain submissions remain explicit.
+[Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The onboarding tools return exact next actions; missing evidence and uncertain submissions remain explicit.
 
 The pure [cached scope selection SDK](docs/pdk-scope-selection.md) combines explicitly selected sections of one observed PDK entry, checks the full dependency namespace and TMI options, and compares a subsequent audit against every expected file hash and scope. It preserves partial-library status and requires the execution owner's fresh audit and review.
 
@@ -47,7 +61,7 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Frozen inverter/prepared-transient recipes, finite authored-TB validation, and optional named ADC algorithms; general TB intent remains explicit |
 | Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; automatic restart, migration and parameter repair are not implemented |
-| Diagnose | Explain evidence and propose actions | Deterministic Spectre classification and five-dimension reports; CircuitGit presents evidence in its Codex conversation |
+| Diagnose | Explain evidence and propose actions | Deterministic Spectre classification and five-dimension reports; evidence is available in the standalone Agent conversation or an embedded host conversation |
 | Report | Separate execution outcome, measurement validity, and circuit performance | Five independent experiment dimensions: execution, measurement, performance, operating qualification and dependency provenance |
 
 ### A morning report should answer three different questions

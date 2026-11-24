@@ -63,7 +63,10 @@ HTTP server and Pages builder; no filesystem scan imports private runtime data.
 
 ## Product-specific management story
 
-The revised guide centers Agent-assisted simulation management. It now explains
+The revised guide presents SpiceOwl as an independent simulation management tool,
+with its own console, Agent conversation, CLI and Python SDK. CircuitGit is an
+optional design integration; the current Service/Runner execution dependency is
+documented in setup details rather than used as the product definition. The guide explains
 user-provided information and observed evidence; standalone vs embedded Agent
 configuration; resource scans, freshness and CPU/RAM reserves; bounded PDK discovery,
 section/closure selection and SQLite LUT reuse; Agent-authored TBs; exact run/key

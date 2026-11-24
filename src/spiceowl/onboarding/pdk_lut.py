@@ -23,6 +23,7 @@ NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_.$:+-]{0,127}\Z')
 DEFAULT_MAX_AGE_S = 86400
 MAX_DATABASE_BYTES = 128 * 1024 * 1024
 MAX_QUERY_BYTES = 2 * 1024 * 1024
+MAX_LIBRARY_SNAPSHOT_BYTES = 18 * 1024 * 1024
 _LIBRARY_ROOT_INDEX = '''
     CREATE TABLE IF NOT EXISTS library_root_scopes (
         cache_id TEXT NOT NULL, scope_key TEXT NOT NULL,
@@ -510,6 +511,102 @@ class PdkLut:
             'state': 'clock_skew' if age < 0 else 'expired' if stale else 'within_local_age_policy',
             'remote_content_current': 'unknown'}
         result.update(status='stale' if stale else 'hit', scan_required=stale, record=record)
+        return result
+
+    def lookup_library_snapshot(self, *, server_identity, roots, library_id,
+                                content_fingerprint, cache_id,
+                                max_age_s=DEFAULT_MAX_AGE_S, now=None):
+        """Export one exact retained library after checking all stored bindings.
+
+        This reads only the selected SQLite row. It never consults derived model
+        indexes, refreshes a scan, or substitutes another observation. Digests
+        check stored consistency; the caller still owns the original observation
+        identity and the later fresh dependency audit and execution authority.
+        """
+        from .pdk_discovery import MAX_LIBRARY_RESULT_BYTES, validate_pdk_library
+        identity, requested_roots = _identity(server_identity), _roots(roots)
+        current = _timestamp(time.time() if now is None else now)
+        age_limit = _timestamp(max_age_s)
+        for value in (library_id, content_fingerprint, cache_id):
+            if type(value) is not str or not HASH.fullmatch(value): _invalid()
+        result = {'schema': 'spiceowl.pdk-library-snapshot.v1', 'status': 'miss',
+            'record': None, 'library': None, 'missing': [], 'scan_required': True,
+            'fresh_audit_required': True, 'remote_freshness_verified': False,
+            'ready_to_run': False}
+        if self.index_version < 3: return result
+        try:
+            # Do not materialize arbitrarily enlarged stored JSON into Python.
+            # Both guarded values and their identities come from one SQL read.
+            row = self.connection.execute('''SELECT cache_id,scope_key,library_id,
+                content_fingerprint,observed_at,
+                CASE WHEN length(CAST(metadata AS BLOB))<=? THEN metadata END AS metadata,
+                CASE WHEN length(CAST(library AS BLOB))<=? THEN library END AS library
+                FROM library_observations WHERE cache_id=?''',
+                (MAX_LIBRARY_SNAPSHOT_BYTES, MAX_LIBRARY_RESULT_BYTES, cache_id)).fetchone()
+        except sqlite3.DatabaseError:
+            raise DomainError('The selected PDK snapshot could not be read.', 'pdk_lut_storage') from None
+        if row is None: return result
+
+        def unique_object(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value: _invalid('Stored PDK snapshot JSON contains duplicate fields.')
+                value[key] = item
+            return value
+
+        def decode(raw, maximum):
+            if type(raw) is not str or len(raw.encode('utf-8')) > maximum:
+                _invalid('The selected PDK snapshot exceeds its bounded storage encoding.')
+            try:
+                value = json.loads(raw, object_pairs_hook=unique_object)
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                _invalid('The selected PDK snapshot contains invalid JSON.')
+            if type(value) is not dict or len(_json(value).encode()) > maximum:
+                _invalid('The selected PDK snapshot exceeds its bounded JSON format.')
+            return value
+
+        library = decode(row['library'], MAX_LIBRARY_RESULT_BYTES)
+        record = decode(row['metadata'], MAX_LIBRARY_SNAPSHOT_BYTES)
+        validate_pdk_library(library)
+        stored_identity = _identity(record.get('server_identity'))
+        canonical_roots = _roots(library['roots'])
+        observed = _timestamp(row['observed_at'])
+        scope_key = _digest({'server_identity': stored_identity, 'roots': canonical_roots, 'mode': 'full_library'})
+        files = {item['path']: item['sha256'] for item in library['files']}
+        fingerprint = _digest({'roots': canonical_roots, 'files': sorted(files.items())})
+        expected_id = _digest({'scope_key': scope_key, 'library_id': library['library_id'],
+            'content_fingerprint': fingerprint, 'observed_at': observed})
+        expected_record = {'schema': 'spiceowl.pdk-library-cache.v1', 'cache_id': expected_id,
+            'library_id': library['library_id'], 'server_identity': stored_identity, 'roots': canonical_roots,
+            'content_fingerprint': fingerprint, 'observed_at': observed,
+            'coverage': library['coverage'], 'files': library['files'],
+            'audit_limits': library['audit_limits'], 'search_policy': library.get('search_policy', {}),
+            'search_complete': library['search_complete'], 'fresh_audit_required': True,
+            'remote_freshness_verified': False, 'ready_to_run': False}
+        accepted_roots = [canonical_roots]
+        if 'requested_roots' in library:
+            expected_record['requested_roots'] = list(library['requested_roots'])
+            expected_record['root_resolutions'] = [
+                {'requested_root': logical, 'canonical_root': canonical}
+                for logical, canonical in zip(library['requested_roots'], library['roots'])]
+            accepted_roots.append(_roots(library['requested_roots']))
+        if (row['cache_id'] != expected_id or row['scope_key'] != scope_key
+                or row['library_id'] != library['library_id'] or row['content_fingerprint'] != fingerprint
+                or _json(record) != _json(expected_record)):
+            _invalid('Stored PDK snapshot metadata, identities or file fingerprints disagree.')
+        if (identity != stored_identity or requested_roots not in accepted_roots
+                or library_id != library['library_id'] or content_fingerprint != fingerprint):
+            return result
+        age = current - observed
+        stale = age < 0 or age > age_limit
+        record['staleness'] = {'age_s': age, 'max_age_s': age_limit,
+            'state': 'clock_skew' if age < 0 else 'expired' if stale else 'within_local_age_policy',
+            'remote_content_current': 'unknown'}
+        result.update(status='stale' if stale else 'hit', record=record,
+                      library=None if stale else library, scan_required=stale)
+        if len(_json(result).encode()) > MAX_LIBRARY_SNAPSHOT_BYTES:
+            raise DomainError('The complete PDK snapshot export exceeds its byte bound; no evidence was truncated.',
+                              'pdk_lut_snapshot_size')
         return result
 
     def query_library_devices(self, *, model_names=None, offset=0, limit=64, **scope):

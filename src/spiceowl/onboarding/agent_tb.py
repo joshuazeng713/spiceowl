@@ -838,16 +838,29 @@ def inspect_agent_source(source, *, source_id='dut.scs', support_files=None):
 
 
 def _binding(value):
-    required = {'discovery_id', 'candidate_id', 'sections', 'model_names', 'pdk_sha256'}
-    optional = {'entry_sha256', 'tmi_candidate_id', 'audit_sha256', 'veriloga_standard_includes', 'veriloga_header_closure'}
-    if type(value) is not dict or not required <= set(value) or set(value) - required - optional:
+    """Validate one static identity branch; neither grants execution authority."""
+    if type(value) is not dict:
         _invalid('Supply the explicit selected PDK binding fields.')
-    for field in ('discovery_id', 'candidate_id'):
-        if type(value[field]) is not str or not 1 <= len(value[field]) <= 160 or not re.fullmatch(r'[A-Za-z0-9_:+.-]+', value[field]):
-            _invalid('PDK identities must be bounded opaque identifiers.')
-    for field in ('pdk_sha256', 'entry_sha256', 'audit_sha256'):
+    scoped = 'scope_selection_id' in value or 'library_id' in value
+    required = {'sections', 'model_names', 'pdk_sha256'}
+    optional = {'entry_sha256', 'audit_sha256', 'veriloga_standard_includes', 'veriloga_header_closure'}
+    digests = ('pdk_sha256', 'entry_sha256', 'audit_sha256')
+    if scoped:
+        required |= {'scope_selection_id', 'library_id'}
+        optional.add('tmi_option_id')
+        digests += ('scope_selection_id', 'library_id', 'tmi_option_id')
+    else:
+        required |= {'discovery_id', 'candidate_id'}
+        optional.add('tmi_candidate_id')
+    if not required <= set(value) or set(value) - required - optional:
+        _invalid('Supply exactly one explicit PDK binding identity branch.')
+    if not scoped:
+        for field in ('discovery_id', 'candidate_id'):
+            if type(value[field]) is not str or not 1 <= len(value[field]) <= 160 or not re.fullmatch(r'[A-Za-z0-9_:+.-]+', value[field]):
+                _invalid('PDK identities must be bounded opaque identifiers.')
+    for field in digests:
         if field in value and (type(value[field]) is not str or not HASH.fullmatch(value[field])):
-            _invalid('PDK byte and audit digests must be exact SHA-256 values.')
+            _invalid('PDK scope, byte and audit digests must be exact SHA-256 values.')
     for field in ('sections', 'model_names'):
         rows = value[field]
         if type(rows) is not list or len(rows) > 512:
@@ -858,7 +871,7 @@ def _binding(value):
             _invalid('PDK selections cannot contain duplicate values.')
     if not value['sections'] or any(row is None for row in value['model_names']):
         _invalid('Select explicit sections and literal model names.')
-    if value.get('tmi_candidate_id') is not None and (type(value['tmi_candidate_id']) is not str or
+    if not scoped and value.get('tmi_candidate_id') is not None and (type(value['tmi_candidate_id']) is not str or
             not re.fullmatch(r'[A-Za-z0-9_:+.-]{1,160}', value['tmi_candidate_id'])):
         _invalid('Use an observed opaque TMI candidate identity.')
     if 'veriloga_standard_includes' in value:
@@ -945,7 +958,9 @@ def validate_agent_tb(*, source, testbench, support_files=None, criteria, pdk_bi
     ``pdk_sha256`` identifies the caller-generated managed ``pdk.scs`` wrapper,
     not an entire PDK. Actual model closure verification and human review remain
     the caller's responsibility; this function accepts neither paths nor code
-    to execute for those operations.
+    to execute for those operations. A cached scope selection and its library
+    identity are an alternative to a discovery/candidate identity, not proof of
+    a fresh dependency audit or permission to run.
     """
     documents = _documents(source, support_files, testbench)
     if type(criteria) is not dict or not criteria:

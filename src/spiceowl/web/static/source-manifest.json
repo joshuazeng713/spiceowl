@@ -1,0 +1,48 @@
+{
+  "schema": "ic.workflow.source-manifest.v1",
+  "publicationOnly": true,
+  "files": [
+    {
+      "id": "bootstrap-dut",
+      "kind": "public_circuit",
+      "label": "Public RS9_L5_9bit_Bootstrap circuit with embedded @RNL geometry",
+      "path": "data/sources/bootstrap-dut.publication.scs",
+      "originalSourceSha256": "9b879b2fb1c6918606317875f3bfc1370f2c6380b34c747c013a3cc9ff5f78b6",
+      "publicationSha256": "808da690214b9e8ee1c0b2ce05c4dbf7eda69d6d71a198776d3cd5c53597b2c0",
+      "transformation": "Added two publication notice comment lines; the source body is unchanged.",
+      "submitted": false,
+      "sourceRepositoryPath": "lib/pipetisar-real/RS9_L5_9bit_Bootstrap/schematic/RS9_L5_9bit_Bootstrap.scs"
+    },
+    {
+      "id": "inverter-dut",
+      "kind": "public_circuit",
+      "label": "Public independent CMOS_INVERTER circuit with newly authored geometry",
+      "path": "data/sources/inverter-dut.publication.scs",
+      "originalSourceSha256": "05b72c015ebaec66d1fdf0700fe425d6c03c1791c1e4758ee2fb392544d2ffc7",
+      "publicationSha256": "d41d38c83de57359ea4bc9ecd07e0976cc4f9b2796e9eb8ceed235565e441db8",
+      "transformation": "Added two publication notice comment lines; the source body is unchanged.",
+      "submitted": false,
+      "sourceRepositoryPath": "lib/basics/cmos-inverter/schematic/cmos-inverter.scs"
+    },
+    {
+      "id": "bootstrap-tb",
+      "kind": "authored_testbench",
+      "label": "Frozen Bootstrap authored testbench, review revision 10",
+      "path": "data/sources/bootstrap-tb.publication.scs",
+      "originalSourceSha256": "3171d9d01e3e2becfa3c93c7a5fa9bfac8a565109e0a3090aa7aa28234941137",
+      "publicationSha256": "d4f09ec705c26558648ac6131532cfb5e1e2e1df66bc44255645af0b888d2e0c",
+      "transformation": "Added two publication notice comment lines; the source body is unchanged.",
+      "submitted": false,
+      "sourceRepositoryPath": null
+    },
+    {
+      "id": "bootstrap-evidence",
+      "kind": "allowlist_summary",
+      "label": "Manually constructed summary of the frozen review; no runtime dump",
+      "path": "data/sources/bootstrap-evidence.publication.json",
+      "publicationSha256": "17b278721a52a292232a7ea1454ee335d382a6ed35124ad5b28a171939ff69b4",
+      "transformation": "Manually selected facts from source and revision-10 review. Private fields and model implementations omitted.",
+      "submitted": false
+    }
+  ]
+}

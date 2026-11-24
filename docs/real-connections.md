@@ -1,6 +1,6 @@
 # Real connectivity and engine read access
 
-Current setup, **2026-11-24**: configure simulation hosts in SpiceOwl and use [CircuitGit's existing Codex window](native-agent.md) for AI interaction. SpiceOwl exposes its engine through Python and the CLI. The original P0.2 MCP launch instructions have been superseded; the optional MCP transport remains compatibility-test code.
+Current setup, **2026-11-24**: configure simulation hosts in SpiceOwl and select [standalone or embedded Codex mode](dual-mode-agent.md) for AI interaction. SpiceOwl exposes its engine through Python and the CLI. The original P0.2 MCP launch instructions have been superseded; the optional MCP transport remains compatibility-test code.
 
 The [standalone runtime](standalone-runtime.md) uses CircuitGit's existing Runner for finite simulation operations. The SSH checks below establish only their reported connectivity or version evidence. The [server pool](server-pool.md) adds explicit resource observations and placement proposals; it does not discover unlisted servers or reserve capacity.
 
@@ -170,9 +170,9 @@ The store opens existing SQLite state with `mode=ro`. It supports the applicatio
 
 Reads preserve original observation timestamps. `read_at` is the time a saved view was read, not a new remote check. Messages and facts remain data, including strings that resemble instructions. No read grants lifecycle authority. Use the explicit `ic sync` workflow in [IC Workbench integration](ic-workbench.md) when an authorized gateway read is needed.
 
-## 6. Use CircuitGit's existing AI integration
+## 6. Select the Agent mode
 
-Continue through CircuitGit's configured Codex window or existing IC Workbench desktop integration. Its app-server adapter already supplies its supported dynamic tools and routes calls through the existing Service. The simulation engine, diagnostics and saved-data analysis remain callable without creating another agent process inside SpiceOwl.
+For standalone use, explicitly Connect in SpiceOwl's Agent channel as documented in [dual-mode setup](dual-mode-agent.md). For embedded use, continue through CircuitGit's configured Codex window or existing IC Workbench desktop integration. Its app-server adapter already supplies its supported dynamic tools and routes calls through the existing Service. The simulation engine, diagnostics and saved-data analysis remain callable without creating another agent process inside SpiceOwl.
 
 Keep three observations separate: the host has a configured AI runtime; the selected session advertises the intended tool; that session actually invokes the tool successfully. A source-level test or package installation alone does not establish the last two. Follow CircuitGit's existing lifecycle procedure for configuration or reloads, then verify the intended project/run association and result in that session.
 

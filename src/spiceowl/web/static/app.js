@@ -15,6 +15,12 @@ let placement = null, executionPlan = null, poolScanning = false;
 let requestedCpus = 4, requestedMemory = 8, requestedSimulator = 'spectre';
 let plannedKind = 'standalone', plannedReference = '', plannedHost = '';
 let selectedQa = null, qaView = null;
+const codexPanelState = {loaded: false, loading: false, busy: false, status: null, error: null,
+  stream: null, streamState: 'idle', cursor: 0, statusCursor: 0, threads: [], selectedThread: null,
+  approvals: new Map(), profile: '', model: '', draft: '', pending: null, pendingLoaded: false,
+  historyTruncated: false};
+const CODEX_PENDING_KEY = 'spiceowl.codex-pending';
+const isStandaloneAgent = () => !isPublicDemo() && state.agent_channel?.mode === 'standalone';
 let poolImportPreview = null;
 let selectedHostIds = null;
 let hostSelectionRevision = 0, planningBusy = false;
@@ -66,7 +72,7 @@ function publicLocalPage() {
 cd spiceowl
 python3 -m venv .venv
 .venv/bin/python -m pip install .
-.venv/bin/spiceowl serve --demo</pre><p>Open the loopback address printed by that command. This public page never connects to that address or to your computer.</p><h3>Connect only when you choose</h3><p>The local console can register an existing SSH route, make explicit host checks and connect a configured CircuitGit simulation runtime. Agent conversations stay in CircuitGit’s Codex window; this page does not verify that connection.</p><div class="public-info-links"><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">Local setup guide</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">Host connection guide</a><a class="button secondary" href="#overview">Back to the demo</a></div></div></section>`;
+.venv/bin/spiceowl serve --demo</pre><p>Open the loopback address printed by that command. This public page never connects to that address or to your computer.</p><h3>Connect only when you choose</h3><p>The local console can register an existing SSH route, make explicit host checks and connect a configured CircuitGit simulation runtime. Standalone mode offers an explicit local Codex connection. Embedded mode shares CircuitGit’s current Codex conversation.</p><div class="public-info-links"><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">Local setup guide</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">Host connection guide</a><a class="button secondary" href="#overview">Back to the demo</a></div></div></section>`;
 }
 
 function publicHostPage() {
@@ -75,7 +81,7 @@ function publicHostPage() {
 
 function publicAgentPage() {
   const firstRun = state.runs[0];
-  return heading('CIRCUITGIT AGENT CHANNEL', 'Continue in CircuitGit.', 'Agent conversations use CircuitGit’s Codex window. This public demo has no live agent connection.') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><h2>One conversation in CircuitGit</h2><p>Use CircuitGit’s Codex window for agent questions and simulation work. The link below opens the CircuitGit entry page; no connection has been checked here.</p><a class="button primary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">Open CircuitGit</a><h3>Explore the local diagnosis workflow</h3><p>Open a synthetic run and choose <strong>Diagnose snapshot</strong> to see a scripted explanation based on saved evidence. The response is a fixture, not a model answer.</p><blockquote class="public-example"><span class="chip">SCRIPTED EXAMPLE</span><p>A lost connection leaves the current execution state unknown. Keep the original run identity and inspect its saved evidence before considering another submission.</p></blockquote><div class="public-info-links">${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">Try a scripted diagnosis</a>` : '<a class="button secondary" href="#overview">Explore synthetic runs</a>'}<a class="button secondary" href="#local">Run locally</a></div></div></section>`;
+  return heading('SYNTHETIC AGENT PREVIEW', 'One workflow, two ways to use it.', 'This public demo makes no model, Agent or simulator connection.') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><h2>Standalone or inside CircuitGit</h2><div class="public-feature-grid"><article><h3>Standalone console</h3><p>In a local installation, choose a Codex profile and model, connect explicitly, then converse beside your simulation tools. Streams, tool calls and human approvals stay in the same panel.</p></article><article><h3>Embedded in CircuitGit</h3><p>Use CircuitGit’s current Codex conversation. The embedded console does not create a second Agent connection or conversation.</p></article></div><blockquote class="public-example"><span class="chip">SCRIPTED PREVIEW</span><p><strong>You:</strong> Inspect this saved simulation run.</p><p><strong>Agent:</strong> I can read its stored status, review the evidence and show an approval card if an operation needs your decision.</p></blockquote><p>The preview above is authored example text. No request is sent from this public page.</p><div class="public-info-links"><a class="button primary" href="./workflow.html">Explore the workflow</a><a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">Open CircuitGit</a>${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">Try a scripted diagnosis</a>` : '<a class="button secondary" href="#overview">Explore synthetic runs</a>'}<a class="button secondary" href="#local">Run locally</a></div></div></section>`;
 }
 
 function toast(message) {
@@ -111,7 +117,8 @@ async function refresh() {
   $('#version').textContent = state.version;
   $('#connection-count').textContent = state.connections.length;
   $('#host-count').textContent = state.hosts.length;
-  $('#native-count').textContent = state.questions.length;
+  $('#native-count').textContent = isStandaloneAgent() ? codexPanelState.threads.length : state.questions.length;
+  if (!isPublicDemo()) $('.prototype-badge').textContent = isStandaloneAgent() ? 'Standalone · Codex Agent' : 'CircuitGit channel · Engine';
   $('#recent-runs').innerHTML = state.runs.slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
 }
 
@@ -281,7 +288,7 @@ function connections() {
     return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">${c.kind === 'agent' ? '✧' : '⌁'}</div><div class="connection-name"><h3>${escape(c.label)} ${chip(c.enabled ? 'enabled' : 'disabled', c.enabled ? 'green' : '')}</h3><p>${c.kind === 'agent' ? 'Agent runtime' : 'Model API'} · Offline fixture · ${escape(title(c.scenario))}</p></div><div class="connection-actions"><button class="button secondary small" data-action="probe" data-id="${escape(c.connection_id)}" ${c.enabled ? '' : 'disabled'}>Probe metadata</button><button class="button secondary small" data-action="toggle" data-id="${escape(c.connection_id)}">${c.enabled ? 'Disable' : 'Enable'}</button><button class="button secondary small" data-action="remove" data-id="${escape(c.connection_id)}" aria-label="Remove ${escape(c.label)}">Remove</button></div></div><div class="connection-readiness">${fields.map(([name, value]) => `<div class="readiness-field"><span>${name}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="connection-bottom"><span>All statuses describe a simulated backend.</span><span>Revision ${c.revision} · No credentials</span></div></article>`;
   }).join('')}</div>`;
   if (isPublicDemo()) return html + `<div class="planned-note"><strong>Continue agent work in CircuitGit</strong><p>This page only simulates connections. Open the <a href="#agents">CircuitGit agent channel</a> for its entry link, or <a href="#local">run SpiceOwl locally</a> to manage simulation observations.</p></div>`;
-  return html + `<div class="planned-note"><strong>CircuitGit agent channel</strong><p>These connection cards use fixture responses. Continue agent conversations in CircuitGit’s Codex window. The <a href="#agents">Agent channel</a> page provides its entry link and saved legacy question history.</p></div>`;
+  return html + `<div class="planned-note"><strong>CircuitGit agent channel</strong><p>These connection cards use fixture responses. The <a href="#agents">Agent panel</a> connects explicitly to Codex in standalone mode, or shares CircuitGit’s conversation in embedded mode. Legacy question history stays read only.</p></div>`;
 }
 
 function hosts() {
@@ -424,13 +431,295 @@ function poolOverview() {
   return html;
 }
 
+function codexThread(id) {
+  if (!id || typeof id !== 'string') return null;
+  let thread = codexPanelState.threads.find(item => item.id === id);
+  if (!thread) {
+    thread = {id, items: [], truncated: false};
+    codexPanelState.threads.push(thread);
+    if (codexPanelState.threads.length > 20) { codexPanelState.threads.shift(); codexPanelState.historyTruncated = true; }
+  }
+  return thread;
+}
+
+function codexItem(thread, id, type, updates = {}) {
+  if (!thread) return null;
+  let item = thread.items.find(row => row.id === id);
+  if (!item) {
+    item = {id, type, text: '', status: 'running'};
+    thread.items.push(item);
+    if (thread.items.length > 200) { thread.items.shift(); thread.truncated = true; }
+  }
+  Object.assign(item, updates);
+  return item;
+}
+
+function codexText(value, limit = 32768) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2);
+  return text.length > limit ? text.slice(0, limit) + '\n[Display truncated]' : text;
+}
+
+function codexActiveTurn() {
+  return ['starting', 'running', 'awaiting_approval'].includes(codexPanelState.status?.state);
+}
+
+function codexCanSend() {
+  const status = codexPanelState.status;
+  return isStandaloneAgent() && status?.connected === true && status.thread_id
+    && status.thread_id === codexPanelState.selectedThread && !codexActiveTurn()
+    && codexPanelState.streamState === 'connected'
+    && !status.recovery_required && !codexPanelState.pending && !codexPanelState.busy;
+}
+
+function loadCodexPending() {
+  if (codexPanelState.pendingLoaded || !isStandaloneAgent()) return;
+  codexPanelState.pendingLoaded = true;
+  try {
+    const raw = sessionStorage.getItem(CODEX_PENDING_KEY);
+    if (!raw) return;
+    const pending = JSON.parse(raw);
+    if (!pending || typeof pending.thread_id !== 'string' || typeof pending.request_key !== 'string'
+        || typeof pending.text !== 'string' || pending.text.length > 4000) throw new Error('Invalid pending record');
+    codexPanelState.pending = pending;
+    codexItem(codexThread(pending.thread_id), 'request:' + pending.request_key, 'user',
+      {text: pending.text, status: 'unconfirmed', requestKey: pending.request_key});
+  } catch {
+    codexPanelState.error = 'The saved request record could not be read. It has not been replayed.';
+    codexPanelState.pending = {request_key: 'unreadable-saved-request', thread_id: null};
+  }
+}
+
+function confirmCodexPending(requestKey, turnId) {
+  const pending = codexPanelState.pending;
+  if (!pending || pending.request_key !== requestKey || !turnId) return;
+  try { sessionStorage.removeItem(CODEX_PENDING_KEY); } catch { return; }
+  const item = codexThread(pending.thread_id)?.items.find(row => row.requestKey === requestKey);
+  if (item) item.status = 'accepted';
+  codexPanelState.pending = null;
+}
+
+function setCodexStatus(status) {
+  if (!status || typeof status !== 'object') throw new Error('The Agent status response is incomplete.');
+  if (status.mode && status.mode !== 'standalone') {
+    state.agent_channel = {...state.agent_channel, mode: status.mode};
+    closeCodexEvents();
+  }
+  codexPanelState.status = status;
+  codexPanelState.statusCursor = Number.isSafeInteger(status.cursor) ? status.cursor : codexPanelState.statusCursor;
+  codexPanelState.loaded = true;
+  if (status.thread_id) {
+    codexThread(status.thread_id);
+    if (!codexPanelState.selectedThread) codexPanelState.selectedThread = status.thread_id;
+  }
+  for (const approval of status.pending_approvals || []) {
+    if (approval && typeof approval.approval_id === 'string') codexPanelState.approvals.set(approval.approval_id, approval);
+  }
+  if (!status.recovery_required) confirmCodexPending(status.request_key, status.turn_id);
+}
+
+function closeCodexEvents() {
+  codexPanelState.stream?.close();
+  codexPanelState.stream = null;
+  codexPanelState.streamState = 'idle';
+}
+
+function openCodexEvents() {
+  if (!isStandaloneAgent() || location.hash !== '#agents' || codexPanelState.stream
+      || (!codexPanelState.status?.connected && (!codexPanelState.status?.cursor
+        || codexPanelState.cursor >= codexPanelState.status.cursor))) return;
+  const stream = new EventSource(`/api/codex/events?after=${codexPanelState.cursor}`);
+  codexPanelState.stream = stream;
+  codexPanelState.streamState = 'connecting';
+  stream.addEventListener('bridge', event => {
+    if (codexPanelState.stream !== stream) return;
+    try { receiveCodexEvent(JSON.parse(event.data)); }
+    catch { codexPanelState.error = 'An Agent event could not be read. Saved requests have not been replayed.'; }
+    if (!codexPanelState.status?.connected && codexPanelState.cursor >= codexPanelState.statusCursor) closeCodexEvents();
+    renderCodexActivity();
+  });
+  stream.onopen = () => {
+    if (codexPanelState.stream === stream) { codexPanelState.streamState = 'connected'; renderCodexActivity(); }
+  };
+  stream.onerror = () => {
+    if (codexPanelState.stream !== stream) return;
+    // EventSource reconnects only this GET with its Last-Event-ID. It never
+    // resends a message, approval, thread creation or connection request.
+    codexPanelState.streamState = 'reconnecting';
+    renderCodexActivity();
+  };
+}
+
+function receiveCodexEvent(event) {
+  if (event?.method === 'bridge/cursor_gap') {
+    codexPanelState.historyTruncated = true;
+    return;
+  }
+  if (!Number.isSafeInteger(event?.id) || event.id <= codexPanelState.cursor || typeof event.method !== 'string') return;
+  codexPanelState.cursor = event.id;
+  const params = event.params && typeof event.params === 'object' ? event.params : {};
+  const threadId = event.thread_id || params.threadId || params.thread_id || params.thread?.id;
+  const turnId = event.turn_id || params.turnId || params.turn?.id;
+  const thread = codexThread(threadId);
+  const liveEvent = event.id > codexPanelState.statusCursor;
+  const status = codexPanelState.status || {};
+  if (event.method === 'bridge/user_message' && typeof params.text === 'string') {
+    const key = event.request_key || params.request_key;
+    const existing = thread?.items.find(row => row.requestKey === key);
+    const accepted = existing?.status === 'accepted' || status.request_key === key && !!status.turn_id && !status.recovery_required;
+    codexItem(thread, 'request:' + key, 'user', {text: codexText(params.text), requestKey: key,
+      status: accepted ? 'accepted' : 'unconfirmed', preview: params.preview_only === true});
+  } else if (event.method === 'item/agentMessage/delta' && typeof params.delta === 'string') {
+    const item = codexItem(thread, params.itemId || `assistant:${turnId}`, 'assistant');
+    if (item) {
+      const text = item.text + params.delta;
+      item.preview = item.preview === true || params.preview_only === true || text.length > 32768;
+      item.text = codexText(text);
+    }
+  } else if (['item/started', 'item/completed'].includes(event.method)) {
+    const item = params.item || {};
+    const complete = event.method === 'item/completed';
+    if (item.type === 'agentMessage') {
+      const previous = codexItem(thread, item.id || `assistant:${turnId}`, 'assistant');
+      codexItem(thread, item.id || `assistant:${turnId}`, 'assistant',
+        {text: typeof item.text === 'string' ? codexText(item.text) : previous?.text || '',
+          preview: previous?.preview === true || params.preview_only === true || item.preview_only === true
+            || (typeof item.text === 'string' && item.text.length > 32768),
+          status: complete ? 'completed' : 'running'});
+    } else if (item.type === 'userMessage') {
+      const text = (item.content || []).filter(part => part?.type === 'text').map(part => part.text || '').join('\n');
+      const optimistic = thread?.items.find(row => row.requestKey && row.requestKey === event.request_key);
+      codexItem(thread, optimistic?.id || item.id || `user:${turnId}`, 'user', {text: codexText(text), status: 'accepted',
+        preview: optimistic?.preview === true || params.preview_only === true || text.length > 32768});
+    } else if (item.id) {
+      const text = codexText(item.arguments ?? item.command ?? item, Number.MAX_SAFE_INTEGER);
+      codexItem(thread, item.id, 'tool', {name: item.name || item.tool || item.type || 'Tool call',
+        text: codexText(text, 8000), preview: params.preview_only === true || item.preview_only === true || text.length > 8000,
+        status: complete ? item.status || 'completed' : 'running'});
+    }
+  } else if (event.method === 'tool/result') {
+    const text = codexText(params.result, Number.MAX_SAFE_INTEGER);
+    codexItem(thread, params.call_id || `tool:${event.id}`, 'tool', {name: params.tool || 'Tool call',
+      text: codexText(text, 8000), preview: params.preview_only === true || text.length > 8000,
+      status: params.success === true ? 'completed' : 'failed',
+      ownerReview: typeof params.result?.details?.review_url === 'string'
+        || typeof params.result?.error?.details?.review_url === 'string'});
+  } else if (event.method === 'approval/required' && typeof params.approval_id === 'string') {
+    if (liveEvent || !codexPanelState.approvals.has(params.approval_id)) {
+      codexPanelState.approvals.set(params.approval_id, {...params, thread_id: params.thread_id || threadId});
+    }
+  } else if (event.method === 'approval/resolved') {
+    const approval = codexPanelState.approvals.get(params.approval_id);
+    const currentApproval = status.pending_approvals?.some(item => item.approval_id === params.approval_id);
+    if (approval && (liveEvent || !currentApproval)) Object.assign(approval, params, {can_approve: false, can_deny: false});
+  }
+  if (liveEvent) {
+    if (event.method === 'bridge/connected') Object.assign(status, {connected: true, state: 'connected'});
+    if (event.method === 'bridge/thread') {
+      const id = threadId || params.thread_id;
+      Object.assign(status, {thread_id: id, turn_id: null, state: 'ready'});
+      codexThread(id); codexPanelState.selectedThread = id;
+    }
+    if (event.method === 'turn/started') Object.assign(status, {thread_id: threadId, turn_id: turnId,
+      request_key: event.request_key, state: 'running'});
+    if (event.method === 'turn/completed') Object.assign(status, {state: params.turn?.status === 'completed' ? 'complete' : 'failed'});
+    if (event.method === 'approval/required') Object.assign(status, {state: 'awaiting_approval'});
+    if (event.method === 'approval/resolved' && status.state === 'awaiting_approval') {
+      const unknown = params.status === 'unknown';
+      Object.assign(status, {state: unknown ? 'unknown' : 'running', recovery_required: unknown});
+    }
+    if (event.method === 'bridge/disconnected') {
+      const unresolved = status.recovery_required || params.recovery_required || ['starting', 'running', 'awaiting_approval'].includes(status.state);
+      Object.assign(status, {connected: false, state: unresolved ? 'unknown' : 'disconnected', recovery_required: !!unresolved});
+      if (unresolved) for (const approval of codexPanelState.approvals.values()) {
+        if (['pending', 'resolving'].includes(approval.status)) Object.assign(approval, {status: 'unknown', can_approve: false, can_deny: false});
+      }
+    }
+    if (event.method === 'bridge/error') {
+      Object.assign(status, {state: 'unknown', recovery_required: true});
+      codexPanelState.error = typeof params.message === 'string' ? params.message : 'The Agent operation has an unconfirmed outcome.';
+    }
+    if (event.method === 'error') codexPanelState.error = typeof params.error?.message === 'string'
+      ? params.error.message : 'The native Agent reported an error; its turn outcome remains separate.';
+    codexPanelState.status = status;
+  }
+  if (event.method === 'turn/started' || event.method === 'turn/completed') {
+    const userItem = thread?.items.find(row => row.requestKey === event.request_key);
+    if (userItem) userItem.status = 'accepted';
+    confirmCodexPending(event.request_key, turnId);
+  }
+  if (!codexPanelState.selectedThread && threadId) codexPanelState.selectedThread = threadId;
+}
+
+async function refreshCodexStatus() {
+  if (!isStandaloneAgent() || codexPanelState.loading) return;
+  codexPanelState.loading = true;
+  loadCodexPending();
+  try {
+    setCodexStatus(await api('/api/codex/status'));
+    codexPanelState.error = null;
+    openCodexEvents();
+  } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
+  finally { codexPanelState.loading = false; if (location.hash === '#agents') render(); }
+}
+
+function codexApprovalCard(approval) {
+  const current = codexPanelState.status;
+  const editable = !codexPanelState.busy && current?.connected && !current.recovery_required
+    && current.state === 'awaiting_approval' && codexPanelState.streamState === 'connected' && approval.status === 'pending'
+    && approval.thread_id === current.thread_id && approval.thread_id === codexPanelState.selectedThread
+    && !!current.turn_id && approval.turn_id === current.turn_id;
+  const fullDetails = JSON.stringify(approval.params ?? null, null, 2);
+  const preview = approval.preview_only === true || fullDetails.length > 65536;
+  const approve = editable && approval.can_approve === true && !preview;
+  const deny = editable && approval.can_deny === true;
+  return `<article class="codex-approval" data-approval-id="${escape(approval.approval_id)}"><div class="codex-card-heading"><strong>Human approval</strong>${chip(approval.status || 'pending', 'amber')}</div><p>${escape(approval.summary || 'Review this exact requested action.')}</p><details open><summary>Requested action</summary><pre>${escape(codexText(approval.params, 65536))}</pre></details>${preview ? `<p class="subtle-note">This is an incomplete or redacted preview. Approval stays disabled until complete reviewable details are available.</p><button class="button secondary small" data-action="codex-details" data-id="${escape(approval.approval_id)}">Read frozen action details</button>` : ''}<div class="codex-approval-actions"><button class="button primary small" data-action="codex-approve" data-id="${escape(approval.approval_id)}" ${approve ? '' : 'disabled'}>Approve this action</button><button class="button secondary small" data-action="codex-deny" data-id="${escape(approval.approval_id)}" ${deny ? '' : 'disabled'}>Deny</button></div>${approval.status === 'unknown' ? '<p class="subtle-note">Approval outcome is unknown. This action will not be retried automatically.</p>' : ''}</article>`;
+}
+
+function renderCodexActivity() {
+  const timeline = $('#codex-timeline');
+  if (!timeline || !isStandaloneAgent()) return;
+  const thread = codexPanelState.threads.find(item => item.id === codexPanelState.selectedThread);
+  const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
+  timeline.innerHTML = (thread?.items || []).map(item => item.type === 'tool'
+    ? `<details class="codex-tool" open><summary><strong>${escape(item.name || 'Tool call')}</strong>${chip(item.status)}</summary>${item.preview ? '<p class="subtle-note">Retained preview · incomplete tool result. The operation status does not establish that the full result is displayed.</p>' : ''}<pre>${escape(item.text)}</pre>${item.ownerReview ? '<p class="subtle-note">This operation needs the execution owner’s human review. Open the review page supplied in the result. A Codex tool approval does not approve that separate operation.</p>' : ''}</details>`
+    : `<article class="codex-message codex-${item.type}"><div>${item.type === 'user' ? 'You' : 'Codex'}${item.status === 'unconfirmed' ? ' · delivery unconfirmed' : ''}</div>${item.preview ? '<p class="subtle-note">Retained preview · incomplete message.</p>' : ''}<p>${escape(item.text || 'Waiting for response text…')}</p></article>`).join('')
+    || '<div class="codex-chat-empty"><strong>Your simulation workspace, in conversation.</strong><p>Connect explicitly, create a conversation, then send a message. Tool requests and any required human approvals appear here.</p></div>';
+  if (nearBottom) timeline.scrollTop = timeline.scrollHeight;
+  const status = codexPanelState.status;
+  $('#native-count').textContent = codexPanelState.threads.length;
+  $('#native-count').title = 'Conversations received in this browser';
+  $('#codex-runtime-state').innerHTML = chip(status?.state || 'disconnected', status?.connected ? 'green' : '');
+  $('#codex-stream-state').textContent = codexPanelState.streamState === 'reconnecting'
+    ? 'Updates interrupted; reconnecting the read-only event stream. Messages are not resent.'
+    : codexPanelState.streamState === 'connected' ? 'Live event stream' : 'No live event stream';
+  $('#codex-approvals').innerHTML = [...codexPanelState.approvals.values()]
+    .filter(item => item.thread_id === codexPanelState.selectedThread).map(codexApprovalCard).join('');
+  const pending = codexPanelState.pending;
+  $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${status?.recovery_required ? `<p class="denial">The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p>` : ''}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+  $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
+  $('#codex-send').disabled = !codexCanSend() || !codexPanelState.draft.trim();
+  $('#codex-message').disabled = !codexCanSend();
+  $('[data-action="codex-thread"]').disabled = codexPanelState.busy || !status?.connected || codexPanelState.streamState !== 'connected' || !!status?.recovery_required || codexActiveTurn() || !!pending;
+  $('[data-action="codex-disconnect"]').disabled = codexPanelState.busy || !status?.connected;
+  const connect = $('#codex-connect-form [type="submit"]');
+  connect.disabled = codexPanelState.busy || !!status?.connected || !!status?.recovery_required;
+  connect.textContent = status?.connected ? 'Codex connected' : codexPanelState.busy ? 'Connecting…' : 'Connect Codex';
+}
+
+function standaloneAgentPanel() {
+  const status = codexPanelState.status;
+  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div><div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p class="subtle-note">Tool calls follow the backend’s permissions. Review each approval card before deciding.</p><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></form></section></div>`;
+}
+
 function nativeChat() {
   if (isPublicDemo()) return publicAgentPage();
   const history = state.questions;
   if (!selectedQa || !history.some(q => q.qa_id === selectedQa)) selectedQa = history[0]?.qa_id || null;
   qaView = history.find(q => q.qa_id === selectedQa) || null;
-  let html = heading('CIRCUITGIT AGENT CHANNEL', 'Continue in CircuitGit.', 'Agent questions and readiness checks use CircuitGit’s Codex window.');
-  html += `<section class="panel public-info" data-agent-channel="circuitgit"><div class="panel-body"><h2>One conversation for your simulation work</h2><p>Open CircuitGit and continue in its Codex conversation window. SpiceOwl provides simulation tools and observations to that workflow.</p><a class="button primary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">Open CircuitGit</a><p class="subtle-note">This opens the CircuitGit entry page. Connection status has not been checked here.</p></div></section><section class="panel native-history"><div class="panel-head"><h2>Legacy question history</h2>${chip('read only')}</div><div class="panel-body"><p class="subtle-note">Previously saved requests and answers. Queued, running and unknown states are historical snapshots; this page does not resume or retry them.</p>${history.map(q => `<button class="question-history-row" data-action="native-select" data-id="${escape(q.qa_id)}"><span>${escape(q.question)}</span>${chip('saved ' + q.status, q.status === 'completed' ? 'green' : 'amber')}</button>`).join('') || '<p class="subtle-note">No legacy questions are saved in this workspace.</p>'}</div></section><section class="panel"><div class="panel-head"><h2>Saved response</h2></div><div id="native-response" class="panel-body"></div></section>`;
+  let html = isStandaloneAgent()
+    ? heading('STANDALONE CODEX AGENT', 'Keep the conversation beside your runs.', 'Connect explicitly to use Codex in this local console.') + standaloneAgentPanel()
+    : heading('CIRCUITGIT AGENT CHANNEL', 'Continue in CircuitGit.', 'Embedded mode uses CircuitGit’s current Codex conversation.') + `<section class="panel public-info" data-agent-channel="circuitgit" data-agent-mode="embedded_in_circuitgit"><div class="panel-body"><h2>One conversation for your simulation work</h2><p>Continue in CircuitGit’s current Codex window. This embedded console does not create a second Agent connection or conversation.</p><a class="button primary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">Open CircuitGit</a><p class="subtle-note">CircuitGit channel status: ${escape(title(state.agent_channel?.connection_status || 'not_checked'))}. This entry link does not establish a connection.</p></div></section>`;
+  html += `<details class="panel native-history codex-legacy-history" ${isStandaloneAgent() ? '' : 'open'}><summary>Legacy question history · read only (${history.length})</summary><div class="panel-body"><p class="subtle-note">Previously saved requests and answers. Queued, running and unknown states are historical snapshots; this page does not resume or retry them.</p>${history.map(q => `<button class="question-history-row" data-action="native-select" data-id="${escape(q.qa_id)}"><span>${escape(q.question)}</span>${chip('saved ' + q.status, q.status === 'completed' ? 'green' : 'amber')}</button>`).join('') || '<p class="subtle-note">No legacy questions are saved in this workspace.</p>'}<div id="native-response" class="panel-body"></div></div></details>`;
   return html;
 }
 
@@ -477,6 +766,7 @@ function render() {
   routeEpoch++;
   sessionView = null;
   const page = location.hash.slice(1) || 'overview';
+  if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
   $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent channel' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
@@ -489,7 +779,14 @@ function render() {
     if (plannedHost) $('#execution-host').value = plannedHost;
     updateHostSelectionUI();
   }
-  if (page === 'agents' && !isPublicDemo()) renderNativeResponse();
+  if (page === 'agents' && !isPublicDemo()) {
+    renderNativeResponse();
+    if (isStandaloneAgent()) {
+      renderCodexActivity();
+      if (!codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
+      else openCodexEvents();
+    }
+  }
 }
 
 function renderSession() {
@@ -532,7 +829,7 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
-  if (action.startsWith('live-')) return;
+  if (action.startsWith('live-') || action.startsWith('codex-')) return;
   if (isPublicDemo() && ['add-host', 'import-pool', 'host-probe', 'pool-scan', 'native-select'].includes(action)) {
     location.hash = '#local'; return;
   }
@@ -688,6 +985,11 @@ $('#pool-import-form').addEventListener('submit', async event => {
 });
 
 document.addEventListener('input', event => {
+  const codexFields = {'codex-profile': 'profile', 'codex-model': 'model', 'codex-message': 'draft'};
+  if (codexFields[event.target.id]) {
+    codexPanelState[codexFields[event.target.id]] = event.target.value;
+    if (event.target.id === 'codex-message') $('#codex-send').disabled = !codexCanSend() || !event.target.value.trim();
+  }
   const liveFields = {'live-configuration': 'configuration', 'live-source-commit': 'source_commit', 'live-run-id': 'run_id'};
   if (liveFields[event.target.id]) {
     liveDraft[liveFields[event.target.id]] = event.target.value;
@@ -698,6 +1000,10 @@ document.addEventListener('input', event => {
   if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
 document.addEventListener('change', event => {
+  if (event.target.id === 'codex-session') {
+    codexPanelState.selectedThread = event.target.value;
+    renderCodexActivity();
+  }
   if (event.target.matches('[data-host-select]')) {
     if (!poolScanning) {
       selectedHostIds ??= new Set();
@@ -719,6 +1025,57 @@ function placementRequirements() {
   if (!Number.isInteger(requestedCpus) || requestedCpus < 1 || !Number.isFinite(requestedMemory) || requestedMemory <= 0) throw new Error('Enter positive CPU and memory requirements.');
   return {cpu_count: requestedCpus, memory_bytes: Math.ceil(requestedMemory * 2**30), simulator: requestedSimulator};
 }
+
+document.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-action]');
+  const action = button?.dataset.action;
+  if (!action?.startsWith('codex-') || !isStandaloneAgent()) return;
+  if (action === 'codex-refresh') { await refreshCodexStatus(); return; }
+  if (action === 'codex-details') {
+    try {
+      const approval = await api(`/api/codex/approval?approval_id=${encodeURIComponent(button.dataset.id)}`);
+      if (approval.approval_id !== button.dataset.id) throw new Error('The action details returned a different approval identity.');
+      codexPanelState.approvals.set(approval.approval_id, approval);
+    } catch (error) { codexPanelState.error = error.message; }
+    renderCodexActivity(); return;
+  }
+  if (codexPanelState.busy || button.disabled) return;
+  codexPanelState.busy = true;
+  codexPanelState.error = null;
+  let approval = null;
+  try {
+    if (action === 'codex-thread') {
+      const status = codexPanelState.status;
+      if (!status?.connected || status.recovery_required || codexActiveTurn() || codexPanelState.pending) return;
+      renderCodexActivity();
+      const receipt = await api('/api/codex/thread', {method: 'POST'});
+      codexPanelState.selectedThread = receipt.thread_id || null;
+    } else if (action === 'codex-disconnect') {
+      closeCodexEvents();
+      renderCodexActivity();
+      await api('/api/codex/disconnect', {method: 'POST'});
+    } else if (['codex-approve', 'codex-deny'].includes(action)) {
+      approval = codexPanelState.approvals.get(button.dataset.id);
+      const status = codexPanelState.status;
+      const allowed = action === 'codex-approve' ? approval?.can_approve : approval?.can_deny;
+      if (!allowed || approval.status !== 'pending' || !status?.connected || status.recovery_required
+          || status.state !== 'awaiting_approval' || codexPanelState.streamState !== 'connected'
+          || approval.thread_id !== status.thread_id || approval.thread_id !== codexPanelState.selectedThread
+          || !status.turn_id || approval.turn_id !== status.turn_id) return;
+      if (action === 'codex-approve' && (approval.preview_only === true
+          || JSON.stringify(approval.params ?? null, null, 2).length > 65536)) return;
+      const decision = action === 'codex-approve' ? 'approve' : 'deny';
+      approval.status = 'resolving';
+      renderCodexActivity();
+      await api('/api/codex/approval', {method: 'POST', body: {approval_id: approval.approval_id, decision}});
+    }
+    await refreshCodexStatus();
+  } catch (error) {
+    await refreshCodexStatus();
+    codexPanelState.error = error.message;
+    if (approval) Object.assign(approval, {status: 'unknown', can_approve: false, can_deny: false});
+  } finally { codexPanelState.busy = false; renderCodexActivity(); }
+});
 
 document.addEventListener('submit', async event => {
   const id = event.target.id;
@@ -752,6 +1109,55 @@ document.addEventListener('submit', async event => {
   } catch (error) {
     toast(error.message);
   } finally { if (button.isConnected) button.disabled = false; planningBusy = false; updateHostSelectionUI(); }
+});
+
+document.addEventListener('submit', async event => {
+  if (!['codex-connect-form', 'codex-message-form'].includes(event.target.id)) return;
+  event.preventDefault();
+  if (!isStandaloneAgent() || codexPanelState.busy) return;
+  const connecting = event.target.id === 'codex-connect-form';
+  if (connecting && (codexPanelState.status?.connected || codexPanelState.status?.recovery_required)) return;
+  if (!connecting && (!codexCanSend() || !codexPanelState.draft.trim())) return;
+  codexPanelState.busy = true;
+  codexPanelState.error = null;
+  renderCodexActivity();
+  try {
+    if (connecting) {
+      await api('/api/codex/connect', {method: 'POST', body: {
+        ...(codexPanelState.model.trim() ? {model: codexPanelState.model.trim()} : {}),
+        ...(codexPanelState.profile.trim() ? {profile: codexPanelState.profile.trim()} : {})}});
+      await refreshCodexStatus();
+    } else {
+      const request = {thread_id: codexPanelState.status.thread_id, text: codexPanelState.draft.trim(),
+        request_key: `codex-${crypto.randomUUID()}`};
+      // Persist before dispatch. No startup, reconnect or refresh path posts it.
+      sessionStorage.setItem(CODEX_PENDING_KEY, JSON.stringify(request));
+      codexPanelState.pending = request;
+      codexItem(codexThread(request.thread_id), 'request:' + request.request_key, 'user',
+        {text: request.text, status: 'unconfirmed', requestKey: request.request_key});
+      codexPanelState.draft = '';
+      $('#codex-message').value = '';
+      renderCodexActivity();
+      const receipt = await api('/api/codex/message', {method: 'POST', body: request});
+      if (receipt.request_key === request.request_key && !receipt.recovery_required) confirmCodexPending(receipt.request_key, receipt.turn_id);
+      await refreshCodexStatus();
+    }
+  } catch (error) {
+    const rejected = ['codex_rpc_rejected', 'codex_turn_busy', 'codex_thread_mismatch',
+      'codex_journal_full', 'codex_not_connected', 'codex_embedded_mode', 'codex_bridge_closed', 'codex_recovery_required'];
+    if (!connecting && rejected.includes(error.code) && codexPanelState.pending) {
+      const pending = codexPanelState.pending;
+      try {
+        sessionStorage.removeItem(CODEX_PENDING_KEY);
+        codexPanelState.pending = null;
+        codexPanelState.draft = pending.text;
+        const item = codexThread(pending.thread_id)?.items.find(row => row.requestKey === pending.request_key);
+        if (item) item.status = 'rejected';
+      } catch { /* Preserve an unreadable request record without replay. */ }
+    }
+    await refreshCodexStatus();
+    codexPanelState.error = error.message;
+  } finally { codexPanelState.busy = false; renderCodexActivity(); }
 });
 
 document.addEventListener('submit', async event => {

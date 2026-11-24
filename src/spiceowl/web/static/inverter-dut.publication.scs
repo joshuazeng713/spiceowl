@@ -1,0 +1,56 @@
+// PUBLICATION EXCERPT — explanatory copy, not a submitted simulator input.
+// Original source identity and this derived copy have separate hashes in source-manifest.json.
+// Independent two-device inverter extracted from public circuit source.
+// No device implementation, operating condition or simulation configuration is included.
+// @RNL(type="header") {
+//   @VERSION("0.3");
+//   @USE-PACKAGE(name="eda-symbol", version="0.1", path="eda-symbol.rnl");
+//   @USE-PACKAGE(name="eda-style", version="0.1", path="eda-style.rnl")
+// }
+simulator lang=spectre
+subckt CMOS_INVERTER CLK CLKN VDD VSS
+    M9 (CLKN CLK VSS VSS) nch_ulvt_mac l=30n w=250.0n multi=1 nf=1 sd=100n \
+        ad=1.875e-14 as=1.875e-14 pd=650.0n ps=650.0n nrd=1.338763 \
+        nrs=1.338763 sa=75.0n sb=75.0n sa1=75.0n sa2=75.0n sa3=75.0n \
+        sa4=75.0n sb1=75.0n sb2=75.0n sb3=75.0n spa=100n spa1=100n \
+        spa2=100n spa3=100n sap=91.9776n sapb=114.444n spba=115.715n \
+        spba1=117.043n dfm_flag=0 spmt=1.11111e+15 spomt=0 \
+        spomt1=1.11111e+60 spmb=1.11111e+15 spomb=0 spomb1=1.11111e+60
+    M10 (CLKN CLK VDD VDD) pch_ulvt_mac l=30n w=250.0n multi=1 nf=1 \
+        sd=100n ad=1.875e-14 as=1.875e-14 pd=650.0n ps=650.0n nrd=0.777777 \
+        nrs=0.777777 sa=75.0n sb=75.0n sa1=75.0n sa2=75.0n sa3=75.0n \
+        sa4=75.0n sb1=75.0n sb2=75.0n sb3=75.0n spa=100n spa1=100n \
+        spa2=100n spa3=100n sap=91.9776n sapb=114.444n spba=115.715n \
+        spba1=117.043n dfm_flag=0 spmt=1.11111e+15 spomt=0 \
+        spomt1=1.11111e+60 spmb=1.11111e+15 spomb=0 spomb1=1.11111e+60
+// @RNL(author="circuitgit-starter") {
+//   #"M10" @SET-SYMBOL $PMOS_4TERM;
+//   #"M10" @PLACE(0, 10) => @ORIENT("R0");
+//   #"M9" @SET-SYMBOL $NMOS_4TERM;
+//   #"M9" @PLACE(0, -10) => @ORIENT("R0");
+//   %in = $IO_PORT @ATTACH &"CLK" => @PLACE(-18, 0) => @ORIENT("R0");
+//   %out = $IO_PORT @ATTACH &"CLKN" => @PLACE(26, 0) => @ORIENT("R180");
+//   %vdd = $IO_PORT @ATTACH &"VDD" => @PLACE(0, 22) => @ORIENT("R270");
+//   %vss = $IO_PORT @ATTACH &"VSS" => @PLACE(0, -22) => @ORIENT("R90");
+//   %gin = (-10, 0);
+//   %gp = (-10, 10);
+//   %gn = (-10, -10);
+//   %d = (0, 0);
+//   %vp = (0, 18);
+//   %vn = (0, -18);
+//   %bp = (18, 10);
+//   %bprail = (18, 18);
+//   %bn = (18, -10);
+//   %bnrail = (18, -18);
+//   &"CLK" @WIRE(mode="straight") {%in:1 %gin};
+//   &"CLK" @WIRE(mode="straight") {%gp %gin %gn};
+//   &"CLK" @WIRE(mode="straight") {%gp #"M10":2};
+//   &"CLK" @WIRE(mode="straight") {%gn #"M9":2};
+//   &"CLKN" @WIRE(mode="straight") {#"M10":1 %d #"M9":1};
+//   &"CLKN" @WIRE(mode="straight") {%d %out:1};
+//   &"VDD" @WIRE(mode="straight") {#"M10":3 %vp %vdd:1};
+//   &"VDD" @WIRE(mode="straight") {#"M10":4 %bp %bprail %vp};
+//   &"VSS" @WIRE(mode="straight") {#"M9":3 %vn %vss:1};
+//   &"VSS" @WIRE(mode="straight") {#"M9":4 %bn %bnrail %vn}
+// }
+ends CMOS_INVERTER

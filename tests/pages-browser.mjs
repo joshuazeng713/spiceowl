@@ -20,7 +20,7 @@ const SECRET_PATTERNS = [
   ['api_key', /\bsk-(?:proj-)?[A-Za-z0-9_-]{30,}\b/],
 ];
 const MIME = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon'};
+  '.json': 'application/json', '.scs': 'text/plain', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon'};
 
 function routePolicy(url, method, origin) {
   if (!['GET', 'HEAD'].includes(method)) return 'non_static_method';
@@ -54,10 +54,10 @@ async function inspectBuild(directory) {
       assert.ok(!entry.name.startsWith('.') || entry.name === '.nojekyll', `Unexpected hidden build entry: ${name}`);
       if (entry.isDirectory()) { await visit(path); continue; }
       assert.ok(entry.isFile(), `Build entry is not a regular file: ${name}`);
-      assert.ok(entry.name === '.nojekyll' || ['.html', '.js', '.css', '.json', '.svg', '.png', '.ico', '.txt'].includes(extname(path)),
+      assert.ok(entry.name === '.nojekyll' || ['.html', '.js', '.css', '.json', '.scs', '.svg', '.png', '.ico', '.txt'].includes(extname(path)),
         `Unexpected build file type: ${name}`);
       const raw = await readFile(path);
-      if (['.html', '.js', '.css', '.json', '.svg', '.txt'].includes(extname(path))) {
+      if (['.html', '.js', '.css', '.json', '.scs', '.svg', '.txt'].includes(extname(path))) {
         const text = raw.toString('utf8');
         for (const [label, pattern] of SECRET_PATTERNS) assert.ok(!pattern.test(text), `Public build marker ${label}: ${name}`);
         if (extname(path) === '.json') JSON.parse(text);
@@ -67,7 +67,9 @@ async function inspectBuild(directory) {
   }
   await visit(directory);
   assert.deepEqual(inventory.map(file => file.name).sort(),
-    ['.nojekyll', 'LICENSE.txt', 'app.css', 'app.js', 'build.json', 'demo-data.js', 'demo.js', 'index.html', 'owl.svg'].sort(),
+    ['.nojekyll', 'LICENSE.txt', 'app.css', 'app.js', 'build.json', 'demo-data.js', 'demo.js', 'index.html', 'owl.svg',
+      'workflow.html', 'workflow.js', 'workflow.css', 'bootstrap-dut.publication.scs', 'inverter-dut.publication.scs',
+      'bootstrap-tb.publication.scs', 'bootstrap-evidence.publication.json', 'source-manifest.json'].sort(),
     'Public build must contain only the explicit static asset list');
   const serialized = (await readFile(join(directory, 'demo-data.js'), 'utf8')).trim();
   const marker = 'window.__SPICEOWL_DEMO_DATA__=';

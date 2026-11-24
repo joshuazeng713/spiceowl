@@ -10,6 +10,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(process.env.LIVE_QA_DIR || join(ROOT, '.spiceowl/live-browser-qa'));
 const STATIC = join(ROOT, 'src/spiceowl/web/static');
 const fixture = {version: 'fixture', connections: [], hosts: [], native_agents: [],
+  agent_channel: {mode: 'embedded_in_circuitgit', connection_status: 'not_checked'},
   questions: ['queued', 'running', 'outcome_unknown', 'completed'].map(status => ({
     qa_id: `legacy-${status}`, agent_id: 'removed-legacy-profile', status,
     question: `Saved ${status} question <img src=x onerror=window.agentHistoryInjection=true>`,
@@ -29,6 +30,22 @@ const runtime = {schema: 'ic.simulation.runtime.v1', project_id: 'fixture-projec
     diagnostics: {diagnostics: [{code: 'spectre_license', redacted_excerpt: '<img src=x onerror=window.fixtureInjection=true>',
       suggested_actions: ['Inspect the saved license diagnostic. No automatic action.']}]}}]};
 let enabled = true, loseNextSubmit = false;
+const codex = {mode: 'standalone', state: 'disconnected', connected: false, thread_id: null, turn_id: null,
+  request_key: null, cursor: 0, recovery_required: false, pending_approvals: [], model: null, connection_profile: {}};
+const codexEvents = [], codexStreams = new Set();
+const fullCodexSampleResult = {samples: Array.from({length: 4096}, (_, index) => index)};
+let codexThreadCount = 0, codexTurnCount = 0, loseNextCodexMessage = false;
+function codexEvent(method, params) {
+  const event = {id: ++codex.cursor, method, params: structuredClone(params), thread_id: codex.thread_id,
+    turn_id: codex.turn_id, request_key: codex.request_key};
+  codexEvents.push(event);
+  for (const stream of codexStreams) {
+    if (!stream.response.writableEnded && event.id > stream.cursor) {
+      stream.response.write(`id: ${event.id}\nevent: bridge\ndata: ${JSON.stringify(event)}\n\n`);
+      stream.cursor = event.id;
+    }
+  }
+}
 const requests = [], pageErrors = [], blocked = [], dialogs = [];
 const staticTypes = {'/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'],
   '/app.css': ['app.css', 'text/css'], '/owl.svg': ['owl.svg', 'image/svg+xml']};
@@ -44,6 +61,100 @@ const server = createServer(async (request, response) => {
       const [name, type] = staticTypes[url.pathname]; return send(await readFile(join(STATIC, name)), 200, type);
     }
     if (request.method === 'GET' && url.pathname === '/api/state') return send(fixture);
+    if (request.method === 'GET' && url.pathname === '/api/codex/status') return send(codex);
+    if (request.method === 'GET' && url.pathname === '/api/codex/approval') {
+      const approval = codex.pending_approvals.find(item => item.approval_id === url.searchParams.get('approval_id'));
+      assert.ok(approval);
+      Object.assign(approval, {preview_only: false, can_approve: true,
+        params: {name: 'fixture_operation', arguments: {project_id: 'fixture-project', frozen_detail: 'Exact synthetic action details'}}});
+      return send(approval);
+    }
+    if (request.method === 'GET' && url.pathname === '/api/codex/events') {
+      const after = Math.max(Number(url.searchParams.get('after') || 0), Number(request.headers['last-event-id'] || 0));
+      requests.at(-1).last_event_id = request.headers['last-event-id'] || null;
+      response.writeHead(200, {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store'});
+      const stream = {response, cursor: after}; codexStreams.add(stream);
+      for (const event of codexEvents.filter(event => event.id > after)) {
+        response.write(`id: ${event.id}\nevent: bridge\ndata: ${JSON.stringify(event)}\n\n`); stream.cursor = event.id;
+      }
+      response.write(': fixture heartbeat\n\n');
+      response.on('close', () => codexStreams.delete(stream));
+      return;
+    }
+    if (request.method === 'POST' && url.pathname.startsWith('/api/codex/')) {
+      assert.equal(request.headers['x-spiceowl-token'], fixture.csrf_token);
+      let raw = ''; for await (const chunk of request) raw += chunk;
+      const body = JSON.parse(raw); requests.at(-1).body = body;
+      const action = url.pathname.split('/').at(-1);
+      if (action === 'connect') {
+        assert.equal(codex.connected, false);
+        Object.assign(codex, {state: 'connected', connected: true, model: body.model || null, connection_profile: body});
+        codexEvent('bridge/connected', {model: codex.model}); return send(codex, 202);
+      }
+      if (action === 'thread') {
+        assert.ok(codex.connected && !codex.recovery_required);
+        Object.assign(codex, {state: 'ready', thread_id: `fixture-thread-${++codexThreadCount}`, turn_id: null, request_key: null});
+        codexEvent('bridge/thread', {thread_id: codex.thread_id}); return send({thread_id: codex.thread_id, state: 'ready'}, 202);
+      }
+      if (action === 'message') {
+        assert.equal(body.thread_id, codex.thread_id); assert.ok(codex.connected && !codex.recovery_required);
+        assert.match(body.request_key, /^codex-/);
+        Object.assign(codex, {state: 'running', request_key: body.request_key, turn_id: `fixture-turn-${++codexTurnCount}`});
+        codexEvent('bridge/user_message', {text: body.text, request_key: body.request_key, state: 'pending'});
+        if (loseNextCodexMessage) {
+          loseNextCodexMessage = false;
+          Object.assign(codex, {state: 'unknown', turn_id: null, recovery_required: true});
+          return send({error: {code: 'codex_outcome_unknown', message: 'The send outcome is unconfirmed; preserve its key.'}}, 400);
+        }
+        codexEvent('turn/started', {threadId: codex.thread_id, turn: {id: codex.turn_id, status: 'inProgress'}});
+        codexEvent('item/agentMessage/delta', {threadId: codex.thread_id, turnId: codex.turn_id, itemId: codex.turn_id + '-answer', delta: 'Inspecting <img src=x onerror=window.codexInjection=true> '});
+        codexEvent('item/agentMessage/delta', {threadId: codex.thread_id, turnId: codex.turn_id, itemId: codex.turn_id + '-answer', delta: 'saved evidence.'});
+        codexEvent('tool/result', {tool: 'read_simulation_status', call_id: codex.turn_id + '-tool', success: true,
+          result: {source: 'synthetic fixture', execution: 'unknown', details: {review_url: 'https://review.example.invalid/request-fixture'}}});
+        if (codexTurnCount === 1) {
+          codexEvent('tool/result', {tool: 'read_samples', call_id: codex.turn_id + '-samples', success: true,
+            preview_only: true, result: {samples: fullCodexSampleResult.samples.slice(0, 256)}});
+          codexEvent('item/agentMessage/delta', {itemId: 'partial-delta-message', delta: 'Retained partial response', preview_only: true});
+          codexEvent('item/completed', {item: {id: 'partial-delta-message', type: 'agentMessage'}});
+          codexEvent('item/completed', {preview_only: true, item: {id: 'partial-completed-message', type: 'agentMessage', text: 'Retained completed response'}});
+        }
+        const approval = {approval_id: `fixture-approval-${codexTurnCount}`, kind: 'dynamic_tool', method: 'item/tool/call',
+          summary: 'Review this frozen synthetic operation', params: {name: 'fixture_operation', arguments: {project_id: 'fixture-project'}},
+          status: 'pending', can_approve: codexTurnCount === 1, can_deny: true, preview_only: codexTurnCount === 3,
+          request_key: codex.request_key, thread_id: codex.thread_id, turn_id: codex.turn_id};
+        codex.pending_approvals = [approval]; codex.state = 'awaiting_approval';
+        codexEvent('approval/required', approval);
+        if (codexTurnCount <= 2) {
+          const secondApproval = {...approval, approval_id: `${approval.approval_id}-second`,
+            summary: 'Review the second frozen synthetic operation', can_approve: true};
+          codex.pending_approvals.push(secondApproval);
+          codexEvent('approval/required', secondApproval);
+        }
+        return send({schema: 'spiceowl.codex-turn.v1', thread_id: codex.thread_id, turn_id: codex.turn_id,
+          request_key: codex.request_key, state: 'awaiting_approval'}, 202);
+      }
+      if (action === 'approval') {
+        const approval = codex.pending_approvals.find(item => item.approval_id === body.approval_id);
+        assert.ok(approval); assert.ok(['approve', 'deny'].includes(body.decision));
+        assert.equal(approval.thread_id, codex.thread_id); assert.equal(approval.turn_id, codex.turn_id);
+        if (body.decision === 'approve') assert.equal(approval.can_approve, true);
+        codex.pending_approvals = codex.pending_approvals.filter(item => item.approval_id !== body.approval_id);
+        if (body.decision === 'deny') for (const item of codex.pending_approvals) item.can_approve = false;
+        codex.state = codex.pending_approvals.length ? 'awaiting_approval' : 'running';
+        codexEvent('approval/resolved', {approval_id: approval.approval_id, decision: body.decision, status: 'resolved'});
+        if (!codex.pending_approvals.length) setTimeout(() => {
+          codex.state = 'complete';
+          codexEvent('turn/completed', {threadId: codex.thread_id, turn: {id: codex.turn_id, status: 'completed'}});
+        }, 30);
+        return send({approval_id: approval.approval_id, decision: body.decision, status: 'resolved'}, 202);
+      }
+      if (action === 'disconnect') {
+        codex.connected = false;
+        if (!codex.recovery_required) codex.state = 'disconnected';
+        codexEvent('bridge/disconnected', {automatic_retry: false}); return send(codex, 202);
+      }
+      return send({error: {message: 'Unexpected Codex fixture operation'}}, 404);
+    }
     if (request.method === 'GET' && url.pathname === '/api/live/runtime') return send({enabled, project_id: enabled ? 'fixture-project' : null, runtime: enabled ? runtime : null});
     if (request.method === 'GET' && url.pathname === '/api/live/submission') return send({state: 'mapping_found', run_id: 'fixture-lost-run', replay_permitted: false});
     if (request.method === 'POST' && url.pathname === '/api/live/control') {
@@ -91,7 +202,7 @@ try {
   await page.locator('[data-agent-channel="circuitgit"]').waitFor();
   const channel = page.locator('[data-agent-channel="circuitgit"]');
   assert.equal(await channel.locator('a').getAttribute('href'), 'https://circuitgit-dev.github.io/CircuitGit/');
-  assert.match(await channel.innerText(), /not been checked/i);
+  assert.match(await channel.innerText(), /not checked/i);
   assert.equal(await page.locator('#native-question-form, [data-action="native-probe"]').count(), 0);
   assert.equal(await page.locator('[data-action="native-select"]').count(), 4, 'History remains visible without registered profiles');
   assert.equal(await page.locator('#native-response img').count(), 0);
@@ -211,6 +322,129 @@ try {
   assert.equal(requests.slice(publicStart).some(item => item.path.startsWith('/api/')), false);
   await publicContext.close();
   report.checks.push('Public synthetic demo exposes no live inputs or API calls');
+
+  fixture.agent_channel = {mode: 'standalone', owner: 'spiceowl', connection_status: 'not_checked'};
+  const standaloneContext = await browser.newContext({viewport: {width: 1440, height: 1050}, serviceWorkers: 'block'});
+  await standaloneContext.route('**/*', route => {
+    if (new URL(route.request().url()).origin !== origin) { blocked.push(route.request().url()); return route.abort(); }
+    return route.continue();
+  });
+  await standaloneContext.addInitScript(pending => sessionStorage.setItem('spiceowl.native-pending', pending), legacyPending);
+  const agentPage = await standaloneContext.newPage();
+  agentPage.on('pageerror', error => pageErrors.push(error.message));
+  const agentStart = requests.length;
+  await agentPage.goto(origin + '/#agents', {waitUntil: 'networkidle'});
+  await agentPage.locator('#codex-connect-form').waitFor();
+  assert.equal(requests.slice(agentStart).filter(item => item.method === 'POST').length, 0, 'Opening standalone must not connect');
+  assert.equal(requests.slice(agentStart).some(item => item.path === '/api/codex/events'), false, 'Disconnected startup has no stream to attach');
+  assert.equal(await agentPage.locator('#workflow-link').getAttribute('href'), './workflow.html');
+  await agentPage.locator('#codex-model').fill('fixture-model');
+  await agentPage.locator('#codex-profile').fill('fixture-profile');
+  await agentPage.locator('#codex-connect-form [type="submit"]').click();
+  await agentPage.locator('[data-action="codex-thread"]:not([disabled])').waitFor();
+  assert.deepEqual(requests.findLast(item => item.path === '/api/codex/connect').body, {model: 'fixture-model', profile: 'fixture-profile'});
+  await agentPage.locator('[data-action="codex-thread"]').click();
+  await agentPage.locator('#codex-message:not([disabled])').waitFor();
+  await agentPage.locator('#codex-message').fill('Read the synthetic simulation evidence.');
+  await agentPage.locator('#codex-send').click();
+  const firstApproval = agentPage.locator('[data-approval-id="fixture-approval-1"]');
+  await firstApproval.locator('[data-action="codex-approve"]:not([disabled])').waitFor();
+  assert.match(await agentPage.locator('#codex-timeline').innerText(), /Inspecting .*saved evidence\./s);
+  assert.match(await agentPage.locator('#codex-timeline').innerText(), /read_simulation_status/);
+  assert.match(await agentPage.locator('#codex-timeline').innerText(), /execution owner’s human review/);
+  const sampleCard = agentPage.locator('.codex-tool').filter({hasText: 'read_samples'});
+  assert.match(await sampleCard.innerText(), /Retained preview · incomplete tool result/);
+  assert.match(await sampleCard.innerText(), /Completed/);
+  assert.equal(fullCodexSampleResult.samples.length, 4096);
+  assert.equal(JSON.parse(await sampleCard.locator('pre').innerText()).samples.length, 256);
+  assert.equal(await agentPage.locator('.codex-assistant').filter({hasText: 'Retained preview · incomplete message.'}).count(), 2);
+  report.checks.push('Retained 256-of-4096 sample preview and partial assistant messages stay explicitly incomplete after completion');
+  assert.equal(await agentPage.locator('#codex-timeline img').count(), 0);
+  assert.equal(await agentPage.evaluate(() => window.codexInjection), undefined);
+  assert.equal(await agentPage.evaluate(() => sessionStorage.getItem('spiceowl.codex-pending')), null, 'Acknowledged turn binds and clears only its own new key');
+  await agentPage.screenshot({path: join(OUTPUT, 'standalone-agent-desktop.png'), fullPage: true});
+  report.screenshots.push('standalone-agent-desktop.png');
+  await agentPage.setViewportSize({width: 390, height: 844});
+  assert.ok(await agentPage.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+  await agentPage.screenshot({path: join(OUTPUT, 'standalone-agent-mobile.png'), fullPage: true});
+  report.screenshots.push('standalone-agent-mobile.png');
+  await agentPage.setViewportSize({width: 1440, height: 1050});
+  await firstApproval.locator('[data-action="codex-approve"]').click();
+  const secondApproval = agentPage.locator('[data-approval-id="fixture-approval-1-second"]');
+  await secondApproval.locator('[data-action="codex-approve"]:not([disabled])').waitFor();
+  assert.match(await agentPage.locator('#codex-runtime-state').innerText(), /Awaiting approval/);
+  assert.equal(await firstApproval.locator('[data-action="codex-approve"]').isDisabled(), true);
+  assert.deepEqual(requests.findLast(item => item.path === '/api/codex/approval').body,
+    {approval_id: 'fixture-approval-1', decision: 'approve'});
+  await secondApproval.locator('[data-action="codex-approve"]').click();
+  await agentPage.waitForFunction(() => document.querySelector('#codex-runtime-state')?.textContent.includes('Complete'));
+  assert.deepEqual(requests.findLast(item => item.path === '/api/codex/approval').body,
+    {approval_id: 'fixture-approval-1-second', decision: 'approve'});
+  report.checks.push('Two approvals retain the second exact action after approving the first; backend remains awaiting approval');
+  const beforeReconnect = requests.filter(item => item.method === 'POST').length;
+  for (const stream of [...codexStreams]) stream.response.end();
+  await agentPage.waitForFunction(() => document.querySelector('#codex-stream-state')?.textContent.includes('interrupted'));
+  await agentPage.waitForFunction(() => document.querySelector('#codex-stream-state')?.textContent === 'Live event stream');
+  assert.equal(requests.filter(item => item.method === 'POST').length, beforeReconnect);
+  assert.ok(requests.findLast(item => item.path === '/api/codex/events').last_event_id, 'SSE reconnect retains its cursor');
+  report.checks.push('Standalone explicit connection, streamed text/tool cards, frozen human approval and read-only SSE reconnect');
+
+  await agentPage.locator('[data-action="codex-thread"]').click();
+  await agentPage.waitForFunction(() => document.querySelector('#codex-session')?.value === 'fixture-thread-2');
+  await agentPage.locator('#codex-session').selectOption('fixture-thread-1');
+  assert.match(await agentPage.locator('#codex-notices').innerText(), /Historical conversation/);
+  assert.equal(await agentPage.locator('#codex-message').isDisabled(), true);
+  await agentPage.locator('#codex-session').selectOption('fixture-thread-2');
+  await agentPage.locator('#codex-message').fill('Show a request that may only be denied.');
+  await agentPage.locator('#codex-send').click();
+  const denied = agentPage.locator('[data-approval-id="fixture-approval-2"]');
+  await denied.locator('[data-action="codex-deny"]:not([disabled])').waitFor();
+  assert.equal(await denied.locator('[data-action="codex-approve"]').isDisabled(), true);
+  await denied.locator('[data-action="codex-deny"]').click();
+  const secondDenied = agentPage.locator('[data-approval-id="fixture-approval-2-second"]');
+  await secondDenied.locator('[data-action="codex-deny"]:not([disabled])').waitFor();
+  assert.match(await agentPage.locator('#codex-runtime-state').innerText(), /Awaiting approval/);
+  assert.equal(await secondDenied.locator('[data-action="codex-approve"]').isDisabled(), true);
+  assert.deepEqual(requests.findLast(item => item.path === '/api/codex/approval').body,
+    {approval_id: 'fixture-approval-2', decision: 'deny'});
+  await secondDenied.locator('[data-action="codex-deny"]').click();
+  await agentPage.waitForFunction(() => document.querySelector('#codex-runtime-state')?.textContent.includes('Complete'));
+  assert.deepEqual(requests.findLast(item => item.path === '/api/codex/approval').body,
+    {approval_id: 'fixture-approval-2-second', decision: 'deny'});
+  report.checks.push('Denying one of two approvals preserves remaining deny access while backend policy disables approval');
+  await agentPage.locator('#codex-message').fill('Show a preview that needs full frozen details.');
+  await agentPage.locator('#codex-send').click();
+  const preview = agentPage.locator('[data-approval-id="fixture-approval-3"]');
+  await preview.locator('[data-action="codex-details"]').waitFor();
+  assert.equal(await preview.locator('[data-action="codex-approve"]').isDisabled(), true);
+  await preview.locator('[data-action="codex-details"]').click();
+  await preview.locator('[data-action="codex-approve"]:not([disabled])').waitFor();
+  assert.match(await preview.innerText(), /Exact synthetic action details/);
+  await preview.locator('[data-action="codex-approve"]').click();
+  await agentPage.waitForFunction(() => document.querySelector('#codex-runtime-state')?.textContent.includes('Complete'));
+  report.checks.push('Read-only historical conversations, deny-only policy and exact-details gate before approving a preview');
+
+  loseNextCodexMessage = true;
+  await agentPage.locator('#codex-message').fill('Preserve this request if its reply is lost.');
+  await agentPage.locator('#codex-send').click();
+  await agentPage.waitForFunction(() => document.querySelector('#codex-notices')?.textContent.includes('unconfirmed'));
+  const preserved = await agentPage.evaluate(() => sessionStorage.getItem('spiceowl.codex-pending'));
+  assert.ok(preserved);
+  const beforeReload = requests.filter(item => item.method === 'POST').length;
+  await agentPage.reload({waitUntil: 'domcontentloaded'});
+  await agentPage.waitForFunction(() => document.querySelector('#codex-runtime-state')?.textContent.includes('Unknown'));
+  assert.equal(requests.filter(item => item.method === 'POST').length, beforeReload, 'Reload must not resend pending text');
+  assert.equal(await agentPage.evaluate(() => sessionStorage.getItem('spiceowl.codex-pending')), preserved);
+  assert.equal(await agentPage.evaluate(() => sessionStorage.getItem('spiceowl.native-pending')), legacyPending);
+  assert.equal(await agentPage.locator('[data-action="codex-thread"]').isDisabled(), true);
+  const simulationsBefore = JSON.stringify(runtime.runs);
+  await agentPage.locator('[data-action="codex-disconnect"]').click();
+  await agentPage.waitForFunction(() => document.querySelector('[data-action="codex-disconnect"]')?.disabled === true);
+  assert.equal(JSON.stringify(runtime.runs), simulationsBefore, 'Disconnect must not cancel or modify simulations');
+  assert.equal(await agentPage.evaluate(() => sessionStorage.getItem('spiceowl.codex-pending')), preserved);
+  assert.equal(requests.slice(agentStart).some(item => item.path.startsWith('/api/agent-questions') || item.path.startsWith('/api/native-agents')), false);
+  await standaloneContext.close();
+  report.checks.push('Uncertain send survives reload without replay; Agent disconnect preserves both request and simulation identity');
   assert.deepEqual(pageErrors, []); assert.deepEqual(blocked, []); assert.deepEqual(dialogs, []);
   report.status = 'passed';
 } catch (error) { report.status = 'failed'; report.error = error.stack; process.exitCode = 1; }

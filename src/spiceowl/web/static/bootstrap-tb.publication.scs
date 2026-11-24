@@ -1,0 +1,26 @@
+// PUBLICATION EXCERPT — explanatory copy, not a submitted simulator input.
+// Original source identity and this derived copy have separate hashes in source-manifest.json.
+simulator lang=spectre
+global 0
+include "pdk.scs"
+include "dut.scs"
+// Explicit proposed standalone sample-and-hold experiment.
+// The DUT output VBST drives MSAMPLE; spectral data use VOUT.
+parameters VDDVAL=1 VCM=0.5 AIN=0.45 FS=1G FIN=442138671.875
+VDD0 (VDD 0) vsource type=dc dc=VDDVAL
+VIN0 (VIN 0) vsource type=sine sinedc=VCM ampl=AIN freq=FIN
+VCLK0 (CLK 0) vsource type=pulse val0=0 val1=VDDVAL delay=0 rise=10p fall=10p width=230p period=1n
+XDUT (CLK VBST VDD VIN 0) RS9_L5_9bit_Bootstrap
+    MSAMPLE (VIN VBST VOUT 0) nch_lvt_mac l=30n w=500n multi=1 nf=1 sd=100n \
+        ad=3.75e-14 as=3.75e-14 pd=1.15u ps=1.15u nrd=0.662935 \
+        nrs=0.662935 sa=75.0n sb=75.0n sa1=75.0n sa2=75.0n sa3=75.0n \
+        sa4=75.0n sb1=75.0n sb2=75.0n sb3=75.0n spa=100n spa1=100n \
+        spa2=100n spa3=100n sap=91.9776n sapb=114.444n spba=115.715n \
+        spba1=117.043n dfm_flag=0 spmt=1.11111e+15 spomt=0 \
+        spomt1=1.11111e+60 spmb=1.11111e+15 spomb=0 spomb1=1.11111e+60
+CHOLD (VOUT 0) capacitor c=100f
+RLEAK (VOUT 0) resistor r=1G
+simulatorOptions options reltol=1e-5 vabstol=1e-8 iabstol=1e-14 temp=27 tnom=27 gmin=1e-12
+saveOptions options save=selected
+tran_bootstrap tran stop=4.15975u maxstep=5p errpreset=conservative method=gear2only skipstart=64n skipstop=4.15975u strobedelay=750p strobeperiod=1n strobeoutput=strobeonly outputstart=64.75n
+save CLK VIN VOUT VBST VDD VDD0:p

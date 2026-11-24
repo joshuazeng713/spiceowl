@@ -2,6 +2,7 @@
 import copy
 import http.client
 import json
+from pathlib import Path
 import sys
 import threading
 import types
@@ -17,6 +18,8 @@ class LiveHttpTests(unittest.TestCase):
         self.synthetic = {'version': 'fixture', 'runs': [{'run_id': 'demo', 'synthetic': True}],
                           'connections': [], 'hosts': [], 'native_agents': [], 'questions': [], 'sessions': []}
         self.controller = Mock()
+        self.controller.agent_mode = 'embedded_in_circuitgit'
+        self.controller.store.directory = Path('/synthetic/embedded-no-store')
         self.controller.state.side_effect = lambda: copy.deepcopy(self.synthetic)
         self.client = Mock()
         self.client.project_id = 'fixture-project'
@@ -37,6 +40,7 @@ class LiveHttpTests(unittest.TestCase):
 
     def tearDown(self):
         self.server.shutdown(); self.thread.join(); self.server.server_close()
+        self.controller.codex.close()
 
     def request(self, method, path, body=None, headers=None, token=False):
         client = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)

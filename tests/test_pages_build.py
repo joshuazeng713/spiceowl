@@ -1,6 +1,7 @@
 """The public demo is compiled from isolated synthetic state, never user data."""
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -49,7 +50,7 @@ class PagesBuildTests(unittest.TestCase):
         self.assertFalse(directories[0].exists())
         self.assertEqual((result["run_count"], result["frame_count"]), (4, 13))
         self.assertEqual({p.name for p in self.output.iterdir()}, builder.OUTPUT_FILES)
-        self.assertEqual(len(builder.OUTPUT_FILES), 9)
+        self.assertEqual(len(builder.OUTPUT_FILES), 17)
         self.assertEqual((self.output / "LICENSE.txt").read_bytes(), (ROOT / "LICENSE").read_bytes())
         text = (self.output / "demo-data.js").read_text()
         for forbidden in (str(Path.home()), str(ROOT), str(directories[0]), "ssh_target", "api_key", "remote_directory"):
@@ -107,11 +108,48 @@ class PagesBuildTests(unittest.TestCase):
         self.assertEqual(list(self.output.iterdir()), [private])
         self.assertEqual(private.read_text(), "do not publish")
 
+    def test_workflow_page_is_allowlisted_local_and_honest_about_pending_results(self):
+        builder.build(self.output)
+        source = ROOT / 'src/spiceowl/web/static'
+        for name in ('workflow.html', 'workflow.js', 'workflow.css'):
+            self.assertEqual((self.output / name).read_bytes(), (source / name).read_bytes())
+        html = (self.output / 'workflow.html').read_text()
+        self.assertIn('lang="zh-CN"', html)
+        self.assertIn("connect-src 'none'", html)
+        self.assertIn('src="./workflow.js"', html)
+        self.assertIn('href="./workflow.css"', html)
+        self.assertIn('href="./index.html"', html)
+        script = (self.output / 'workflow.js').read_text()
+        self.assertIn('awaiting_human_review', script)
+        self.assertIn('contract_illustration_not_service_receipt', script)
+        self.assertIn("measurement_status: 'not_run'", script)
+        self.assertNotIn('fetch(', script)
+        self.assertNotIn('XMLHttpRequest', script)
+        self.assertNotIn('WebSocket', script)
+        for private in (str(Path.home()), str(ROOT), 'thu-shu', 'thu-wei', 'api_key', 'ssh_target='):
+            self.assertNotIn(private, html + script)
+
     def test_rebuild_updates_only_the_known_public_outputs(self):
         first = builder.build(self.output, commit="c" * 40)
         second = builder.build(self.output, commit="d" * 40)
         self.assertNotEqual(first["metadata"]["build_id"], second["metadata"]["build_id"])
         self.assertEqual({p.name for p in self.output.iterdir()}, builder.OUTPUT_FILES)
+
+    def test_publication_assets_keep_exact_approved_hashes_and_reject_mutated_text(self):
+        builder.build(self.output)
+        assets = {name: (self.output / name).read_bytes() for name in builder.ASSETS}
+        builder.validate_publications(assets)
+        for name, expected in builder.PUBLICATION_HASHES.items():
+            self.assertEqual(hashlib.sha256(assets[name]).hexdigest(), expected)
+        evidence = json.loads(assets['bootstrap-evidence.publication.json'])
+        self.assertEqual(evidence['status']['state'], 'awaiting_human_review')
+        for field in ('solverStarted', 'jobPresent', 'waveformDataPresent', 'fftResultsPresent'):
+            self.assertFalse(evidence['status'][field])
+        for name in ('bootstrap-tb.publication.scs', 'workflow.js'):
+            altered = dict(assets)
+            altered[name] = altered[name].replace(b'CHOLD', b'CFAKE')
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                builder.validate_publications(altered)
 
     def test_build_metadata_cannot_contain_credentials_or_shell_tokens(self):
         for changes in ({"commit": "not-a-commit"}, {"repository_url": "https://token@github.com/owner/repo"},

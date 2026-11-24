@@ -46,6 +46,7 @@ jobs:
         run: |
           node tests/ui-host-onboarding.mjs
           node tests/ui-agent-channel.mjs
+          node tests/workflow-page.mjs
 
   mcp:
     runs-on: ubuntu-latest

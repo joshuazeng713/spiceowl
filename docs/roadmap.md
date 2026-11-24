@@ -1,6 +1,6 @@
 # Roadmap
 
-This is a milestone plan, not a release or delivery-date promise. The offline prototype, host/resource checks, independent engine SDK/CLI and optional standalone Spectre client are implemented. AI interaction uses CircuitGit's existing Codex window; the earlier separate native-Q&A and MCP launch paths are superseded. M1/M2/M3 have bounded implementations; broader acceptance criteria remain open. A milestone closes when its observable acceptance criteria pass.
+This is a milestone plan, not a release or delivery-date promise. The offline prototype, host/resource checks, independent engine SDK/CLI and optional standalone Spectre client are implemented. AI interaction uses explicit standalone/embedded Codex modes; the old Q&A-only and MCP launchers remain retired. M1/M2/M3 have bounded implementations; broader acceptance criteria remain open. A milestone closes when its observable acceptance criteria pass.
 
 ## M0 — Project foundation (current)
 
@@ -25,27 +25,19 @@ The repository includes an installable alpha package, local CLI/web console, syn
 
 This section records the original offline milestone. Later slices add a real client backed by CircuitGit's existing Runner; current AI work uses CircuitGit's existing host integration. Synthetic replay remains separate and cannot establish real execution, monitoring or scientific acceptance. Automatic recovery remains absent.
 
-## AI host and simulation engine separation — current route
+## Dual-mode Codex integration — current route
 
-The maintainer selected this route on **2026-11-24**. CircuitGit owns AI conversations, model/provider settings, its app-server dynamic tools and the IC Workbench host integration. SpiceOwl remains an independently importable simulation engine and CLI. The engine's diagnostics, PSF readers and saved-data algorithms do not require an AI service.
+The explicit mode selects one conversation owner: standalone SpiceOwl starts its own App-Server after Connect; embedded mode reuses CircuitGit's existing window. [The setup guide](dual-mode-agent.md) records policy, persistence, tool and execution-owner boundaries.
 
-- [x] Neutral `spiceowl.read_api.ReadViews` and `open_read_views(directory)` for eight bounded reads of an already existing SpiceOwl store; optional compatibility, not another required CircuitGit database.
-- [x] A `read` CLI over the same stored views, without a separate tool server.
-- [x] Current guides use CircuitGit's existing AI window and Service/Runner ownership.
-- [x] Retire separate native-agent onboarding/inference and the user-facing MCP launcher; retain lower-level compatibility tests and historical Q&A inspection.
-- [ ] Qualify the intended installed CircuitGit session and its advertised tools for each supported environment; package tests alone do not prove host integration.
+- [x] Standalone App-Server stdio, dynamic tools, SSE and frozen human tool approval.
+- [x] Embedded finite schema/dispatcher exports, with zero process/store creation.
+- [x] Existing legacy Q&A remains readable without automatic resumption.
+- [x] Pure engine tools, explicit host/LUT bindings and optional typed CircuitGit owner adapter.
+- [x] Public ten-stage walkthrough using authorized source copies and explicit evidence limits.
+- [ ] Qualify real authentication/inference and simulator behavior on each supported installation.
+- [ ] Evaluate weaker models end to end and implement generic next-action orchestration.
 
-The optional official MCP SDK extra supports retained transport tests only; it is not required for CircuitGit or direct engine use. See [the AI migration guide](native-agent.md), [connectivity and SDK reads](real-connections.md), and [the CircuitGit integration profile](circuitgit-integration.md).
-
-The original [P0.2 contract](contracts/p02-connectivity.md), [P0.3 contract](contracts/p03-pool-agent.md), [connection ADR](decisions/0002-connection-layer.md) and [integration plan](design/integration-plan.md) remain historical references. Their SSH profiles, explicit resource snapshots and placement/origin boundaries still describe those interfaces. Their separate AI service and provider-adapter sequence is superseded, not an additional current roadmap.
-
-Acceptance for the current boundary:
-
-- Engine imports and stored reads work without MCP or provider credentials.
-- Reads preserve bounded evidence, original timestamps and synthetic provenance, with no inference, SSH or simulation dispatch.
-- CircuitGit keeps AI tool routing and simulation authority; no second session manager, action ledger or executor is introduced.
-- Existing native profiles and Q&A remain inspectable without reissuing a request.
-- Public tests remain independent of subscriptions, API keys, Cadence and private servers. Host invocation and simulation qualification remain separate, authorized checks.
+Protocol/algorithm/browser tests use fake processes and synthetic results. They do not establish real inference or private circuit performance. Automatic unknown-turn recovery, solver restart and parameter repair remain unimplemented. Legacy P0.2/P0.3/ADR designs are historical context; the current dual-mode contract takes precedence.
 
 ## Standalone Spectre integration — implemented alpha slice
 

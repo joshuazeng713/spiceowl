@@ -1,0 +1,131 @@
+{
+  "schema": "ic.workflow.public-evidence.v1",
+  "observedOn": "2026-11-24",
+  "case": "bootstrap-sample-hold",
+  "status": {
+    "revision": 10,
+    "state": "awaiting_human_review",
+    "humanReview": "pending",
+    "solverStarted": false,
+    "jobPresent": false,
+    "waveformDataPresent": false,
+    "fftResultsPresent": false
+  },
+  "circuit": {
+    "name": "RS9_L5_9bit_Bootstrap",
+    "scope": "Bootstrap gate driver from a 9-bit SAR ADC design, with an explicitly added MSAMPLE/CHOLD sample-and-hold testbench.",
+    "ports": [
+      "CLK",
+      "VBST",
+      "VDD",
+      "VIN",
+      "VSS"
+    ],
+    "mosCount": 11,
+    "capacitorCount": 1,
+    "geometry": "Embedded @RNL in the .scs source; no independent DUT .rnl is claimed.",
+    "geometryFidelity": "partial"
+  },
+  "requiredModels": [
+    "cfmom_2t",
+    "nch_lvt_mac",
+    "nch_ulvt_mac",
+    "pch_ulvt_mac"
+  ],
+  "selection": {
+    "sections": [
+      "pre_simu",
+      "TTMacro_MOS_MOSCAP",
+      "TT_MOM"
+    ],
+    "tmiLabel": "RH_64/libTMImodel.so",
+    "reason": "Stored remote x86_64 CentOS/RHEL-family observation supports this platform choice; runtime binary compatibility and process suitability remain separate checks.",
+    "cachedScopeFiles": 3,
+    "cachedScopes": 108,
+    "cachedNamespaceModels": 91,
+    "cachedSelectionReadyToRun": false
+  },
+  "freshStaticAudit": {
+    "schema": "spiceowl.model-dependency-audit.v1",
+    "status": "complete_for_supported_static_syntax",
+    "files": 4,
+    "includesDynamicLibraryInFileCount": true,
+    "scopes": 108,
+    "namespaceModelsFromSelectedCatalog": 91,
+    "requiredModelsMatched": 4,
+    "missingRequiredModels": 0,
+    "unknownDirectives": 0,
+    "comparisonSchema": "spiceowl.pdk-scope-audit-comparison.v1",
+    "comparisonStatus": "matched",
+    "matchesSelection": true,
+    "staticOnly": true,
+    "readyToRun": false,
+    "humanReviewRequired": true,
+    "scientificCompatibility": "not_evaluated",
+    "dynamicLoaderExecutionProven": false,
+    "qualificationScope": "Selected include closure only; neither whole-PDK qualification nor simulator execution.",
+    "scaleFactorNote": "Repeated geoshrink literals are recorded without assuming an effective value or equating distinct source options."
+  },
+  "testbench": {
+    "supplyV": 1,
+    "inputOffsetV": 0.5,
+    "inputPeakV": 0.45,
+    "clockHz": 1000000000,
+    "clockRiseS": 1e-11,
+    "clockFallS": 1e-11,
+    "clockWidthS": 2.3e-10,
+    "inputHz": 442138671.875,
+    "coherentBin": 1811,
+    "sampleCount": 4096,
+    "sampleRateHz": 1000000000,
+    "firstSampleS": 6.475e-08,
+    "lastSampleS": 4.15975e-06,
+    "samplePeriodS": 1e-09,
+    "warmupCycles": 64,
+    "strobeDelayS": 7.5e-10,
+    "maxStepS": 5e-12,
+    "holdCapacitanceF": 1e-13,
+    "leakResistanceOhm": 1000000000.0,
+    "temperatureC": 27,
+    "nominalTemperatureC": 27,
+    "method": "gear2only",
+    "errpreset": "conservative",
+    "transientNoiseEnabled": false,
+    "savedSignals": [
+      "CLK",
+      "VIN",
+      "VOUT",
+      "VBST",
+      "VDD",
+      "VDD0:p"
+    ],
+    "spectrumSignal": "VOUT",
+    "referenceSignal": "VIN",
+    "window": "rectangular",
+    "binHalfWidth": 0,
+    "fullScalePeakV": 0.5,
+    "noiseFloorMethod": 3,
+    "interpolationAllowed": false,
+    "missingOrExtraSamples": "stop_with_data_gap_no_implicit_crop",
+    "numericalAcceptanceTargets": []
+  },
+  "resources": {
+    "spectreThreads": 1,
+    "poolMinimumAvailableMemoryBytes": 536870912,
+    "memoryHardLimitBytes": null,
+    "wallTimeHardLimitSeconds": null,
+    "boundary": "Pool admission and +mt=1 do not enforce an OS memory cap or wall-time cap."
+  },
+  "publication": {
+    "kind": "manually constructed allowlist summary",
+    "excludes": [
+      "accounts",
+      "host aliases",
+      "absolute filesystem paths",
+      "private receipt identities",
+      "credentials",
+      "licensed model implementations"
+    ],
+    "historicalResultsReused": false
+  }
+}

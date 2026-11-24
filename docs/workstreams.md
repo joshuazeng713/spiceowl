@@ -19,7 +19,7 @@ Prepare implementable connection and supervision designs. The user's first reque
 
 Workstreams run in separate local chats, with exclusive file ownership. Chat identifiers are not part of the public project specification. Each workstream reports a result in its own chat; the coordinator reviews the report and files.
 
-The [archived integrated plan](design/integration-plan.md) records P0.1–P0.3 and the simulation handoff. Its original native-Codex/API-key/ACP sequence is superseded by CircuitGit's AI ownership. Shared review also resolved receipt naming, imported-run null keys, scheduler restart lineage, collection/postprocessing separation and independent specification outcomes; those evidence and execution distinctions remain relevant.
+The [archived integrated plan](design/integration-plan.md) records P0.1–P0.3 and the simulation handoff. Its original native-Codex/API-key/ACP sequence is superseded by the [explicit dual-mode contract](dual-mode-agent.md). Shared review also resolved receipt naming, imported-run null keys, scheduler restart lineage, collection/postprocessing separation and independent specification outcomes; those evidence and execution distinctions remain relevant.
 
 ## Integration review
 

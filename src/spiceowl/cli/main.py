@@ -15,13 +15,20 @@ from spiceowl.storage.sqlite import Store
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="spiceowl", description="Simulation engine SDK/CLI and synthetic console. Agent conversations use CircuitGit's Codex channel.")
+    result = argparse.ArgumentParser(prog="spiceowl", description="Simulation engine SDK/CLI with standalone Codex and embedded CircuitGit Agent modes.")
     result.add_argument("--version", action="version", version=f"SpiceOwl {__version__}")
     default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "spiceowl"
     result.add_argument("--data-dir", default=str(default), help="Local persistent state directory (put before the command).")
     commands = result.add_subparsers(dest="command", required=True)
-    serve = commands.add_parser("serve", help="Open the loopback engine/demo console; agents use CircuitGit's Codex window.")
+    serve = commands.add_parser("serve", help="Open the standalone Codex/engine console, or explicitly select CircuitGit embedding.")
     serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument('--agent-mode', choices=('standalone', 'embedded_in_circuitgit'), default='standalone',
+                       help='Standalone owns one explicitly connected Codex window; embedded starts no Agent.')
+    serve.add_argument('--codex-executable', help='Operator-selected local Codex executable; otherwise resolve codex on PATH at Connect.')
+    serve.add_argument('--codex-model', help='Optional explicit native model; no provider/model fallback.')
+    serve.add_argument('--pdk-lut', help='Operator-selected existing private PDK SQLite LUT for read-only Agent queries.')
+    serve.add_argument('--circuitgit-client-config', help='Explicit existing CircuitGit client.json; reuse its Service and human review.')
+    serve.add_argument('--circuitgit-sdk-path', help='Explicit parent of ic_gateway when it is not installed in this Python environment.')
     serve.add_argument("--demo", action="store_true", help="Idempotently add synthetic demo data.")
     serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
@@ -285,16 +292,19 @@ def main(argv=None):
                 kind = "connection" if args.command == "connections" else "run"
                 output(store.get(kind, args.connection_id) if args.action == "inspect" else [c for c in store.list(kind) if not c.get("deleted")])
             return 0
-        with Controller(args.data_dir) as app:
+        with Controller(args.data_dir, agent_mode=args.agent_mode if args.command == 'serve' else 'embedded_in_circuitgit') as app:
             if args.command == "serve":
                 from spiceowl.web.server import make_server
                 if not 0 <= args.port <= 65535:
                     raise DomainError("Port must be between 0 and 65535.")
                 if args.demo:
                     app.seed_demo()
-                with make_server(app, args.port, live_client_config=args.live_client_config) as server:
+                with make_server(app, args.port, live_client_config=args.live_client_config,
+                        codex_executable=args.codex_executable, codex_model=args.codex_model,
+                        pdk_lut_path=args.pdk_lut, circuitgit_client_config=args.circuitgit_client_config,
+                        circuitgit_sdk_path=args.circuitgit_sdk_path) as server:
                     simulation_mode = "configured real simulation client + separate synthetic demos" if args.live_client_config else "synthetic simulation runs"
-                    print(f"SpiceOwl {__version__} · simulation engine · Agent channel: CircuitGit Codex · {simulation_mode}", flush=True)
+                    print(f"SpiceOwl {__version__} · simulation engine · Agent mode: {args.agent_mode} · {simulation_mode}", flush=True)
                     print(f"http://127.0.0.1:{server.server_address[1]}", flush=True)
                     try:
                         server.serve_forever()

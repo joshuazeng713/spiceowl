@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an original synthetic-only static demo without loading operator state."""
+"""Build synthetic console fixtures and approved workflow publications without operator state."""
 
 from __future__ import annotations
 
@@ -16,7 +16,15 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-ASSETS = ("index.html", "app.js", "app.css", "owl.svg", "demo.js")
+PUBLICATION_HASHES = {
+    "bootstrap-dut.publication.scs": "808da690214b9e8ee1c0b2ce05c4dbf7eda69d6d71a198776d3cd5c53597b2c0",
+    "inverter-dut.publication.scs": "d41d38c83de57359ea4bc9ecd07e0976cc4f9b2796e9eb8ceed235565e441db8",
+    "bootstrap-tb.publication.scs": "d4f09ec705c26558648ac6131532cfb5e1e2e1df66bc44255645af0b888d2e0c",
+    "bootstrap-evidence.publication.json": "17b278721a52a292232a7ea1454ee335d382a6ed35124ad5b28a171939ff69b4",
+    "source-manifest.json": "676a0cf396562560b9c343dd165dc427c8a212b300081b59c36d57d01fdc0a70",
+}
+ASSETS = ("index.html", "app.js", "app.css", "owl.svg", "demo.js",
+          "workflow.html", "workflow.js", "workflow.css", *PUBLICATION_HASHES)
 OUTPUT_FILES = frozenset((*ASSETS, "demo-data.js", "build.json", ".nojekyll", "LICENSE.txt"))
 REPOSITORY = "https://github.com/spiceowl-dev/spiceowl"
 CONNECTION_SCENARIOS = ("success", "inference_denied", "disconnect", "permission_denied")
@@ -24,6 +32,34 @@ CONNECTION_SCENARIOS = ("success", "inference_denied", "disconnect", "permission
 
 def encoded(value):
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True, allow_nan=False)
+
+
+def validate_publications(assets):
+    """Publish only the exact reviewed copies; keep embedded text identical."""
+    for name, expected in PUBLICATION_HASHES.items():
+        if hashlib.sha256(assets[name]).hexdigest() != expected:
+            raise ValueError(f"Reviewed public source hash mismatch: {name}")
+    manifest = json.loads(assets["source-manifest.json"])
+    if manifest.get("publicationOnly") is not True or len(manifest["files"]) != 4:
+        raise ValueError("Invalid reviewed publication manifest")
+    for record in manifest["files"]:
+        name = Path(record["path"]).name
+        raw = assets[name]
+        if hashlib.sha256(raw).hexdigest() != record["publicationSha256"]:
+            raise ValueError("Publication manifest mismatch")
+        if "originalSourceSha256" in record:
+            if not raw.startswith(b"// PUBLICATION EXCERPT"):
+                raise ValueError("Publication notice missing")
+            if hashlib.sha256(raw.split(b"\n", 2)[2]).hexdigest() != record["originalSourceSha256"]:
+                raise ValueError("Original source body hash mismatch")
+    prefix = "export const PUBLICATION_SOURCES = Object.freeze("
+    script = assets["workflow.js"].decode("utf-8")
+    embedded = json.loads(script.split(prefix, 1)[1].split(");\n", 1)[0])
+    if {record["filename"] for record in embedded} != set(PUBLICATION_HASHES) or len(embedded) != 5:
+        raise ValueError("Workflow embedded sources exceed reviewed allowlist")
+    for record in embedded:
+        if record["text"].encode("utf-8") != assets[record["filename"]]:
+            raise ValueError("Workflow embedded text differs from downloadable publication")
 
 
 def compile_diagnosis(run, scenario):
@@ -108,6 +144,7 @@ def build(output=None, *, commit="local", repository_url=REPOSITORY, build_date=
         if path.is_symlink() or not path.is_file():
             raise ValueError("A required public static asset is missing or is a symlink.")
         assets[name] = path.read_bytes()
+    validate_publications(assets)
     license_path = ROOT / "LICENSE"
     if license_path.is_symlink() or not license_path.is_file():
         raise ValueError("The public MIT license is missing or is a symlink.")
@@ -118,7 +155,8 @@ def build(output=None, *, commit="local", repository_url=REPOSITORY, build_date=
         source_digest.update(name.encode() + b"\0" + contents)
     source_digest.update(encoded([commit, repository_url, build_date, source_branch]).encode())
     metadata = {"commit": commit.lower(), "build_date": build_date, "repository_url": repository_url,
-                "build_id": source_digest.hexdigest()[:24], "mode": "public_synthetic_demo", "source_branch": source_branch}
+                "build_id": source_digest.hexdigest()[:24], "mode": "public_synthetic_demo", "source_branch": source_branch,
+                "workflow_mode": "reviewed_publication_static", "workflow_live_execution": False}
     data["metadata"] = metadata
     index = assets["index.html"].decode("utf-8")
     if index.count("<html") != 1 or "data-public-demo=" in index:

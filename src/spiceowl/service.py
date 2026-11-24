@@ -5,7 +5,7 @@ import fcntl
 import threading
 
 from spiceowl import __version__
-from spiceowl.agent_channel import agent_channel_error, agent_channel_info
+from spiceowl.agent_channel import agent_channel_error, agent_channel_info, normalize_agent_mode
 from spiceowl.domain.common import DomainError, digest, require_id, utcnow
 from spiceowl.storage.sqlite import Store
 
@@ -16,7 +16,9 @@ def backend_config(record):
 
 
 class Controller:
-    def __init__(self, directory):
+    def __init__(self, directory, *, agent_mode='embedded_in_circuitgit'):
+        self.agent_mode = normalize_agent_mode(agent_mode)
+        self.codex = None
         self.store = Store(directory)
         self._lock = (self.store.directory / ".controller.lock").open("a+")
         try:
@@ -36,6 +38,8 @@ class Controller:
 
     def close(self):
         self._closing.set()
+        if self.codex is not None:
+            self.codex.close()
         self._workers.shutdown(wait=True)
         fcntl.flock(self._lock, fcntl.LOCK_UN)
         self._lock.close()
@@ -48,12 +52,15 @@ class Controller:
 
     def state(self):
         from spiceowl.adapters.executors.mock import list_scenarios
-        return {"version": __version__, "mode": "engine_console", "agent_channel": agent_channel_info(),
+        channel = agent_channel_info(self.agent_mode)
+        if self.codex is not None:
+            channel['connection_status'] = 'connected' if self.codex.status()['connected'] else 'disconnected'
+        return {"version": __version__, "mode": "engine_console", "agent_channel": channel,
                 "connections": [c for c in self.store.list("connection") if not c.get("deleted")],
                 "hosts": self.hosts.list(), "native_agents": self.native_agents.list(),
                 "questions": self.questions.list(), "runs": self.store.list("run"),
                 "sessions": self.store.list("session"), "scenarios": list_scenarios(),
-                "capabilities": {"real_inference": False, "real_simulation": False, "dispatch": False,
+                "capabilities": {"real_inference": self.agent_mode == 'standalone', "real_simulation": False, "dispatch": False,
                     "synthetic_replay": True, "ssh_connectivity_probe": True, "host_resources": True,
                     "placement_plans": True, "mcp_local_queries": False, "sdk_read_views": True}}
 

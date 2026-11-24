@@ -5,6 +5,7 @@ from importlib.resources import files
 import json
 import re
 import secrets
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from spiceowl.domain.common import DomainError, require_id
@@ -41,12 +42,27 @@ def _live_request(body):
     return operation, args, key
 
 
-def make_server(controller, port=0, live_client_config=None):
+def make_server(controller, port=0, live_client_config=None, *, codex_executable=None,
+                codex_model=None, pdk_lut_path=None, circuitgit_client_config=None,
+                circuitgit_sdk_path=None):
     token = secrets.token_urlsafe(32)
     live_client = None
     if live_client_config is not None:
         from spiceowl.integrations.live import LiveSimulationClient
         live_client = LiveSimulationClient(live_client_config)
+    from spiceowl.codex_bridge import CodexBridge
+    definitions, dispatcher = [], None
+    if controller.agent_mode == 'standalone':
+        from spiceowl.standalone_agent import build_standalone_dispatcher
+        dispatcher = build_standalone_dispatcher(controller, live_client=live_client,
+            pdk_lut_path=pdk_lut_path, circuitgit_client_config=circuitgit_client_config,
+            circuitgit_sdk_path=circuitgit_sdk_path)
+        definitions = [{key: row[key] for key in ('name', 'description', 'inputSchema')}
+                       for row in dispatcher.definitions()]
+    controller.codex = CodexBridge(controller.store.directory / 'codex', mode=controller.agent_mode,
+        dispatch_tool=dispatcher.dispatch if dispatcher else None,
+        tool_policy=dispatcher.policy if dispatcher else None, tool_definitions=definitions,
+        executable=codex_executable, model=codex_model)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "SpiceOwl"
@@ -112,16 +128,89 @@ def make_server(controller, port=0, live_client_config=None):
                 raise DomainError("Expected a JSON object.")
             return value
 
+        def codex_events(self, query):
+            values = parse_qs(query, keep_blank_values=True)
+            raw = values.get('after', ['0'])
+            last = self.headers.get('Last-Event-ID', '0')
+            if set(values) - {'after'} or len(raw) != 1 or any(not v.isdigit() or len(v) > 15 for v in (*raw, last)):
+                raise DomainError('Invalid Codex event cursor.')
+            after = max(int(raw[0]), int(last))
+            # Validate before sending SSE headers. This endpoint only reads events.
+            batch = controller.codex.events(after=after)
+            self.send_response(200)
+            for key, value in {'Content-Type': 'text/event-stream; charset=utf-8',
+                    'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+                    'Referrer-Policy': 'no-referrer', 'Connection': 'close'}.items():
+                self.send_header(key, value)
+            self.end_headers()
+            deadline = time.monotonic() + 15
+            try:
+                while not controller._closing.is_set():
+                    if batch.get('truncated'):
+                        gap = {'id': max(0, batch['oldest_cursor'] - 1), 'method': 'bridge/cursor_gap',
+                            'params': {'oldest_cursor': batch['oldest_cursor'], 'cursor': batch['cursor']},
+                            'thread_id': None, 'turn_id': None, 'request_key': None}
+                        self.wfile.write(('event: bridge\ndata: ' + json.dumps(gap) + '\n\n').encode())
+                    for event in batch['events']:
+                        self.wfile.write(('id: ' + str(event['id']) + '\nevent: bridge\ndata: '
+                            + json.dumps(event, ensure_ascii=False, allow_nan=False) + '\n\n').encode())
+                        after = event['id']
+                    self.wfile.write(b': heartbeat\n\n')
+                    self.wfile.flush()
+                    if time.monotonic() >= deadline: break
+                    if controller._closing.wait(0.25): break
+                    batch = controller.codex.events(after=after)
+            except (BrokenPipeError, ConnectionError, TimeoutError):
+                pass
+
+        def codex_control(self, action, body):
+            fields = {'connect': ({'model', 'profile'}, set()), 'thread': (set(), set()),
+                'message': ({'thread_id', 'text', 'request_key'}, {'thread_id', 'text', 'request_key'}),
+                'approval': ({'approval_id', 'decision'}, {'approval_id', 'decision'}),
+                'disconnect': (set(), set())}
+            if action not in fields:
+                raise DomainError('Unknown Codex client operation.', 'not_found')
+            allowed, required = fields[action]
+            if set(body) - allowed or not required <= set(body):
+                raise DomainError('Use exactly the documented Codex client arguments.')
+            bridge = controller.codex
+            if action == 'connect': return bridge.connect(body)
+            if action == 'thread': return bridge.create_thread()
+            if action == 'message': return bridge.send_message(**body)
+            if action == 'approval': return bridge.decide(**body)
+            return bridge.disconnect()
+
         def dispatch(self):
             self.check_origin()
             url = urlsplit(self.path)
             path = url.path
             static = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/owl.svg": ("owl.svg", "image/svg+xml")}
+            static.update({'/workflow.html': ('workflow.html', 'text/html; charset=utf-8'),
+                '/workflow.js': ('workflow.js', 'text/javascript; charset=utf-8'),
+                '/workflow.css': ('workflow.css', 'text/css; charset=utf-8')})
+            for filename in ('bootstrap-dut.publication.scs', 'bootstrap-tb.publication.scs',
+                             'inverter-dut.publication.scs', 'bootstrap-evidence.publication.json', 'source-manifest.json'):
+                static['/' + filename] = (filename, 'application/json; charset=utf-8' if filename.endswith('.json') else 'text/plain; charset=utf-8')
             if self.command == "GET" and path in static:
                 name, media = static[path]
                 return self.send_content(200, files("spiceowl.web").joinpath("static", name).read_bytes(), media)
             if self.command == "GET" and path == "/api/state":
                 return self.reply(controller.state() | {"csrf_token": token})
+            if path.startswith('/api/codex/'):
+                action = path.removeprefix('/api/codex/')
+                if self.command == 'GET' and action == 'events':
+                    return self.codex_events(url.query)
+                if self.command == 'GET' and action == 'approval':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    if set(query) != {'approval_id'} or len(query['approval_id']) != 1:
+                        raise DomainError('Select one exact pending approval.')
+                    return self.reply(controller.codex.approval_details(query['approval_id'][0]))
+                if url.query: raise DomainError('Codex client operations do not accept extra query arguments.')
+                if self.command == 'GET' and action == 'status':
+                    return self.reply(controller.codex.status())
+                if self.command == 'POST':
+                    return self.reply(self.codex_control(action, self.body()), 202)
+                raise DomainError('Unknown Codex client operation.', 'not_found')
             if path == "/api/live/runtime" and self.command == "GET":
                 if url.query:
                     raise DomainError("Live runtime reads do not accept browser configuration or query parameters.")

@@ -10,9 +10,11 @@
 
 <p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>直接体验在线交互演示</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
 
-> **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH 和仿真执行需要已配置的本地环境；Agent 对话复用 CircuitGit 的 Codex 通道。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md)。
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>查看 Bootstrap／Inverter 十阶段实战流程</strong></a></p>
 
-**Agent 职责：** CircuitGit 管理 Codex 对话、认证和工具桥；SpiceOwl 提供可复用仿真引擎，不另启平行 Agent 服务。配对与子模块约定见[集成指南](docs/circuitgit-integration.md)。
+> **无需安装，打开即可体验。** 在线浏览原创合成仿真场景、连接状态和脚本化诊断。SSH 和仿真执行需要已配置的本地环境；独立使用时提供自己的 Codex 窗口，嵌入时复用 CircuitGit 的同一窗口。公开演示目前跟随 `main` 自动更新；发布方式见 [GitHub Pages 指南](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md)。
+
+**双模式 Agent：** 独立 SpiceOwl 在显式 Connect 后启动自己的 Codex App-Server 对话；作为 CircuitGit 子模块时只导出工具，复用其原有窗口，绝不启动第二个 Agent。认证由所选 Codex runtime 管理。见[双模式指南](docs/dual-mode-agent.md)。配对与子模块约定见[集成指南](docs/circuitgit-integration.md)。
 
 配套 CircuitGit 开发分支新增[从零接入仿真](docs/onboarding-discovery.md)：解析导入的反相器、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
 
@@ -40,7 +42,7 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 
 | 能力 | 目标行为 | 当前状态 |
 | --- | --- | --- |
-| 接入 | 复用 CircuitGit Codex 对话和工具桥 | CircuitGit 负责 Agent 与认证；SpiceOwl 提供 Python SDK 只读视图和显式 SSH 主机／资源检查 |
+| 接入 | 独立 Codex 窗口或嵌入 CircuitGit 原窗口 | 显式连接、SSE、人工审阅与共用 SDK；嵌入时不起第二个 Agent |
 | 观察 | 跟踪任务身份与观测的新鲜程度 | 已有任务的后台状态监控、有限查询与退避、Spectre 日志证据和主机总体资源快照 |
 | 重连 | 在客户端或控制器中断后核对并找回原任务 | 原提交 key 精确查询、固定任务状态查询与持久请求记录；结果未知的派发不重放 |
 | 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 固定条件的反相器／预备瞬态配方、有限语法的用户 TB 校验及可选 ADC 算法；通用 TB 仍须明确实验目的 |
@@ -99,9 +101,9 @@ spiceowl/
 └── tests/                     # 离线测试与合成案例
 ```
 
-独立维护的 SDK／CLI 包含服务器池检查、PDK 发现与 LUT、Agent-TB 校验、诊断、PSF 解析、adctools、只读视图和已有签名仿真客户端。CircuitGit 负责 Codex 对话、认证、项目物化、执行身份、审阅、派发和原生产物收集；其 `submodules/spiceowl` gitlink 与集成锁指向同一个经过审阅的提交。[本地控制台指南](docs/local-console.md)说明独立的演示与真实仿真视图；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
+独立维护的 SDK／CLI 包含服务器池检查、PDK 发现与 LUT、Agent-TB 校验、诊断、PSF 解析、adctools、只读视图和已有签名仿真客户端。对话归属由显式模式决定；CircuitGit 继续负责项目物化、执行身份、审阅、派发和原生产物收集；其 `submodules/spiceowl` gitlink 与集成锁指向同一个经过审阅的提交。[本地控制台指南](docs/local-console.md)说明独立的演示与真实仿真视图；[架构文档](docs/architecture.md)和[实验约定](docs/run-contract.md)说明模块职责与可信实验的要求。
 
-当前[独立仿真入口](docs/standalone-runtime.md)通过服务器池和仿真来源 SDK 复用 CircuitGit Runner。**Agent 统一使用 CircuitGit 的 Codex 对话窗口**及其 `codex app-server` 动态工具桥接／`ic-workbench` 集成。[P0.2](docs/contracts/p02-connectivity.md)、[P0.3](docs/contracts/p03-pool-agent.md) 和旧连接设计保留为历史资料，其中单独的 Agent／MCP 接入步骤已被替代。
+当前[独立仿真入口](docs/standalone-runtime.md)通过服务器池和仿真来源 SDK 复用 CircuitGit Runner。**Agent 采用显式双模式**：独立使用 SpiceOwl 自己的 Codex 窗口，嵌入时复用 CircuitGit 的 `codex app-server` 动态工具桥接／`ic-workbench` 集成。[P0.2](docs/contracts/p02-connectivity.md)、[P0.3](docs/contracts/p03-pool-agent.md) 和旧连接设计保留为历史资料，其中单独的 Agent／MCP 接入步骤已被替代。
 
 ## 从哪里开始
 
@@ -128,7 +130,7 @@ python3 -m venv .venv
 
 多节点场景可在 **Simulation hosts → Import pool** 中预览明确的主机名列表，并复用已有连接模板登记，也可使用 `hosts import-pool`。选择最多 32 台，执行 **Check selected hosts**；CLI 对应 `hosts scan --hosts HOST_ID ...`。网页在同一批选中主机中评估所需 CPU 和内存。未知或过期节点不参加选址；算法保留资源余量，但推荐不代表预留。独立网表计划为新任务选择候选节点，Virtuoso 管理的任务计划保留原主机和 native run 映射。
 
-AI 辅助统一在 **CircuitGit 的 Codex 对话窗口**中使用，复用已有认证与工具。SpiceOwl 的原 Agent 页面改为通道说明和历史问答查看，不再发送问题或探测另一套 runtime。旧 `agents add/probe/ask` 命令返回迁移指引，已有元数据和问答历史仍可读取。见[统一 Agent 通道指南](docs/native-agent.md)。
+AI 辅助可在独立 SpiceOwl 的 **Agent channel** 中显式 Connect；嵌入时使用 **CircuitGit 原有 Codex 窗口**。两种方式调用共用引擎，旧问答继续只读保留。见[双模式连接指南](docs/dual-mode-agent.md)。旧 `agents add/probe/ask` 命令返回迁移指引，已有元数据和问答历史仍可读取。见[统一 Agent 通道指南](docs/native-agent.md)。
 
 ## 接入真实仿真控制台
 

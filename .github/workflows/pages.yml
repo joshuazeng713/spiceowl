@@ -35,6 +35,7 @@ jobs:
           python -m unittest discover -s tests
           node tests/ui-host-onboarding.mjs
           node tests/ui-agent-channel.mjs
+          node tests/workflow-page.mjs
       - name: Build only the public synthetic demo
         env:
           SOURCE_BRANCH: ${{ vars.PAGES_SOURCE_BRANCH || 'main' }}

@@ -6,7 +6,11 @@ The hosted site reuses the local console's HTML, CSS and application code. A bro
 
 The public demo supports inspecting runs, advancing observations, managing fake connection cards and requesting scripted diagnoses. Browser state survives reloads within the same tab and build when session storage is available. If storage is unavailable, the page explains that state is temporary. **Reset demo** clears only this demo's stored state. A new build starts a fresh demo.
 
-SSH host configuration, real simulation execution and private IC records stay in the local installation. AI conversations use CircuitGit's existing Codex window. The demo's Agent channel page links to the CircuitGit entry page; it does not start or verify a live AI connection. The hosted page does not connect to a visitor's localhost or request host credentials or API keys. Its local-feature pages explain how to install and use the source branch instead.
+SSH host configuration, real simulation execution and private IC records stay in the local installation. Local AI conversations use standalone SpiceOwl or embedded CircuitGit mode. The demo's Agent channel page explains both modes; it does not start or verify a live AI connection. The hosted page does not connect to a visitor's localhost or request host credentials or API keys. Its local-feature pages explain how to install and use the source branch instead.
+
+## Full workflow subpage
+
+[Open the ten-stage Bootstrap/Inverter walkthrough](https://spiceowl-dev.github.io/spiceowl/workflow.html). The static page switches inputs, output contracts, UI states, tool calls and responsibility matrices without API requests. It includes authorized publication copies of the DUT/testbench and a fixed source manifest. Source hashes and publication labels remain visible; no PDK implementation, private host identity or credential is included. The Bootstrap checkpoint is revision 10 awaiting human review with no submitted solver job. Execution and measurement screens show planned contracts, not measured Bootstrap FFT/AC/DC results. The build allowlist and tests verify every shipped source asset.
 
 ## Automatic publication
 

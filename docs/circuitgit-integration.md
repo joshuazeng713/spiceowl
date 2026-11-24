@@ -1,6 +1,6 @@
 # CircuitGit SDK and Agent integration
 
-SpiceOwl remains an independently maintained engine [repository](https://github.com/spiceowl-dev/spiceowl). **CircuitGit owns the Agent channel:** its Codex conversation, existing `codex app-server` dynamic-tool bridge and `ic-workbench` integration call the Python SDK. SpiceOwl does not start a second Agent/MCP conversation service or manage a second set of credentials. The native simulation Runner and existing review authority remain with CircuitGit.
+SpiceOwl remains an independently maintained engine [repository](https://github.com/spiceowl-dev/spiceowl). **In embedded mode, CircuitGit owns the Agent channel:** its Codex conversation, existing `codex app-server` dynamic-tool bridge and `ic-workbench` integration call the Python SDK. Embedded SpiceOwl never starts a second Agent or manages another credential set. Independent `spiceowl serve` uses its own explicitly connected window as described in [dual-mode setup](dual-mode-agent.md). The native simulation Runner and existing review authority remain with CircuitGit.
 
 Integration profiles remain **`spiceowl.circuitgit-library-context.v1`**, **`spiceowl.resource-selection.v1`**, and optional **`spiceowl.live-client.v1`**. Supervision contract revision **1.2.0** is recorded by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json).
 
@@ -84,6 +84,12 @@ assert all(callable(getattr(ReadViews, name)) for name in (
     "list_ic_gateways", "list_ic_runs", "get_ic_run",
 ))
 ```
+
+## Embedded schema export
+
+`spiceowl.embedded.read_tool_definitions()` returns the eight fixed stored-read schemas with descriptions and read-only annotations. `dispatch_read_tool(views, name, arguments)` accepts an already opened `ReadViews`, validates exact fields/IDs and delegates to those same methods. It accepts no data-directory argument and imports no MCP/Codex runtime. CircuitGit may prefix these names with `ic_` and must compare its schema projection before dispatch; schema drift fails closed. An optional operator configuration such as `spiceowl_readonly: {enabled: true, data_dir: "/explicit/existing/store"}` selects legacy data, never infers a store from Runner state.
+
+Pure engine definitions and finite host bindings are available through `spiceowl.agent_channel.export_simulation_management_tools(mode="embedded_in_circuitgit", dispatcher=...)`. The host retains its policy and existing `ic_onboarding`/`ic_sim` lifecycle. Standalone uses the same kind of official App-Server connection, described in [dual-mode setup](dual-mode-agent.md), with an explicit optional CircuitGit owner client rather than another execution backend.
 
 ## Paired submodule pin
 

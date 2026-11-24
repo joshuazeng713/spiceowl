@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <meta name="description" content="从真实电路结构、服务器与PDK选择，到人工审核和测量契约：SpiceOwl十阶段仿真工作流。静态脱敏说明，不连接服务。">
+  <title>一次仿真，十个可核对的阶段 · SpiceOwl</title>
+  <link rel="icon" href="./owl.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./workflow.css">
+  <script type="module" src="./workflow.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#stage-detail">跳到阶段详情</a>
+  <header class="site-header">
+    <a class="brand" href="./index.html"><img src="./owl.svg" width="36" height="36" alt=""><span>SpiceOwl<small>SIMULATION WORKFLOW</small></span></a>
+    <nav aria-label="页面导航"><a href="./index.html">返回控制台</a><a href="#responsibility">角色边界</a><a href="#provenance">来源与限度</a></nav>
+    <span class="static-label"><span aria-hidden="true">●</span> 静态交互 · 不连接服务</span>
+  </header>
+  <main>
+    <section class="hero" aria-labelledby="page-title">
+      <div class="hero-copy"><p class="eyebrow">FROM CIRCUIT TO EVIDENCE</p><h1 id="page-title">一次仿真，<br>十个可核对的阶段。</h1><p class="lead">Agent 帮你组织实验。确定性工具保存身份、检查依赖、计算结果。每一步都有输入、有输出，也有明确的停止条件。</p>
+        <div class="circuit-switch" role="group" aria-label="选择说明电路"><button type="button" data-circuit="bootstrap" aria-pressed="true">Bootstrap 采样测试</button><button type="button" data-circuit="inverter" aria-pressed="false">CMOS Inverter</button></div>
+        <p id="circuit-note" class="subtle"></p>
+      </div>
+      <figure class="circuit-card"><div class="card-heading"><span class="label">公开电路结构</span><span class="small-label">重新绘制 · 非版图</span></div><div id="circuit-diagram"></div><figcaption id="circuit-caption"></figcaption></figure>
+    </section>
+    <section class="evidence-strip" aria-label="实战证据边界"><div><span class="eyebrow">PUBLISHED CHECKPOINT</span><strong id="checkpoint-title">revision 10 · 等待人工审核</strong><p id="checkpoint-detail">本次脱敏快照未提供求解完成或 FFT 结果。下面的 JSON 是契约说明，不是服务回执。</p></div><div class="checkpoint-state"><span class="amber-dot" aria-hidden="true"></span><code id="checkpoint-code">awaiting_human_review</code></div></section>
+    <section class="workflow" aria-labelledby="workflow-title">
+      <div class="section-heading"><div><p class="eyebrow">EXPLORE THE PIPELINE</p><h2 id="workflow-title">选择一个阶段，查看它究竟做什么。</h2></div><p>点击阶段；方向键可切换详情标签。</p></div>
+      <div class="workflow-layout">
+        <nav class="stage-navigation" aria-label="十阶段流程"><ol id="stage-list"></ol></nav>
+        <article id="stage-detail" class="stage-detail" tabindex="-1" aria-labelledby="stage-title">
+          <div class="stage-title-line"><span id="stage-number" class="stage-number">01</span><div><p id="stage-kicker" class="eyebrow"></p><h2 id="stage-title"></h2></div><span id="stage-status" class="badge"></span></div>
+          <p id="stage-description" class="stage-description"></p>
+          <aside class="stage-evidence" aria-labelledby="stage-evidence-title"><h3 id="stage-evidence-title">本阶段的已公开证据</h3><p id="stage-evidence-detail"></p><a href="#public-sources">核对完整公开材料与哈希 ↓</a></aside>
+          <div id="stage-facts" class="fact-grid"></div>
+          <fieldset id="mode-controls" class="option-controls"><legend>说明模式（切换不会改变运行配置）</legend><label><input type="radio" name="mode" value="embedded_in_circuitgit" checked> 嵌入 CircuitGit</label><label><input type="radio" name="mode" value="standalone"> 独立使用</label></fieldset>
+          <fieldset id="cache-controls" class="option-controls" hidden><legend>PDK 读取路径（说明示例）</legend><label><input type="radio" name="cache" value="cached" checked> 已有 SQLite LUT</label><label><input type="radio" name="cache" value="first_scan"> 第一次完整扫描</label></fieldset>
+          <div id="analysis-controls" class="option-controls" hidden><label for="analysis-operation">测量契约</label><select id="analysis-operation"><option value="spec_analyze">频谱 · spec_analyze</option><option value="coherent_fft">相干 FFT · coherent_fft</option><option value="ac_metrics">AC / Bode · ac_metrics</option><option value="dc_op_metrics">直流工作点 · dc_op_metrics</option><option value="tran_metrics">瞬态指标 · tran_metrics</option></select></div>
+          <div class="detail-tabs" role="tablist" aria-label="阶段详情"><button id="tab-input" type="button" role="tab" aria-selected="true" aria-controls="detail-panel" data-tab="input">输入 JSON</button><button id="tab-output" type="button" role="tab" aria-selected="false" aria-controls="detail-panel" tabindex="-1" data-tab="output">输出 JSON</button><button id="tab-ui" type="button" role="tab" aria-selected="false" aria-controls="detail-panel" tabindex="-1" data-tab="ui">界面状态</button><button id="tab-tools" type="button" role="tab" aria-selected="false" aria-controls="detail-panel" tabindex="-1" data-tab="tools">工具 / 命令</button></div>
+          <section id="detail-panel" role="tabpanel" aria-labelledby="tab-input" tabindex="0"><div class="code-heading"><span id="detail-label">结构示例 · 不发送</span><span id="detail-kind">JSON</span></div><pre id="detail-code" tabindex="0"></pre><div id="detail-ui" hidden></div></section>
+          <p id="stage-guard" class="guard-note"></p>
+          <footer class="stage-footer"><button id="previous-stage" type="button">← 上一阶段</button><span id="stage-position">1 / 10</span><button id="next-stage" type="button">下一阶段 →</button></footer>
+        </article>
+      </div>
+      <p id="navigation-status" class="sr-only" role="status" aria-live="polite"></p>
+    </section>
+    <section id="public-sources" class="public-sources" aria-labelledby="public-sources-title"><p class="eyebrow">REVIEWED PUBLICATION MATERIAL</p><h2 id="public-sources-title">完整电路与 TB，逐字可核对。</h2><p>这些是已授权公开的派生副本，保留 publication 标记。源正文完整；新增的两行说明使公开副本与原始源具有不同 SHA-256。下载副本没有提交过仿真，不是 PDK 分发包。</p><div class="source-toolbar"><label for="publication-source">选择材料</label><select id="publication-source"></select><a id="source-download" download>下载当前材料</a><a href="./source-manifest.json" download>下载来源清单</a></div><div id="source-identity" class="source-identity"></div><details class="source-view" open><summary id="source-heading">完整公开源码</summary><pre id="publication-source-code" tabindex="0"></pre></details><p class="subtle">DUT 的 @RNL 是源内几何注释；Bootstrap 的映射为 partial，不声称拥有独立的完整 Virtuoso 布局。公开材料不包含 PDK / TMI 二进制、标准头正文或私有回执身份。</p></section>
+    <section id="responsibility" class="responsibility" aria-labelledby="responsibility-title"><p class="eyebrow">CLEAR OWNERSHIP</p><h2 id="responsibility-title">谁作决定，谁提供证据。</h2><p>聊天权限、配置选择与仿真执行授权分别保留。工具返回值和模型回答都不能替人签署审核。</p><div class="table-scroll" tabindex="0" role="region" aria-label="角色边界表，可横向滚动"><table><caption class="sr-only">用户、AI 和确定性引擎的责任及禁止行为</caption><thead><tr><th scope="col">阶段</th><th scope="col">用户 / 人工审核</th><th scope="col">AI</th><th scope="col">确定性引擎与执行所有者</th><th scope="col">禁止的行为</th></tr></thead><tbody id="responsibility-rows"></tbody></table></div></section>
+    <section id="provenance" class="provenance" aria-labelledby="provenance-title"><div><p class="eyebrow">PROVENANCE, NOT A PERFORMANCE CLAIM</p><h2 id="provenance-title">真实结构，清楚标注的示例。</h2><p>2026-11-24 的已审公开材料包含两个电路源、Bootstrap 冻结 TB 和手工白名单摘要。Bootstrap 的依赖静态审计匹配，revision 10 仍在等待人工审核；无 job、求解、波形或 FFT 结果。步骤 9 / 10 是 planned。</p><p>阶段输入 / 输出 JSON 仍是接口说明，原始私有 ID 保持空值。完整源与摘要可在上方核对；构建及测试对所有固定公开文件校验 SHA-256，不加载私有运行时。本页不会连接服务。</p></div><div class="sources"><h3>可在仓库查阅的依据</h3><ul><li><code>CircuitGit/lib/pipetisar-real/RS9_L5_9bit_Bootstrap/README.md</code></li><li><code>CircuitGit/lib/basics/cmos-inverter/README.md</code></li><li><code>docs/agent-testbench.md</code> · TB 与 helper 契约</li><li><code>docs/pdk-lut.md</code> · 缓存和 section 审计</li><li><code>docs/adctools.md</code> · 测量定义与单位</li></ul><p id="snapshot-source-note">公开副本来源：CircuitGit workflow publication allowlist。没有复制私有 runtime dump；没有复用历史结果。接口已实现 / fake protocol 已测，与真实 provider 推理 unknown 分别标注。</p></div></section>
+  </main>
+  <footer class="site-footer"><a href="./index.html">← 返回 SpiceOwl</a><span>身份不丢失 · 缺失不猜测 · 没有结果就不显示通过</span></footer>
+  <noscript><p class="noscript">本页的阶段切换需要 JavaScript。已知实战状态为 revision 10：等待人工审核；尚无本次求解或 FFT 结果展示。可在仓库文档中阅读完整契约。</p></noscript>
+</body>
+</html>

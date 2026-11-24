@@ -10,11 +10,13 @@
 
 <p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Current alpha source</a></p>
 
-> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use CircuitGit's Codex channel. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>Explore the full Bootstrap/Inverter workflow</strong></a></p>
+
+> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use the standalone Codex window or CircuitGit's existing window in embedded mode. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
 > **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [unified Agent channel guide](docs/native-agent.md).
 
-**Agent ownership:** CircuitGit owns the Codex conversation, credentials and tool bridge. SpiceOwl is the reusable simulation engine; it does not launch a parallel Agent service. See the [paired integration and submodule contract](docs/circuitgit-integration.md).
+**Two Agent modes:** standalone SpiceOwl owns one explicitly connected Codex App-Server window; embedded SpiceOwl exports tools into CircuitGit's existing window and never starts a second Agent. Authentication stays with the selected Codex runtime. See the [dual-mode guide](docs/dual-mode-agent.md). See the [paired integration and submodule contract](docs/circuitgit-integration.md).
 
 The paired CircuitGit development branch also provides a [fresh simulation intake](docs/onboarding-discovery.md): parse an imported inverter, discover selected SSH environments and model candidates, then freeze explicit experiment conditions. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
 
@@ -40,7 +42,7 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
-| Connect | Reuse CircuitGit's Codex conversation and tool bridge | CircuitGit owns Agent/authentication; SpiceOwl supplies Python SDK read views and explicit SSH host/resource checks |
+| Connect | Standalone Codex window or embedded CircuitGit window | Explicit App-Server connection, SSE, human review and shared SDK tools; no second Agent when embedded |
 | Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Frozen inverter/prepared-transient recipes, finite authored-TB validation, and optional named ADC algorithms; general TB intent remains explicit |
@@ -87,7 +89,7 @@ flowchart TD
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
-The current [standalone runtime](docs/standalone-runtime.md) uses server-pool and execution-origin SDKs with CircuitGit's existing Runner. **All Agent connections reuse CircuitGit's Codex window**, its `codex app-server` dynamic-tool bridge and `ic-workbench` integration. Historical [P0.2](docs/contracts/p02-connectivity.md), [P0.3](docs/contracts/p03-pool-agent.md) and connection designs remain for compatibility context; their separate Agent/MCP setup is superseded.
+The current [standalone runtime](docs/standalone-runtime.md) uses server-pool and execution-origin SDKs with CircuitGit's existing Runner. **Agent ownership is explicit:** standalone uses SpiceOwl's Codex window; embedded uses CircuitGit's existing `codex app-server` dynamic-tool bridge and `ic-workbench` integration. Historical [P0.2](docs/contracts/p02-connectivity.md), [P0.3](docs/contracts/p03-pool-agent.md) and connection designs remain for compatibility context; their separate Agent/MCP setup is superseded.
 
 ## Repository map
 
@@ -119,7 +121,7 @@ spiceowl/
 └── tests/                     # Offline tests and synthetic fixtures
 ```
 
-The independently maintained SDK/CLI contains server-pool probes, PDK discovery/LUT, Agent-TB checks, diagnostics, PSF parsing, adctools, read views and the existing signed simulation client. CircuitGit owns the Codex conversation, authentication, project materialization, execution identity, review, dispatch and native collection. Its `submodules/spiceowl` gitlink and integration lock pin the same reviewed commit. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
+The independently maintained SDK/CLI contains server-pool probes, PDK discovery/LUT, Agent-TB checks, diagnostics, PSF parsing, adctools, read views and the existing signed simulation client. Conversation ownership follows the explicit mode; CircuitGit retains project materialization, execution identity, review, dispatch and native collection. Its `submodules/spiceowl` gitlink and integration lock pin the same reviewed commit. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
 
@@ -147,7 +149,7 @@ When an existing SpiceOwl history store is the intended source, CircuitGit can r
 
 For multiple nodes, use **Simulation hosts → Import pool** to preview an explicit hostname list and register it using an existing route template, or use `hosts import-pool`. Select up to 32 rows and use **Check selected hosts**; the CLI offers `hosts scan --hosts HOST_ID ...`. The browser evaluates requested CPUs and memory within the same selected batch. Unknown or stale nodes are excluded. Placement retains a resource margin and is a proposal, not a reservation. Standalone plans select a candidate for a new exported netlist; Virtuoso-managed plans preserve the original host/native run mapping.
 
-For AI assistance, use **CircuitGit's Codex conversation** with its existing authentication and tools. SpiceOwl's former Agent page explains that channel and displays saved legacy Q&A; it cannot send questions or probe a second runtime. Legacy `agents add/probe/ask` commands return migration guidance; metadata and question history remain readable. See the [unified Agent channel guide](docs/native-agent.md).
+For AI assistance, use **Agent channel in standalone SpiceOwl** and explicitly Connect, or **CircuitGit's existing Codex conversation** when embedded. Both share engine tools and preserve saved legacy Q&A. See the [dual-mode setup](docs/dual-mode-agent.md). Legacy `agents add/probe/ask` commands return migration guidance; metadata and question history remain readable. See the [unified Agent channel guide](docs/native-agent.md).
 
 ## Connect the real simulation console
 

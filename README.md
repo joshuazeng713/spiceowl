@@ -18,6 +18,8 @@ The paired CircuitGit development branch also provides a [fresh simulation intak
 
 [Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired workbench and MCP tools return exact next actions; missing evidence and uncertain submissions remain explicit.
 
+The pure [cached scope selection SDK](docs/pdk-scope-selection.md) combines explicitly selected sections of one observed PDK entry, checks the full dependency namespace and TMI options, and compares a subsequent audit against every expected file hash and scope. It preserves partial-library status and requires the execution owner's fresh audit and review.
+
 [Agent-authored testbenches](docs/agent-testbench.md) preserve Spectre source and reviewed relative Verilog-A helpers, including their standard-header dependency graph. A private [per-device PDK index](docs/pdk-lut.md) reuses an explicit library observation across different circuit model combinations, with visible age and coverage; execution still requires a fresh dependency audit. Optional [analysis tools](docs/adctools.md), installed with `pip install '.[adctools]'`, provide ten named Python/CLI operations, actual pinned ADCToolbox integration, and [native AC/DC parsing and measurements](docs/ac-dc-results.md). Gain and loop margins require explicit units, references and feedback semantics; DC region codes require a declared model contract. See the [agent reproducibility guide](docs/agent-reproducibility.md) for the deterministic steps and remaining limits.
 
 ![SpiceOwl local console showing explicitly synthetic runs](docs/images/local-console.png)

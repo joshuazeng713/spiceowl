@@ -18,6 +18,8 @@
 
 [引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。配套 CircuitGit 工作台和 MCP 工具返回明确的下一步动作；新 intake 使用自己的网表及明确绑定来源的观测，缺失证据和提交结果不确定的状态会明确保留。
 
+纯函数[缓存作用域选择 SDK](docs/pdk-scope-selection.md)可组合同一已观察 PDK 入口中明确选定的多个 section，检查完整依赖中的模型重名与 TMI 选项，并逐项比较后续审计的文件哈希及作用域。全库的部分覆盖状态仍然保留，执行前始终需要运行方获取新审计并完成审阅。
+
 [Agent 编写的测试平台](docs/agent-testbench.md)保留 Spectre 源码、经过审阅的相对路径 Verilog-A 辅助文件及标准头文件依赖闭包。私有[单器件 PDK 索引](docs/pdk-lut.md)让不同电路的器件组合复用同一次全库观测，保留覆盖范围和时间；执行前仍须重新核验依赖。安装 `pip install '.[adctools]'` 后，可使用十项具名[分析工具](docs/adctools.md)的 Python／CLI 接口、固定版本的真实 ADCToolbox 集成及[原生 AC/DC 解析与测量](docs/ac-dc-results.md)。增益和环路裕度须明确单位、参考信号与反馈定义，DC region 编码须来自明确模型约定。确定性步骤与限制见[Agent 可复现流程](docs/agent-reproducibility.md)。
 
 ![SpiceOwl 本地控制台的合成演示任务](docs/images/local-console.png)

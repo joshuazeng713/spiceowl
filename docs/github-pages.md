@@ -37,3 +37,25 @@ Open `http://127.0.0.1:8080/pages/`. The app uses relative asset paths and hash 
 `tests/test_pages_build.py` checks public output generation and input boundaries. `tests/pages-demo.mjs` exercises the browser adapter without a network or browser dependency. `tests/pages-browser.mjs` provides opt-in real-browser acceptance using an existing Playwright installation and Chrome, including the `/spiceowl/` project path, mobile layout, state persistence, scenario outcomes and absence of API requests. Set `PLAYWRIGHT_MODULE` to an existing Playwright module path when it is not installed in the default Node search path. Optional `CHROME_PATH`, `PAGES_DIR` and `PAGES_QA_DIR` select the browser, build directory and private report directory.
 
 The builder only emits its explicit asset allowlist; it never copies `.spiceowl`, private profiles, simulator output, PDK files or repository history. It refuses an output directory containing unexpected files. Keep real operator data outside public source, regardless of hosting mode.
+
+## Visual experiment guide (2026-11-24)
+
+`workflow.html` now opens with a diagram-led walkthrough, a cropped real workbench capture,
+and switchable Bootstrap sample-and-hold / CMOS inverter experiments. Seven Matplotlib
+plots derive from three native Spectre result archives. The two 4,096-point spectra were
+independently recomputed with NumPy; the downloadable samples can be checked with:
+
+```bash
+python scripts/verify_showcase.py src/spiceowl/web/static/showcase-samples.json
+```
+
+This optional check requires NumPy. `showcase-evidence.json` records input/archive digests,
+measurement conditions and provenance. The raw archives, host identities and PDK models
+are not distributed. These were separate Runner reruns; they do not complete the historical
+onboarding review. The prior ten-stage reference remains under an expandable section with
+its original snapshot identity. Equivalent bit count is derived from deterministic
+sample-and-hold SNDR, not a measured complete-ADC ENOB. No transient noise, PVT or extracted
+layout qualification is claimed. The AC plot does not assert feedback-loop phase margin.
+
+The explicit `spiceowl.web.showcase_assets.SHOWCASE_ASSETS` list is shared by the local
+HTTP server and Pages builder; no filesystem scan imports private runtime data.

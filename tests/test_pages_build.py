@@ -50,7 +50,7 @@ class PagesBuildTests(unittest.TestCase):
         self.assertFalse(directories[0].exists())
         self.assertEqual((result["run_count"], result["frame_count"]), (4, 13))
         self.assertEqual({p.name for p in self.output.iterdir()}, builder.OUTPUT_FILES)
-        self.assertEqual(len(builder.OUTPUT_FILES), 17)
+        self.assertEqual(len(builder.OUTPUT_FILES), 17 + len(builder.SHOWCASE_ASSETS))
         self.assertEqual((self.output / "LICENSE.txt").read_bytes(), (ROOT / "LICENSE").read_bytes())
         text = (self.output / "demo-data.js").read_text()
         for forbidden in (str(Path.home()), str(ROOT), str(directories[0]), "ssh_target", "api_key", "remote_directory"):
@@ -148,6 +148,15 @@ class PagesBuildTests(unittest.TestCase):
         for name in ('bootstrap-tb.publication.scs', 'workflow.js'):
             altered = dict(assets)
             altered[name] = altered[name].replace(b'CHOLD', b'CFAKE')
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                builder.validate_publications(altered)
+
+    def test_visual_evidence_assets_fail_closed_on_plot_or_sample_changes(self):
+        builder.build(self.output)
+        assets = {name: (self.output / name).read_bytes() for name in builder.ASSETS}
+        for name in ("showcase-spectrum.svg", "showcase-samples.json"):
+            altered = dict(assets)
+            altered[name] += b" "
             with self.subTest(name=name), self.assertRaises(ValueError):
                 builder.validate_publications(altered)
 

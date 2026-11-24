@@ -1,0 +1,69 @@
+{
+  "schema": "workflow.visual-evidence.v1",
+  "date": "2026-11-24",
+  "execution_route": "separate CircuitGit Runner reruns; not the onboarding review receipt",
+  "measurement_scope": "deterministic sample-and-hold output, not a complete ADC; no transient noise, PVT or extracted layout validation",
+  "runs": [
+    {
+      "case": "baseline",
+      "archive_sha256": "282058300d6e6dc4a22b21619ab2a4e0ac7dfb86612f276b192f64d4cd6f119a",
+      "tb_sha256": "3171d9d01e3e2becfa3c93c7a5fa9bfac8a565109e0a3090aa7aa28234941137",
+      "native_waveform_sha256": "e2ce777d9d7349e69fb780f89f36ee1c06011cf49bf051a665a0fbe4bcb3be3e",
+      "solver_exit_code": 0,
+      "measurement": "offline independent NumPy rFFT recomputation",
+      "sample_count": 4096,
+      "fundamental_bin": 1811,
+      "sndr_db": 33.44156264025939,
+      "sfdr_db": 34.89380525432669
+    },
+    {
+      "case": "wider",
+      "archive_sha256": "f1f98d08abf19b9fdb06a205d784cddc68f571ffda496fccfa5b83bb01debd5b",
+      "tb_sha256": "3c67fa8137f691910080485652c536396492cf9a841655cea55ede9b1d11ca18",
+      "native_waveform_sha256": "532eac03a4dbb43231bbcfe2613b91f29cfd147d77e6b495cda2a24a64f7c87a",
+      "solver_exit_code": 0,
+      "measurement": "offline independent NumPy rFFT recomputation",
+      "sample_count": 4096,
+      "fundamental_bin": 1811,
+      "sndr_db": 57.56949929605558,
+      "sfdr_db": 57.84911208879224
+    },
+    {
+      "case": "inverter",
+      "archive_sha256": "dd8937b8dbda82ddfd7998b082761c8293fb9b0690fafc8fa0b3439d9a8892d9",
+      "tb_sha256": "49e618cb27368b8ce097e23a52ef924d98d74f980915b3fcf03f0d74541f6af3",
+      "solver_exit_code": 0,
+      "native_analysis_sha256": {
+        "tran_inv.tran.tran": "552a25ef00462c90e776a37222621891e3deaaa0fec424f99a6d19b3e6c92155",
+        "dc_vtc.dc": "872d145a9e841190246ab5fe5b7544f5e26a632741937765370980b5c99eecde",
+        "ac_bode.ac": "ed5c0c8d497cc049558b891c13376af71925421030da03350faac3224661f3ef"
+      },
+      "bias_v": 0.435,
+      "supply_v": 0.9,
+      "load_f": 1e-14,
+      "temperature_c": 27
+    }
+  ],
+  "plots": {
+    "showcase-spectrum-baseline.svg": "b3f2fceb1fc45598fbf07249f635bfb99bb9a2af9c8dea7aa13e1d1b75ebe5bc",
+    "showcase-studio.webp": "56179fb505ba1e442fde052749cda1b0ac792e848a993baf7a6eaf1082787d15",
+    "showcase-inverter-dc.svg": "6146e7b5c9eb9bb7e344274a97ba52844cbaa494c58ac2041261b719a2788ee9",
+    "showcase-bootstrap-tran.svg": "dda83e4159c4d3ab112a6cfa4f9c5d10fe1ce14fe4d4a78aac93acbb88947a75",
+    "showcase-inverter-tran.svg": "17439fd571c5aeab2cb25c50a4e2653abe1554a305b2b070c666b228b3a382b2",
+    "showcase-spectrum-wider.svg": "bc48f98c0d4bc5774928f3293ff5ebe8e0fdc402e4ce1aa7e2a48dbe8f52eac0",
+    "showcase-inverter-ac.svg": "526661a3ac9e824a594a3392f419b59eae3491435086f6c1cb511fa208439a78",
+    "showcase-spectrum.svg": "abe208f120262c73b7cda131beb050b70ef7656f2196583f79120078b4a96d98"
+  },
+  "screenshot": {
+    "kind": "real application capture",
+    "context": "PIPETISAR workbench example, not the Bootstrap rerun",
+    "crop": "top schematic and simulation panels only; chat excluded"
+  },
+  "published_samples_sha256": "17bf2a3ee9db4b440761425b5ed6b5c229ec66e1b6c052de2cc31712a8fec2c2",
+  "inverter_timing_recheck": {
+    "threshold_v": 0.45,
+    "interpolation": "linear between consecutive full native PSF samples",
+    "tphl_ps": 22.60155281773131,
+    "tplh_ps": 28.910479723009498
+  }
+}

@@ -9,6 +9,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 from spiceowl.domain.common import DomainError, require_id
+from spiceowl.web.showcase_assets import SHOWCASE_ASSETS
 
 
 def _unique(pairs):
@@ -191,6 +192,9 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             for filename in ('bootstrap-dut.publication.scs', 'bootstrap-tb.publication.scs',
                              'inverter-dut.publication.scs', 'bootstrap-evidence.publication.json', 'source-manifest.json'):
                 static['/' + filename] = (filename, 'application/json; charset=utf-8' if filename.endswith('.json') else 'text/plain; charset=utf-8')
+            types = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".webp": "image/webp"}
+            for filename in SHOWCASE_ASSETS:
+                static["/" + filename] = (filename, types["." + filename.rsplit(".", 1)[1]])
             if self.command == "GET" and path in static:
                 name, media = static[path]
                 return self.send_content(200, files("spiceowl.web").joinpath("static", name).read_bytes(), media)

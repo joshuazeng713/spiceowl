@@ -16,6 +16,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+from spiceowl.web.showcase_assets import SHOWCASE_ASSETS
+
 PUBLICATION_HASHES = {
     "bootstrap-dut.publication.scs": "808da690214b9e8ee1c0b2ce05c4dbf7eda69d6d71a198776d3cd5c53597b2c0",
     "inverter-dut.publication.scs": "d41d38c83de57359ea4bc9ecd07e0976cc4f9b2796e9eb8ceed235565e441db8",
@@ -24,7 +26,7 @@ PUBLICATION_HASHES = {
     "source-manifest.json": "676a0cf396562560b9c343dd165dc427c8a212b300081b59c36d57d01fdc0a70",
 }
 ASSETS = ("index.html", "app.js", "app.css", "owl.svg", "demo.js",
-          "workflow.html", "workflow.js", "workflow.css", *PUBLICATION_HASHES)
+          "workflow.html", "workflow.js", "workflow.css", *PUBLICATION_HASHES, *SHOWCASE_ASSETS)
 OUTPUT_FILES = frozenset((*ASSETS, "demo-data.js", "build.json", ".nojekyll", "LICENSE.txt"))
 REPOSITORY = "https://github.com/spiceowl-dev/spiceowl"
 CONNECTION_SCENARIOS = ("success", "inference_denied", "disconnect", "permission_denied")
@@ -60,6 +62,14 @@ def validate_publications(assets):
     for record in embedded:
         if record["text"].encode("utf-8") != assets[record["filename"]]:
             raise ValueError("Workflow embedded text differs from downloadable publication")
+
+
+    evidence = json.loads(assets["showcase-evidence.json"])
+    for name, digest in evidence["plots"].items():
+        if name not in SHOWCASE_ASSETS or hashlib.sha256(assets[name]).hexdigest() != digest:
+            raise ValueError("Visual evidence asset hash mismatch")
+    if hashlib.sha256(assets["showcase-samples.json"]).hexdigest() != evidence["published_samples_sha256"]:
+        raise ValueError("Visual evidence sample hash mismatch")
 
 
 def compile_diagnosis(run, scenario):

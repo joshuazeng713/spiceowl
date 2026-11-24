@@ -2,7 +2,7 @@
 
 The optional local CLI/web connection sends finite simulation operations to an operator-configured CircuitGit gateway. CircuitGit's existing Runner owns preparation, immutable input/run identity, SSH staging, dispatch and native result collection. SpiceOwl owns the shared client, host-pool checks, existing-run monitor, Spectre diagnostic classification and bounded PSF ASCII parser. No second execution ledger or agent framework is required.
 
-Stored runtime responses follow the [simulation runtime v1 contract](contracts/simulation-runtime.v1.json). This is an alpha integration for prepared netlists and explicit projects. Synthetic demonstrations remain available through `serve --demo`; the public GitHub Pages demo never executes these operations. The [passive IC cache](ic-workbench.md), read-only MCP tools and [placement-only commands](server-pool.md) retain their narrower scope.
+Stored runtime responses follow the [simulation runtime v1 contract](contracts/simulation-runtime.v1.json). This is an alpha integration for prepared netlists and explicit projects. Synthetic demonstrations remain available through `serve --demo`; the public GitHub Pages demo never executes these operations. The [passive IC cache](ic-workbench.md), [read-only engine SDK/CLI](real-connections.md#5-read-saved-state-through-the-engine-sdk) and [placement-only commands](server-pool.md) retain their narrower scope. AI interaction uses CircuitGit's existing Codex window.
 
 ## Prepare the connection
 
@@ -127,7 +127,7 @@ By default, after gateway restart, explicitly call `watch` to restart observatio
 
 The shared parser supports one time sweep, scalar `FLOAT DOUBLE` values, up to 64 signals and 200,000 samples within 16 MiB. It does not parse PSF binary/PSFXL, complex AC data, multidimensional sweeps or arbitrary result databases. Unsupported formats remain unknown; malformed supported input is invalid. Experiment-specific measurement-window coverage and general analog specification recipes are not inferred from file readability. The [developer inverter example](../examples/inverter/README.md) has separate explicit toy acceptance criteria.
 
-Spectre diagnostics classify bounded evidence for license, missing-model, syntax, parameter-bound, convergence and memory failures. Confirmed OOM requires an explicit relevant message or run-bound evidence; a kill signal alone is only suspected OOM. Suggestions are advisory. Native agent Q&A is separate and receives no implicit simulator authority.
+Spectre diagnostics classify bounded evidence for license, missing-model, syntax, parameter-bound, convergence and memory failures. Confirmed OOM requires an explicit relevant message or run-bound evidence; a kill signal alone is only suspected OOM. Suggestions are advisory. AI explanations use [CircuitGit's existing Codex channel](native-agent.md) and receive no implicit simulator authority.
 
 ## Offline checks
 

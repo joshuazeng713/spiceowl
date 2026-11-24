@@ -187,7 +187,7 @@ def make_server(controller, port=0, live_client_config=None):
                 if parts[1] == "native-agents" and len(parts) == 4 and parts[3] == "probe" and self.command == "POST":
                     if self.body():
                         raise DomainError("Agent readiness check takes an empty object.")
-                    return self.reply(controller.native_agents.probe(identifier))
+                    return self.reply(controller.probe_native_agent(identifier))
                 if parts[1] == "hosts" and len(parts) == 4 and parts[3] == "probe" and self.command == "POST":
                     if self.body():
                         raise DomainError("A host probe takes an empty object and uses its registered profile.")

@@ -94,16 +94,50 @@ class HttpTests(unittest.TestCase):
             probe.assert_called_once_with("example")
         self.assertEqual(self.app.state()["runs"], before)
 
-    def test_native_questions_require_same_origin_csrf_before_inference(self):
+    def test_native_questions_keep_origin_checks_then_reject_local_dispatch(self):
         from unittest.mock import patch
         question = {"agent_id": "fixture", "question": "Hello", "request_key": "fixture-question"}
-        with patch.object(self.app, "ask", return_value={"qa_id": "fixture-question", "status": "queued"}) as ask:
+        with patch.object(self.app, "ask", wraps=self.app.ask) as ask, \
+                patch.object(self.app.questions, "claim", side_effect=AssertionError("No question claim")) as claim:
             self.assertEqual(self.request("POST", "/api/agent-questions", question)[0], 403)
             self.assertEqual(self.mutate("POST", "/api/agent-questions", question, {"Origin": "https://evil.example"})[0], 403)
             self.assertEqual(self.request("GET", "/api/agent-questions")[0], 404)
             ask.assert_not_called()
-            self.assertEqual(self.mutate("POST", "/api/agent-questions", question)[0], 202)
+            status, result, _ = self.mutate("POST", "/api/agent-questions", question)
+            self.assertEqual(status, 400)
+            self.assertEqual(result["error"]["code"], "agent_channel_owned_by_circuitgit")
             ask.assert_called_once_with(question)
+            claim.assert_not_called()
+
+    def test_native_readiness_is_rejected_after_origin_and_csrf_checks(self):
+        from unittest.mock import patch
+        with patch.object(self.app.native_agents, "probe", side_effect=AssertionError("No native probe")) as probe:
+            path = "/api/native-agents/fixture/probe"
+            self.assertEqual(self.request("POST", path, {})[0], 403)
+            self.assertEqual(self.mutate("POST", path, {}, {"Origin": "https://evil.example"})[0], 403)
+            status, result, _ = self.mutate("POST", path)
+            self.assertEqual(status, 400)
+            self.assertEqual(result["error"]["code"], "agent_channel_owned_by_circuitgit")
+            probe.assert_not_called()
+
+    def test_saved_questions_remain_readable_without_mutation_or_dispatch(self):
+        from unittest.mock import patch
+        record = {"qa_id": "old-question", "agent_id": "removed-profile", "question": "Saved question",
+                  "answer": "Saved answer", "status": "queued", "request_key": "original-key",
+                  "profile_snapshot": {"executable": "/private/legacy/codex"}, "synthetic": False}
+        self.app.store.create("qa", record["qa_id"], record)
+        with patch("subprocess.Popen", side_effect=AssertionError("No native process")):
+            for _ in range(2):
+                status, result, _ = self.request("GET", "/api/agent-questions/old-question")
+                self.assertEqual(status, 200)
+                self.assertEqual(result["status"], "queued")
+                self.assertEqual(result["answer"], "Saved answer")
+                self.assertNotIn("profile_snapshot", result)
+                status, state, _ = self.request("GET", "/api/state")
+                self.assertEqual(status, 200)
+                self.assertEqual(state["agent_channel"]["owner"], "circuitgit")
+                self.assertFalse(state["capabilities"]["real_inference"])
+        self.assertEqual(self.app.store.get("qa", record["qa_id"]), record)
 
 
 if __name__ == "__main__":

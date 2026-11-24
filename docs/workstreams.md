@@ -1,12 +1,14 @@
 # Project workstreams
 
-Updated: 2026-11-13. Status: design round delivered; P0.1 implementation integrated from three isolated worktrees. The [local console](local-console.md) now provides offline connections, synthetic replay, advisory diagnosis, SQLite history, CLI and a browser UI. Real-provider and simulator integrations remain planned.
+**Status: historical coordination record from 2026-11-13; AI ownership and sequencing superseded on 2026-11-24.** The original design round delivered P0.1 from three isolated worktrees. The [local console](local-console.md) provides its synthetic replay and persisted evidence; current real integration status belongs to [the roadmap](roadmap.md).
 
-## Current objective
+Current AI interaction uses CircuitGit's existing Codex window and IC Workbench integration. SpiceOwl supplies the independent simulation engine SDK and CLI, including [neutral stored read views](real-connections.md#5-read-saved-state-through-the-engine-sdk). The provider/session manager proposed below is historical, not another current service to configure. Paired integration work follows [the CircuitGit delivery boundary](circuitgit-integration.md#paired-delivery-rule).
+
+## Original planning objective
 
 Prepare implementable connection and supervision designs. The user's first requested implementation capability is management of their existing agent subscriptions and model APIs. This adds a provider-connection milestone before the simulation-monitor milestone; it does not grant a diagnostic agent authority to modify or stop simulations.
 
-## Responsibility map
+## Historical responsibility map
 
 | Workstream | Question it must answer | Deliverables |
 | --- | --- | --- |
@@ -17,7 +19,7 @@ Prepare implementable connection and supervision designs. The user's first reque
 
 Workstreams run in separate local chats, with exclusive file ownership. Chat identifiers are not part of the public project specification. Each workstream reports a result in its own chat; the coordinator reviews the report and files.
 
-The [integrated plan](design/integration-plan.md) records P0.1–P0.3 and the simulation handoff. Selected first integrations are native local Codex and an explicit API-key route through the official OpenAI Python SDK; ACP follows, with LiteLLM optional later. Shared review resolved receipt naming, imported-run null keys, scheduler restart lineage, collection/postprocessing separation and independent specification outcomes.
+The [archived integrated plan](design/integration-plan.md) records P0.1–P0.3 and the simulation handoff. Its original native-Codex/API-key/ACP sequence is superseded by CircuitGit's AI ownership. Shared review also resolved receipt naming, imported-run null keys, scheduler restart lineage, collection/postprocessing separation and independent specification outcomes; those evidence and execution distinctions remain relevant.
 
 ## Integration review
 
@@ -30,7 +32,7 @@ The coordinator checks these seams before accepting the design round:
 - Credentials: examples contain only placeholders and secret references; no subscription credential pooling or silent paid fallback.
 - Scientific validity: valid design failures and Monte Carlo sample identity remain intact through all recovery paths.
 
-## Review and delivery process
+## Original design-round review and delivery process
 
 1. Complete the three owned design documents and illustrative configuration files.
 2. Reconcile conflicting field names, assumptions, and backend priorities against [interface boundaries](contracts/interface-boundaries.md).
@@ -38,4 +40,4 @@ The coordinator checks these seams before accepting the design round:
 4. Update the shared roadmap and record the selected first implementation slice.
 5. Submit one integrated draft pull request. Runtime features require subsequent implementation and opt-in integration tests.
 
-The current integration branch is `docs/connection-plans`. Only the coordinator stages, commits, pushes, or merges changes; design workstreams do not operate the Git index or change branches.
+The original design round used `docs/connection-plans`. Its coordinator owned staging, commits, pushes and merges; workstreams used exclusive file ownership and did not operate the Git index or change branches. This historical branch name is not a direction to switch a current checkout.

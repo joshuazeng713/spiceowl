@@ -1,6 +1,6 @@
 # Server pools and reviewable placement plans
 
-SpiceOwl 0.3.0a1 adds resource-based recommendations and two explicit simulation origins to the existing [connectivity layer](real-connections.md). The CLI, pool scanning, resource cards and pure scheduling functions implement the [P0.3 contract](contracts/p03-pool-agent.md). Native questions have a separate [Q&A guide](native-agent.md). Qualify each real host independently; an execution plan does not submit a simulation.
+SpiceOwl 0.3.0a1 adds resource-based recommendations and two explicit simulation origins to the existing [connectivity layer](real-connections.md). The CLI, pool scanning, resource cards and pure scheduling functions implement the host/placement portion of the [P0.3 contract](contracts/p03-pool-agent.md). AI questions use [CircuitGit's existing Codex window](native-agent.md); the separate P0.3 native-Q&A path is superseded. Qualify each real host independently; an execution plan does not submit a simulation.
 
 A recommendation is a calculation over stored observations. It performs **no network request, reservation, allocation, or dispatch**. An execution plan is a reviewable description of a possible route. Every returned plan has `reservation: false` and `dispatch_enabled: false`.
 
@@ -160,6 +160,6 @@ Both routes return `origin`, `source_kind`, `route`, `status`, `host_id`, `propo
 
 A pool recommendation or native route is not an experiment submission. The optional [standalone live runtime](standalone-runtime.md) uses CircuitGit’s existing Runner to freeze input/model and execution-site identity, validate the remote environment, check resources and record keyed dispatch within the installed operator grant. Placement-only commands in this guide do not perform those operations. Unknown outcomes must be reconciled before another attempt. No netlist or actual run is supplied by the examples above.
 
-Native agent Q&A is a separate P0.3 workstream. An answer or explanation does not reserve a server, approve a plan, rewrite an origin, or authorize a simulation. Existing read-only MCP queries remain query-only. The state of a diagnostic conversation does not own a simulator task.
+AI questions and tool interaction belong to CircuitGit's existing Codex channel. An answer or explanation does not reserve a server, approve a plan, rewrite an origin, or authorize a simulation. SpiceOwl's neutral `read_api` and `read` CLI only project saved evidence. The state of a diagnostic conversation does not own a simulator task.
 
 The offline tests cover threshold boundaries, independently stale resource/version evidence, mixed eligible/excluded pools, missing/null/invalid metrics, identity/provenance mismatches, deterministic ranking, input immutability, command-like data, and preservation of the native binding. They use authored fixtures only and do not contact SSH hosts or execute simulators. Public test success must not be presented as qualification of a real server pool.

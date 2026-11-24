@@ -1,10 +1,12 @@
 # AI connections and management
 
-Status: implementation proposal, not a working integration. Checked **2026-11-13** (Asia/Shanghai). Scope: local, single-user P0 connection management. No login, credential inspection, installation, paid inference, or simulator access was performed for this design.
+**Status: archived proposal, superseded on 2026-11-24.** This document preserves the 2026-11-13 research and interface sketches. It is not current setup guidance or a commitment to add a provider/session manager in SpiceOwl. AI interaction now uses CircuitGit's existing Codex window and IC Workbench integration; SpiceOwl provides an independent simulation engine SDK and CLI. Use [the current AI route](../native-agent.md) and [engine read API](../real-connections.md#5-read-saved-state-through-the-engine-sdk). Do not start another SpiceOwl native-agent service or register a second MCP server from this proposal.
+
+Historical evidence was checked **2026-11-13** (Asia/Shanghai). Its upstream URLs, API/authentication discussion, dependency choices and implementation sequence are a dated design record, not current provider guidance. No login, credential inspection, installation, paid inference, or simulator access was performed for that design.
 
 This proposal follows the [architecture](../architecture.md), [run contract](../run-contract.md), and [shared interface boundaries](../contracts/interface-boundaries.md). The [connection example](../../examples/connections.example.json) is synthetic and deliberately non-executable. All interfaces, module paths, commands, and acceptance tests below are proposed unless explicitly described as upstream behavior.
 
-## Decision and first deliverable
+## Historical decision and first deliverable
 
 Build two separate Python adapter families behind a small connection registry:
 
@@ -419,7 +421,7 @@ All tests below are future acceptance criteria. This design round only validates
 
 Proposed offline demonstration after P0.1 implementation: register a new non-example fake configuration, list and inspect it, probe each readiness level, start one diagnostic turn from a synthetic evidence package, restart the controller, resume event display, and show the validated proposal plus a denied permission record. This is the concrete minimum runnable slice; no frontend, Cadence, orchestration service, login or paid API is required.
 
-## Integration points for the coordinator
+## Superseded integration points for the coordinator
 
 Coordinator review: the shared types, evidence/proposal handoff, permission ownership and storage boundaries below are adopted in [shared boundaries](../contracts/interface-boundaries.md#shared-handoff-records) and the [integrated plan](integration-plan.md). The real OS/runtime isolation profile remains a later qualification choice.
 
@@ -444,7 +446,7 @@ Coordinator review: the shared types, evidence/proposal handoff, permission owne
 | Cross-backend context loss | A handoff appears to be a native resume | Explicit new session and approved context transfer; preserve lineage/uncertainty |
 | Future multi-user hosting | Local OS identity assumptions cease to hold | Separate authentication, isolation, storage and authorization design before release |
 
-## Original sources
+## Historical sources
 
 All checked **2026-11-13**. Links to moving source branches were read for research only; none was installed, executed, vendored or claimed to be the latest release.
 

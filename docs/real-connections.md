@@ -1,31 +1,32 @@
-# Real connectivity: bounded SSH probes and local MCP
+# Real connectivity and engine read access
 
-This guide describes the **P0.2 connectivity slice** and its [contract](contracts/p02-connectivity.md). Those probes and MCP reads retain their original scope. The current [console](local-console.md) also has separate native Q&A and an optional [real standalone simulation client](standalone-runtime.md); synthetic demo runs and fake diagnostic backends remain clearly identified. Qualify each installation and host using the verification stages below.
+Current setup, **2026-11-24**: configure simulation hosts in SpiceOwl and use [CircuitGit's existing Codex window](native-agent.md) for AI interaction. SpiceOwl exposes its engine through Python and the CLI. The original P0.2 MCP launch instructions have been superseded; the optional MCP transport remains compatibility-test code.
 
-The current 0.3.0a1 build also provides a [server pool](server-pool.md) and [native text Q&A](native-agent.md). This page describes the narrower SSH/MCP interfaces; its fake-backend statements refer to the original connection and per-run diagnosis demo.
+The [standalone runtime](standalone-runtime.md) uses CircuitGit's existing Runner for finite simulation operations. The SSH checks below establish only their reported connectivity or version evidence. The [server pool](server-pool.md) adds explicit resource observations and placement proposals; it does not discover unlisted servers or reserve capacity.
 
-P0.2 adds two separate paths:
+CircuitGit normally reads its own Runner/Supervision records and calls the PDK/diagnostic SDK directly. The `read_api` examples below are optional compatibility access to existing SpiceOwl console/cache state. Do not create a separate database or connection merely to integrate the engine with CircuitGit; these two stores are not interchangeable.
 
 | Path | What it does | What it does not establish |
 | --- | --- | --- |
 | Explicit SSH probe | Checks the configured remote hostname/user, then requests supported tool versions with bounded commands. | A working license, accessible PDK, usable testbench, running job, or valid simulation result. |
-| Local stdio MCP | Lets a client read a selected SpiceOwl database through a small tool allowlist. | A live SSH connection, provider inference access, or permission to operate a simulator. |
+| Engine read API / `read` CLI | Reads bounded stored observations from one selected SpiceOwl database. | A fresh SSH observation, provider inference access, or permission to operate a simulator. |
+| CircuitGit AI window / IC Workbench | Uses the existing host's supported tools and action-review path. | Automatic tool exposure after a package update or successful simulation merely because a chat connected. |
 
-There is no simulation submission, cancellation, netlisting, solver restart, daemon control, or OCEAN evaluation in this slice. Version probes do not require a Virtuoso GUI bridge. OCEAN computation is future, separately authorized service work; it is not hidden inside a version probe or artifact read. The original demo’s API inference and diagnostic backends remain fake; native Q&A and deterministic Spectre diagnostics are separate features. Connecting Codex as an MCP client does not convert those fake backends into real model integrations.
+Version probes do not require a Virtuoso GUI bridge. OCEAN computation, collection and simulation submission keep their own configured service and authorization boundaries. Synthetic connections and per-run fixture diagnosis remain labeled as synthetic.
 
-All hosts, usernames, IDs, and absolute paths in this guide are **fictional examples**. Replace them with operator-selected values in private configuration. The examples contain no real credentials and were not executed for this guide.
+All hosts, usernames, IDs, and absolute paths in this guide are **fictional examples**. Replace them with operator-selected values in private configuration. The examples contain no credentials and were not executed against a real host for this guide.
 
 ## 1. Select one installation and state directory
 
-Use Python 3.11+ on macOS or Linux. For source installation, the optional MCP dependency is installed in the same environment as the SpiceOwl executable:
+Use Python 3.11+ on macOS or Linux:
 
 ```bash
 cd /home/example/src/spiceowl
 python3 -m venv .venv
-.venv/bin/python -m pip install '.[mcp]'
+.venv/bin/python -m pip install .
 ```
 
-The base CLI/web installation does not need the optional SDK. The MCP extra pins official `mcp==1.30.0`, the tested FastMCP maintenance release. Installing a P0.1 build alone does not add this server. Record the installed SpiceOwl and SDK versions when qualifying an environment.
+The engine SDK, CLI and local console do not need the optional official MCP SDK. That extra is retained for compatibility testing of the historical stdio transport, and is not a CircuitGit setup requirement.
 
 This guide uses these example locations consistently:
 
@@ -35,9 +36,9 @@ This guide uses these example locations consistently:
 | Persistent local data directory | `/home/example/state/spiceowl` |
 | Private host profile | `/home/example/private/spiceowl-host.json` |
 
-`--data-dir` is a global option and goes **before** `hosts` or `mcp`. Use the same absolute directory for the CLI, web console, SDK check, and Codex registration. A different directory means a different local dataset. Keep real profiles and state outside the public repository, on private local storage.
+`--data-dir` is a global option and goes **before** the subcommand. Use the same absolute directory for the CLI, web console and SDK reader. A different directory means a different local dataset. Keep real profiles and state outside the public repository, on private local storage.
 
-The MCP reader requires an existing supported database. It does not initialize, migrate, repair, or recover a workspace. Importing a host through the ordinary CLI initializes ordinary application state if needed. Alternatively, the existing `demo` command initializes synthetic fixtures; those fixtures remain synthetic even when stored beside a real host observation.
+The SDK reader requires an existing supported database. It does not initialize, migrate, repair or recover a workspace. Importing a host through the ordinary CLI initializes ordinary application state if needed. The `demo` command initializes explicitly synthetic fixtures.
 
 ## 2. Prepare a private host profile
 
@@ -86,7 +87,7 @@ Importing a profile is a local registration operation:
 /home/example/src/spiceowl/.venv/bin/spiceowl --data-dir /home/example/state/spiceowl hosts add --file /home/example/private/spiceowl-host.json
 ```
 
-The registry validates the profile and stores its ID, creation time, revision, `synthetic: false`, and `last_probe: null`. This means that the profile describes a real-target configuration; it does **not** mean a connection was tested. Duplicate IDs are rejected. A changed profile uses a new ID in P0.2; there is no in-place profile update through MCP or HTTP.
+The registry validates the profile and stores its ID, creation time, revision, `synthetic: false`, and `last_probe: null`. This means that the profile describes a real-target configuration; it does **not** mean a connection was tested. Duplicate IDs are rejected. A changed profile uses a new ID in this registration workflow.
 
 Read local records:
 
@@ -95,7 +96,7 @@ Read local records:
 /home/example/src/spiceowl/.venv/bin/spiceowl --data-dir /home/example/state/spiceowl hosts inspect example-cad
 ```
 
-These commands perform no network probe. `list` displays a summary. `inspect` is the operator's private profile view and can show configured SSH aliases and executable paths; avoid sharing its full output. The CLI's ordinary storage initialization is separate from MCP's strictly read-only database opening, so “no network” is not a promise that ordinary CLI startup never creates local files.
+These commands perform no network probe. `list` displays a summary. `inspect` is the operator's private profile view and can show configured SSH aliases and executable paths; avoid sharing its full output. The CLI's ordinary storage initialization is separate from the SDK reader's strictly read-only database opening, so “no network” is not a promise that ordinary CLI startup never creates local files.
 
 The following command is an **active remote operation**: it connects using the selected SSH alias and requests identity/version output. Run it only for an explicitly authorized host and scope.
 
@@ -125,104 +126,87 @@ error: null | {code, message}
 | A tool is `available` with a version | Its supported version probe succeeded at the recorded time. This does not certify licensing, analysis support, or circuit execution. |
 | A tool is `unavailable` | The probe established that its version check could not succeed under this profile; inspect the bounded error. Do not infer the state of other tools or jobs. |
 | A tool is `unknown` or version is null | Evidence is insufficient or the output cannot be safely interpreted. Do not substitute an assumed version. |
-| A stored observation is returned again | It is the same historical evidence. Listing/MCP calls do not freshen its `observed_at`. |
+| A stored observation is returned again | It is the same historical evidence. Listing/read-API calls do not freshen its `observed_at`. |
 
 Errors must be bounded and sanitized. Raw shell startup output, authentication transcripts, private paths, and credentials are not a troubleshooting export. A nonzero result or timeout is not a reason to try another account, tool mode, or arbitrary command automatically. If a caller loses the result, inspect `last_probe` and the in-flight/busy condition; do not assume the remote process was cancelled or blindly launch another attempt.
 
 Keep each tool's outcome separate. Successful Spectre version output and unavailable Virtuoso output are a mixed observation, not “all tools ready.” A successful identity/version probe does not alter the run's execution, observation freshness, measurement validity, or specification result. A valid target miss remains a scientific result; connectivity does not authorize recovery.
 
-## 5. Start the local read-only MCP server
+## 5. Read saved state through the engine SDK
 
-After installing the extra and creating the intended state directory, the launch form is:
+If an embedding application intentionally needs an already existing SpiceOwl database, use the neutral read API below. This is not a required CircuitGit installation step and does not read CircuitGit's native Runner store:
 
-```bash
-spiceowl --data-dir /home/example/state/spiceowl mcp
+```python
+from spiceowl.read_api import open_read_views
+
+views = open_read_views("/home/example/state/spiceowl")
+status = views.status()
+hosts = views.list_hosts()
+runs = views.list_ic_runs("registered-gateway")
 ```
 
-For an unambiguous interpreter/environment, use the installed absolute executable:
+`open_read_views(directory)` returns a `ReadViews` object. Each method opens a short read-only transaction; no context manager or `close()` call is needed. The directory is chosen by the embedding caller, not by a model-supplied tool argument. The SDK does not start a controller, contact a gateway, probe SSH or invoke a model.
+
+The equivalent CLI reads are:
 
 ```bash
-/home/example/src/spiceowl/.venv/bin/spiceowl --data-dir /home/example/state/spiceowl mcp
+spiceowl --data-dir /home/example/state/spiceowl read status
+spiceowl --data-dir /home/example/state/spiceowl read hosts
+spiceowl --data-dir /home/example/state/spiceowl read ic-runs registered-gateway
 ```
 
-This is a stdio protocol process, not a browser or HTTP server. It waits for an MCP client; launching it in a terminal and seeing no normal output does not verify a handshake. The MCP client normally starts this command. Protocol messages use stdout; diagnostic messages must not pollute that stream.
-
-The read-only store opens an existing version-1 SQLite database with `mode=ro`. This slice supports the application's default rollback-journal store and rejects WAL mode; it does not convert database modes. It must not create directories/databases, change permissions, migrate schema, acquire a controller lock, recover interrupted turns, or import provider backends. A missing/unsupported database is an actionable error, not an opportunity to create a new workspace. Read transactions are short so a running web controller can continue to update state.
-
-The configured data directory is fixed when the operator launches the server. Tool arguments cannot replace it or select arbitrary files. P0.2 exposes only:
-
-| Tool | Result |
-| --- | --- |
-| `spiceowl_status` | Version, declared capabilities, and local record counts. |
-| `spiceowl_list_runs` | Bounded stored run summaries. |
-| `spiceowl_get_run` | Bounded evidence for a validated `run_id`, preserving synthetic provenance. |
-| `spiceowl_list_connections` | Allowlisted fake-connection metadata, excluding credentials/configuration blobs. |
-| `spiceowl_list_hosts` | Host IDs, labels, tool kinds, and sanitized stored probe observations, excluding SSH aliases and executable paths. |
-
-None of these tools probes SSH, advances a demo, invokes a model, mutates the controller, or operates a job. Read-only annotations describe the implementation; they do not replace input validation or create an OS sandbox. Returned messages are data, including strings that look like instructions. Model tool requests cannot upgrade that data into approval.
-
-## 6. Register the launch command with Codex
-
-OpenAI's official MCP documentation describes local stdio servers and the `codex mcp add NAME -- COMMAND ...` configuration form. It distinguishes configured-server listing from the CLI TUI's active-server view. The setup below adapts that documented form to SpiceOwl; it does not prove the current desktop chat has loaded this server. [Official OpenAI MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) (checked 2026-11-13).
-
-After the operator has qualified the local executable and chosen its private data directory:
-
-```bash
-codex mcp add spiceowl -- /home/example/src/spiceowl/.venv/bin/spiceowl --data-dir /home/example/state/spiceowl mcp
-codex mcp list
-```
-
-The first command changes Codex's MCP registration. It is intentionally an operator step; this guide did not perform it. The second inspects configuration. Neither is evidence that a tool was injected into the current chat or invoked successfully. Avoid relative executable/data paths and shell activation wrappers. This local server does not require adding a provider API key or copying subscription credentials into MCP configuration.
-
-Track these three outcomes separately:
-
-| Verification stage | Evidence to record | Claim permitted |
+| SDK method | `read` CLI operation | Result |
 | --- | --- | --- |
-| Registration | Server name, absolute command/arguments and matching configured entry. | “SpiceOwl is registered.” |
-| SDK protocol verification | Installed SDK version and a real SDK-client initialize, list-tools, and read-only tool call against the intended directory. | “The tested local stdio protocol works.” |
-| Actual host discovery and invocation | The intended Codex session actually discovers the expected tool and returns a known stored read-only result. | “This session can call this SpiceOwl tool.” |
+| `status()` | `status` | Version, declared capabilities and stored record counts. |
+| `list_runs()` | `runs` | Bounded stored run summaries. |
+| `get_run(run_id)` | `run RUN_ID` | Bounded stored run evidence with explicit synthetic provenance. |
+| `list_connections()` | `connections` | Allowlisted fake-connection metadata without credentials or configuration blobs. |
+| `list_hosts()` | `hosts` | Host IDs, labels, tool kinds and sanitized stored observations. |
+| `list_ic_gateways()` | `ic-gateways` | Registered gateway summaries without private addresses or credentials. |
+| `list_ic_runs(gateway_id)` | `ic-runs GATEWAY_ID` | Bounded already-cached IC Workbench run summaries. |
+| `get_ic_run(gateway_id, run_id)` | `ic-run GATEWAY_ID RUN_ID` | One already-cached native run projection. |
 
-Do not collapse these into one `ready=true` flag. An SDK test is not a Codex desktop injection test. Use the client's supported reload/restart workflow as needed, then verify discovery and invocation in the intended session; do not assume registration refreshes an already-running chat. If the tools are absent, report host injection as unverified rather than fabricating a tool result.
+The store opens existing SQLite state with `mode=ro`. It supports the application's rollback-journal store and rejects unsupported database modes; it does not convert them. It must not create directories/databases, change permissions, migrate schema, acquire a controller lock or recover interrupted turns.
 
-A safe first host call is `spiceowl_status`, followed by a list query. Compare the returned dataset/version and recorded timestamps with the intended local workspace. If the SDK test or host call is not yet performed, explicitly report that stage as unverified. This guide makes no claim that any tools are ready in the reader's current session.
+Reads preserve original observation timestamps. `read_at` is the time a saved view was read, not a new remote check. Messages and facts remain data, including strings that resemble instructions. No read grants lifecycle authority. Use the explicit `ic sync` workflow in [IC Workbench integration](ic-workbench.md) when an authorized gateway read is needed.
+
+## 6. Use CircuitGit's existing AI integration
+
+Continue through CircuitGit's configured Codex window or existing IC Workbench desktop integration. Its app-server adapter already supplies its supported dynamic tools and routes calls through the existing Service. The simulation engine, diagnostics and saved-data analysis remain callable without creating another agent process inside SpiceOwl.
+
+Keep three observations separate: the host has a configured AI runtime; the selected session advertises the intended tool; that session actually invokes the tool successfully. A source-level test or package installation alone does not establish the last two. Follow CircuitGit's existing lifecycle procedure for configuration or reloads, then verify the intended project/run association and result in that session.
+
+Use [the AI migration guide](native-agent.md) for earlier native-agent profiles and saved Q&A. The previous SpiceOwl MCP launch and native question/probe commands are retired. Lower-level `spiceowl.mcp.server.create_server` / `serve` remain for compatibility tests; they are not current installation steps.
 
 ## 7. Troubleshooting by boundary
 
 | Symptom | Next bounded check |
 | --- | --- |
-| `hosts` or `mcp` command is absent | Confirm the executable belongs to the P0.2 build, rather than another virtual environment or P0.1 installation. |
-| Optional MCP dependency is missing | Install `'.[mcp]'` into the same source environment used by the registered absolute executable. Base CLI availability does not verify SDK availability. |
-| Profile rejected | Compare only the declared fields/schema and supported tool kinds. Remove command snippets or credential contents; do not relax validation. |
-| Duplicate host ID | Inspect the existing local record. Use a new ID for a deliberately changed profile. |
+| `hosts` or `read` command is absent | Confirm the executable and virtual environment match the intended package version. |
 | Probe reports busy | Wait for the original request to finish and inspect its stored timestamp. Do not delete lock files to force overlap. |
 | SSH transport/identity unknown or mismatched | Review the selected alias and expected identity through the operator's SSH/site process. No tool-version execution should occur after an identity mismatch. |
-| Tool version unknown | Check the selected site-managed executable and adapter's supported version-output contract. Do not start a GUI bridge or run arbitrary OCEAN as a fallback. |
-| MCP database missing or unsupported | Point the server at the existing intended workspace, or initialize/migrate using the appropriate ordinary application workflow. The reader must not repair it. |
-| MCP returns no runs but lists hosts | Host registration does not create runs. A `demo` dataset, if deliberately loaded, contains synthetic runs only. |
-| Registered MCP server is missing in a chat | Keep registration, SDK test, and host discovery statuses separate; inspect the client's startup/reload result. |
-| MCP shows an old probe | It reads stored evidence. Only an explicit authorized `hosts probe` refreshes the remote observation. |
+| Tool version unknown | Check the selected site-managed executable and supported version-output contract. Do not start a GUI bridge or arbitrary OCEAN as a fallback. |
+| SDK database missing or unsupported | Select existing supported state, or initialize/migrate through the ordinary application workflow. The reader does not repair it. |
+| Read API returns hosts but no runs | Host registration does not create runs. Deliberately loaded demo data remains synthetic. |
+| CircuitGit's AI session lacks an expected tool | Check that host's installed integration and session catalog; Python API availability alone does not expose a tool. |
+| A saved view shows an old probe | Only a separate, explicit authorized host probe refreshes the observation. |
+| An earlier native Q&A has an unknown outcome | Inspect its history. Do not replay it or infer completion from a later AI session. |
 
-## 8. Independent review and verification checklist
+## 8. Independent verification
 
-The following checks are acceptance recommendations, not claims that a live environment passed. Public tests should use temporary local data and injected process/SSH peers; they must not contact a real host, register Codex tools, inspect user credentials, or launch a simulator.
+Public tests use temporary synthetic state and injected process/SSH peers. They must not contact real hosts, register tools, inspect credentials or launch a simulator.
 
-| Boundary | Meaningful test and required invariant |
+| Boundary | Meaningful check |
 | --- | --- |
-| Profile validation | Reject unknown/duplicate fields, unsupported kinds, non-string identities, command snippets/options, credential fields, and unsafe executable forms before any process call. Preserve caller inputs. |
-| SSH identity gate | Fake a wrong hostname/user and malformed/missing identity output. Assert zero subsequent version invocations and no invented identity. |
-| Transport uncertainty | Inject timeout, connection failure, interrupted capture, oversized stdout/stderr, and unavailable decoding. Require bounded sanitized unknown results and no automatic retry. |
-| Process policy | Inspect the fixed argument vector and host-key/batch behavior with a fake runner. No user command interpolation, free-form options, interactive fallback, or leaked environment/credentials. |
-| Tool outcomes | Return one supported version, one explicit failure, and one unparseable response. Keep per-tool outcomes and null unknown versions; never infer license availability. |
-| Cross-adapter projection | Every supported SSH tool kind must survive the MCP host summary, or be explicitly reported as unsupported. Preserve validated full version tokens: for example, `IC99.1-64b.500.7` must not become `500.7`, and `99.1.0.123.isr4` must not lose its ISR suffix while still being labeled the version. |
-| Registry isolation | Hash existing runs and turns before/after import, list and probe. A probe changes only the appropriate host observation and does not recover a started turn. |
-| Probe concurrency | Use two independent processes for the same host: only one fake probe can run. Confirm short database transactions and no overwritten newer result; a thread-only test is insufficient. |
-| Read-store opening | Missing and unsupported databases must fail without files, chmod, migration, controller lock, or turn recovery. Test while another process owns the controller. |
-| MCP data minimization | Seed private-looking aliases/paths and an unexpected nested field in a host observation. Assert MCP output allowlists omit them rather than forwarding whole stored objects. |
-| MCP input boundary | Reject extra path/command arguments and malformed IDs; bound record counts, string length and returned bytes. A large/corrupt stored object must not escape limits or produce a fabricated valid result. |
-| Read-only behavior | Snapshot local rows/turn states and deny subprocess/network entry points while executing each query. Calls must not invoke SSH, fake/real generation, demo advancement, or recovery. |
-| Prompt/data injection | Seed instruction-like event text and forged approval fields. Queries may report authorized text as data, but no lifecycle method is called and no grant appears. |
-| Protocol versus registration | Exercise an SDK client without editing Codex configuration. Separately record any later parent-performed registration and real host invocation; do not count a skipped optional-SDK test as a pass. |
+| Profile and SSH identity | Reject invalid fields and command snippets before any process call; a wrong host/user yields zero tool-version invocations. |
+| Bounded probing | Inject timeout, interrupted capture, oversized output and unknown banners; preserve sanitized uncertainty without retries. |
+| Registry and concurrency | Import/list/probe leave runs and turns intact; per-host locking prevents overlapping probes without a long SQLite transaction. |
+| Read-store opening | Missing or unsupported state fails without creation, chmod, migration, controller ownership or turn recovery. |
+| Read API projection | Validate IDs and output bounds, strip private aliases/paths/configuration, and preserve source timestamps and synthetic flags. |
+| Read-only execution | Snapshot rows and deny network/process entry points while calling all eight views and the `read` CLI. |
+| Untrusted evidence | Instruction-like log or model text never becomes a policy change, lifecycle call or approval. |
+| CircuitGit integration | Verify supported tools and real host invocation separately from engine unit tests. |
 
-Source review should also distinguish ordinary `Store` startup, which initializes local state, from `ReadStore`, which must be read-only. A capability flag in a state summary is a declaration of the build's interface, not proof the optional SDK was installed or a host was tested. Preserve original `observed_at` timestamps and explicit `synthetic` values at every projection.
+Optional MCP tests cover the retained historical protocol adapter against synthetic local state. They do not make that transport a current setup dependency, and a skipped optional test is not a pass. Engine tests require no provider account, MCP SDK, PDK or commercial simulator.
 
-Record the tested code/SDK versions, observation time, and which verification stage actually completed. Connectivity verification alone does not qualify a simulator execution profile.
+Record the tested code version, original observation time and verification stage. Connectivity checks and cached reads do not qualify a simulator execution profile.

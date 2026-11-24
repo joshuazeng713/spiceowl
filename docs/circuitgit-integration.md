@@ -1,6 +1,112 @@
-# CircuitGit external integration
+# CircuitGit SDK and Agent integration
 
-Integration profiles: **`spiceowl.circuitgit-library-context.v1`**, **`spiceowl.resource-selection.v1`**, and the optional **`spiceowl.live-client.v1`** described in [standalone runtime](standalone-runtime.md). Supervision contract revision: **1.2.0**, identified by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json). SpiceOwl remains independently maintained in [its own repository](https://github.com/spiceowl-dev/spiceowl). CircuitGit should reference a reviewed SpiceOwl commit and these documents; it does not need to vendor the SpiceOwl implementation.
+SpiceOwl remains an independently maintained engine [repository](https://github.com/spiceowl-dev/spiceowl). **CircuitGit owns the Agent channel:** its Codex conversation, existing `codex app-server` dynamic-tool bridge and `ic-workbench` integration call the Python SDK. SpiceOwl does not start a second Agent/MCP conversation service or manage a second set of credentials. The native simulation Runner and existing review authority remain with CircuitGit.
+
+Integration profiles remain **`spiceowl.circuitgit-library-context.v1`**, **`spiceowl.resource-selection.v1`**, and optional **`spiceowl.live-client.v1`**. Supervision contract revision **1.2.0** is recorded by `x-contract-version` in the [JSON contract](contracts/ic-workbench-supervision.v1.json).
+
+## Direct SDK read views
+
+CircuitGit continues to read its own Runner/Supervision records through its
+existing service. These views are optional compatibility readers for an
+**already existing SpiceOwl store**; they do not create a second store or make a
+SpiceOwl record the same record as CircuitGit's authoritative run. Use them only
+when that explicitly selected legacy dataset is the intended source.
+
+```python
+from spiceowl.read_api import ReadViews, open_read_views
+
+views = open_read_views(operator_selected_state_directory)
+status = views.status()
+saved_runs = views.list_ic_runs(registered_gateway_id)
+saved_run = views.get_ic_run(registered_gateway_id, exact_run_id)
+```
+
+The owner selects an existing data directory once. No context manager or close
+call is needed; each method uses a short read-only transaction. This imports no
+MCP SDK, creates no directory or controller, performs no network request and
+launches no process. Missing/unsupported state raises `DomainError`. Stored
+timestamps, redaction, independent outcome dimensions and existing bounds stay
+intact. `status.mode` is `read_only_sdk`; `agent_channel.connection_status` remains
+`not_checked` because this reader cannot prove a Codex connection.
+The retained MCP adapter returns this same SDK projection: its former
+`read_only_mcp` mode is now `read_only_sdk`, with the additional `agent_channel`
+metadata. Import and method compatibility is preserved; clients that compare
+the old mode string must accept the new value.
+
+Every previously MCP-only view has a direct equivalent:
+
+| Historical tool | Python method | CLI after `spiceowl --data-dir DIR read` |
+| --- | --- | --- |
+| `spiceowl_status` | `views.status()` | `status` |
+| `spiceowl_list_runs` | `views.list_runs()` | `runs` |
+| `spiceowl_get_run` | `views.get_run(run_id)` | `run RUN_ID` |
+| `spiceowl_list_connections` | `views.list_connections()` | `connections` |
+| `spiceowl_list_hosts` | `views.list_hosts()` | `hosts` |
+| `spiceowl_list_ic_gateways` | `views.list_ic_gateways()` | `ic-gateways` |
+| `spiceowl_list_ic_runs` | `views.list_ic_runs(gateway_id)` | `ic-runs GATEWAY_ID` |
+| `spiceowl_get_ic_run` | `views.get_ic_run(gateway_id, run_id)` | `ic-run GATEWAY_ID RUN_ID` |
+
+These methods read stored evidence only. A historical connection row remains
+synthetic or legacy metadata, not an active Agent. Lists remain bounded to 25
+recent records, and detail evidence has its existing event/resource bounds.
+Model-visible text remains untrusted data. CircuitGit owns tool schemas, argument
+validation, conversation/session routing and approval; it calls the SDK in the
+same trusted process instead of starting `spiceowl mcp`.
+
+Other core engines are already direct Python APIs:
+
+| Capability | SDK entry point |
+| --- | --- |
+| Authorized pool selection/recheck | `spiceowl.integrations.circuitgit_pool.CircuitGitPool` |
+| PDK source requirements and bounded scan program | `spiceowl.onboarding.pdk_discovery` |
+| Private LUT and exact snapshot export | `spiceowl.onboarding.pdk_lut.PdkLut` |
+| Same-entry scope selection and audit comparison | `spiceowl.onboarding.pdk_scope` |
+| Agent-TB validation / compilation | `spiceowl.onboarding.agent_tb`, `spiceowl.experiments.agent_testbench` |
+| Deterministic Spectre diagnostics | `spiceowl.integrations.spectre_diagnostics.diagnose_spectre` |
+| Five-dimension report | `spiceowl.integrations.spectre_report` |
+| Transient PSF / AC / DC parsing | `spiceowl.integrations.spectre_results.parse_psf_ascii`, `parse_psf_analysis` |
+| FFT / AC / DC analysis | `spiceowl.adctools.analyze` and its named functions |
+
+The base SDK requires no MCP package. Numeric operations use the existing
+`adctools` extra. Pure parsing/diagnostics never grant authority to scan, submit,
+cancel or repair; the owner must bind authorized active operations separately.
+
+A paired installation can smoke-test the import without creating any state:
+
+```python
+import sys
+sys.modules["mcp"] = None  # This fresh test process deliberately has no MCP SDK.
+from spiceowl.read_api import ReadViews, open_read_views
+
+assert callable(open_read_views)
+assert all(callable(getattr(ReadViews, name)) for name in (
+    "status", "list_runs", "get_run", "list_connections", "list_hosts",
+    "list_ic_gateways", "list_ic_runs", "get_ic_run",
+))
+```
+
+## Paired submodule pin
+
+CircuitGit mounts this separate repository at `submodules/spiceowl`. Its
+`.gitmodules` supplies the repository URL; the Git **gitlink** supplies the exact
+commit. `contracts/spiceowl-integration.lock.json` must record that same commit.
+Do not treat a branch name or the presence of a submodule directory as a pin.
+
+After a reviewed SpiceOwl PR is merged, CircuitGit updates the gitlink and lock
+together, installs that exact checkout in its isolated environment, and runs the
+paired tests before publishing. For an already pinned CircuitGit checkout:
+
+```bash
+git submodule update --init --recursive submodules/spiceowl
+python -m pip install --no-deps ./submodules/spiceowl
+```
+
+The selected CircuitGit environment must separately satisfy any numerical extras
+it uses. This sequence does not start a service, modify an intake or authorize a
+simulation. SpiceOwl's old MCP imports and pinned optional extra remain only as
+compatibility/test surfaces. The old CLI launcher and independent Agent
+add/probe/ask actions return a structured `agent_channel_owned_by_circuitgit`
+error. Saved history remains readable and is not automatically resumed.
 
 ## Compatibility and ownership
 
@@ -14,7 +120,7 @@ The existing routes, envelopes and wire schema names remain:
 | `GET /api/submissions/<encoded-existing-key>` | Read an existing submission mapping; schema `ic.submission.lookup.v1` |
 | `spiceowl ... ic sync/lookup` | Explicit one-shot gateway read into SpiceOwl's private cache |
 | `spiceowl ... ic runs/inspect` | Read cached native runs |
-| MCP `spiceowl_list_ic_runs` / `spiceowl_get_ic_run` | Read the same cache without a gateway call, process launch or state mutation |
+| SDK `ReadViews.list_ic_runs` / `ReadViews.get_ic_run` | Read the same cache without a gateway call, process launch or state mutation |
 
 CircuitGit owns `lib/catalog.json`, library manifests, project registration, file closure and view resolution. SpiceOwl does not fetch a project/library catalog. Its gateway registration still requires the existing `id`, `label`, `base_url`, and concrete `project_id`; do not add library fields to that profile or to snapshot/lookup envelopes.
 
@@ -41,7 +147,7 @@ A missing/null cached value may gain an explicit value on a later read. Once non
 3. Show library/cell metadata only when it was returned for that run. Resolve navigation through CircuitGit's own validated catalog and matching project association. A missing entry remains unresolved; metadata does not permit arbitrary file access.
 4. The library-context extension adds no execution or approval backend. Existing IC Service actions retain their [review boundary](ic-workbench.md#agent-access). The separate [standalone live client](standalone-runtime.md) invokes the same Runner under an explicit installed project/host/caller grant; it does not replace the Service ledger or expose arbitrary commands.
 
-The public GitHub Pages demo does not mount the full local simulation submission panel; its RC analytic view is separate. A connected library/AI helper is not evidence of resource-pool submission. Installing this commit does not update an already-running MCP process or prove that CircuitGit's producer has begun emitting the fields; reload only through the operator's existing lifecycle procedure.
+The public GitHub Pages demo does not mount the full local simulation submission panel; its RC analytic view is separate. A connected library/AI helper is not evidence of resource-pool submission. Installing this commit does not update an already-running CircuitGit process or prove that its producer has begun emitting the fields; reload only through the operator's existing lifecycle procedure.
 
 ## Offline acceptance
 
@@ -51,14 +157,15 @@ From a pinned SpiceOwl checkout with its development environment:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_ic_*.py'
-PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_mcp.py'
+PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_read_api.py'
+PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_read_cli.py'
 ```
 
-The tests cover the serialized gateway envelope, cache/CLI/MCP round trip, old caches, independent/null fields, exact ID bounds, immutable associations, atomic conflict handling and lookup expectations. With the optional MCP SDK installed, the existing real stdio test also verifies the fields and confirms that the tool catalog and local state remain unchanged. These tests do not contact CircuitGit, SSH, an AI provider or a simulator.
+The tests cover the serialized gateway envelope, direct SDK/CLI projections, imports with MCP unavailable, unchanged old caches, independent/null fields, exact ID bounds, immutable associations, atomic conflict handling and lookup expectations. Optional `test_mcp.py` retains the historical stdio protocol tests. These tests do not contact CircuitGit, SSH, an AI provider or a simulator.
 
 ## Resource-aware execution through CircuitGit
 
-`spiceowl.integrations.circuitgit_pool.CircuitGitPool` is an optional Python API for an operator-configured CircuitGit gateway. It uses SpiceOwl's existing SSH probes and recommendation policy. This API owns only selection/recheck. The separate [live client](standalone-runtime.md) supplies real CLI/web submission through CircuitGit’s existing Runner; the MCP catalog remains read-only.
+`spiceowl.integrations.circuitgit_pool.CircuitGitPool` is a Python API for an operator-configured CircuitGit gateway. It uses SpiceOwl's existing SSH probes and recommendation policy. This API owns only selection/recheck. The separate [live client](standalone-runtime.md) supplies real CLI/web submission through CircuitGit's existing Runner; stored SDK views remain read-only.
 
 ```python
 from spiceowl.integrations.circuitgit_pool import CircuitGitPool
@@ -84,7 +191,7 @@ The paired CircuitGit adapter performs the rest of the sequence:
 
 A resource refusal before staging records a failed preflight with zero launch attempts. Reusing its key returns that same outcome; a deliberate new attempt needs a new plan/key and review. No background queue, automatic migration, resource allocation, cgroup memory cap, license reservation, OOM recovery or scientific parameter repair is provided. Memory is an operator-supplied planning estimate. Increasing a simulator's thread count beyond the pool request is rejected before any scan.
 
-The matching CircuitGit implementation and private configuration format are documented in its `docs/spiceowl-resource-submission.md`. Its integration lock pins a reviewed external SpiceOwl commit; the source is not vendored. CircuitGit also imports SpiceOwl’s shared monitor, diagnostic classifier and PSF ASCII parser for the optional real runtime. The [standalone guide](standalone-runtime.md) covers the signed client and preserves the single-Runner boundary.
+The matching CircuitGit implementation and private configuration format are documented in its `docs/spiceowl-resource-submission.md`. Its submodule gitlink and integration lock pin one reviewed SpiceOwl commit. CircuitGit imports SpiceOwl's shared monitor, diagnostic classifier and PSF ASCII parser. The [standalone guide](standalone-runtime.md) covers the signed client and preserves the single-Runner boundary.
 
 ## Optional stored execution target
 
@@ -110,7 +217,7 @@ Snapshot `single_site: false` means the gateway is configured for a resource poo
 
 Treat a simulation integration change as one deliverable across SpiceOwl and CircuitGit: update the external API, CircuitGit adapter, both byte-identical supervision contracts, consumer/producer tests, documentation and the CircuitGit exact-commit lock together. Carry both PR references and run the cross-repository check before handoff. Do not ask the user to commission a separate synchronization task. This development rule does not automatically deploy software, reload a live gateway or merge either repository's unrelated work.
 
-For the real producer → loopback HTTP → cache → MCP/JS contract check, use the explicitly selected CircuitGit checkout:
+For the historical compatibility check of producer → loopback HTTP → cache → MCP/JS, use the explicitly selected CircuitGit checkout:
 
 ```bash
 CIRCUITGIT_ROOT=/absolute/CircuitGit PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_circuitgit_supervision_contract.py'

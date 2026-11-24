@@ -32,6 +32,21 @@ jobs:
           python -c "from importlib.resources import files; root=files('spiceowl.web').joinpath('static'); assert all(root.joinpath(n).is_file() for n in ('index.html','app.js','app.css','owl.svg'))"
           git diff --check
 
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Test offline host configuration and Agent channel
+        run: |
+          node tests/ui-host-onboarding.mjs
+          node tests/ui-agent-channel.mjs
+
   mcp:
     runs-on: ubuntu-latest
     timeout-minutes: 10

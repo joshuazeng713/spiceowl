@@ -1,6 +1,6 @@
 # Architecture
 
-Status: a local console with separate synthetic demos and an optional [real standalone Spectre runtime](standalone-runtime.md). CLI and web share one signed client to CircuitGit’s existing Runner. SpiceOwl supplies host-pool checks, durable existing-run monitoring, Spectre diagnostics and PSF ASCII parsing; CircuitGit retains materialization, run/submission identity, remote execution and native collection. Automatic solver restart, parameter repair and automatic discovery of scientific intent remain planned. The [local console](local-console.md), [server pool](server-pool.md), [native Q&A](native-agent.md), passive [IC cache](ic-workbench.md) and separate [developer inverter smoke](../examples/inverter/README.md) retain their documented scopes.
+Status: an independently maintained simulation engine **SDK + CLI** used by CircuitGit. CircuitGit owns the single Codex conversation, `codex app-server` dynamic-tool bridge / `ic-workbench`, authentication, review, materialization, run/submission identity, remote execution and native collection. SpiceOwl supplies server-pool probes, PDK discovery/LUT, Agent-TB validation, five-dimension diagnostics, PSF parsing, adctools and existing-run monitoring. The synthetic console and signed [simulation client](standalone-runtime.md) remain available. Automatic solver restart, parameter repair and inference of scientific intent remain planned.
 
 The [authored-TB compiler](agent-testbench.md) validates a finite grammar and
 preserves supplied electrical source and criteria. The [PDK LUT](pdk-lut.md)
@@ -10,13 +10,15 @@ and measurement definitions. CircuitGit binds these algorithms to full saved run
 data and owns human review and execution. The generic recipe does not reuse an
 inverter measurement or execute arbitrary authored postprocessing scripts.
 
-The connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific version probes. Private profiles and explicit pool members can be registered through the CLI or [browser onboarding](host-onboarding.md); listing never probes a server. MCP clients query existing SQLite records through an independent read-only connection, without starting a controller or recovering its active turns. The separate native Q&A adapter sends text to an ephemeral Codex thread with restricted tools and preserves uncertain request outcomes. See the [P0.2 contract](contracts/p02-connectivity.md) and [P0.3 contract](contracts/p03-pool-agent.md).
+The connectivity layer reuses OpenSSH aliases and separates transport from simulator-specific probes. Private profiles and explicit pool members can be registered through the CLI or [browser onboarding](host-onboarding.md); listing never probes a server. CircuitGit reads bounded stored evidence through `spiceowl.read_api.open_read_views(directory)`, using short read-only SQLite transactions without MCP, a controller or provider credentials. All eight original MCP projections delegate to this same SDK implementation.
 
-## Connection-layer priority
+## One Agent channel
 
-The immediate implementation priority is user-owned agent and model-API connection management, as recorded in [ADR 0002](decisions/0002-connection-layer.md). The [design workstreams](design/README.md) refine its interfaces alongside simulator and debugging plans. The AI host may differ from the simulation execution host; authentication and provider sessions belong to that AI host and user, not to the simulation attempt.
+The user interacts with CircuitGit's existing Codex window. CircuitGit registers its bounded dynamic tools and dispatches approved operations into the Python SDK. The existing `ic-workbench` integration retains human review; SpiceOwl does not create another Agent conversation, authentication store or MCP registry. Reusing an API or importing a module does not establish that the current Codex session has loaded its tools.
 
-Use separate `AgentBackend` and `ModelBackend` contracts behind a connection manager. The bounded native Codex text-Q&A adapter is implemented. An explicit API-key route through the official OpenAI Python SDK and ACP remain planned; LiteLLM remains optional when additional API providers justify normalization. These additional routes are not current dependencies. Protocol negotiation does not replace provider authorization or OS isolation. The [AI design](design/ai-connections.md) records source evidence and authentication limits.
+The standalone `spiceowl mcp` launcher and `agents add/probe/ask` return migration guidance before starting a process or creating a request. The console's Agent page provides the CircuitGit entry and saved Q&A history. Historical `spiceowl.mcp` and low-level native-Q&A symbols remain for compatibility and offline tests; they are not the supported deployment route. The optional `mcp` extra is unnecessary for CircuitGit's SDK integration. [ADR 0002](decisions/0002-connection-layer.md), [P0.2](contracts/p02-connectivity.md), [P0.3](contracts/p03-pool-agent.md) and [AI design](design/ai-connections.md) document the superseded independent-connection design.
+
+CircuitGit mounts the separate repository at `submodules/spiceowl`. The gitlink and `contracts/spiceowl-integration.lock.json` must identify the same reviewed commit. Dependency updates are paired changes with regression tests, never implicit tracking of a moving branch. See the [SDK mapping and submodule contract](circuitgit-integration.md).
 
 ## First deployment
 
@@ -27,15 +29,17 @@ Keep these responsibilities separate:
 | Boundary | Owns | Must not own |
 | --- | --- | --- |
 | `domain` | Experiment intent, attempt identity, observations, receipts, decisions | Simulator commands or framework-specific state |
-| `adapters/executors` | Job submission, reconciliation, resource observation, owned-job cancellation | Deciding whether a circuit meets its specification |
+| `adapters/executors` | Bounded transport helpers and resource observations used by the execution owner | A parallel Runner or deciding whether a circuit meets its specification |
 | `adapters/simulators` | Input preparation, tool capabilities, log interpretation, result collection | Unreviewed electrical or measurement changes |
-| `execution` (future package) | Compose adapters, enforce grants, dispatch actions and separately keyed postprocessing | Let an agent session own simulator execution |
+| CircuitGit execution | Compose adapters, enforce grants, dispatch actions and separately keyed postprocessing | Let an Agent conversation own simulator execution |
 | `monitoring` | Durable watches of existing runs, bounded status calls and failure backoff | Submitting/restarting a solver or treating stale observations as proof of failure |
 | `integrations` | Signed live client, private request reconciliation, resource selection, Spectre diagnostics and PSF ASCII parsing | A second execution/approval ledger or copying private PDK content |
 | `validation` | Input consistency, data completeness, measurement preconditions, specification checks | Silently changing the acceptance criteria |
 | `recovery` | Allowed actions, limits, decision records, recovery attempts | Executing arbitrary agent-generated shell commands |
 | `storage` | Durable identities, events, receipts, artifact references | Keeping large waveform payloads inside the event database |
-| `agent` | Evidence summaries and typed diagnostic/action proposals | Direct lifecycle authority over a job |
+| `read_api` | Eight bounded, redacted stored views usable directly from Python | Opening an Agent channel, refreshing a host or mutating state |
+| `agent` / `mcp` compatibility | Synthetic diagnostics, saved legacy data and old import/protocol symbols | A parallel supported Agent/MCP deployment or direct lifecycle authority |
+| CircuitGit Codex bridge | Conversation, authentication, dynamic tools and existing human review | Treating a tool result as user approval |
 | `cli` | User commands and structured presentation | Keeping a simulation alive through a terminal connection |
 
 The web console ships static assets in the Python package. Synthetic demos use the local Controller/SQLite records; the separate real-simulation view and `live` CLI commands share `LiveSimulationClient`. The live path uses CircuitGit’s existing Runner records instead of creating synthetic task identities or another execution engine. No external frontend service is needed.
@@ -44,7 +48,7 @@ The web console ships static assets in the Python package. Synthetic demos use t
 
 The execution host, an existing ADE background manager, or the site's scheduler owns the simulator process. A controller supervises that execution identity. A disconnected client must not imply cancellation.
 
-Proposed executor operations:
+The following lifecycle vocabulary describes CircuitGit's execution boundary; it does not introduce another SpiceOwl executor service:
 
 ```text
 submit(attempt_spec, submission_key) -> receipt | submission_uncertain

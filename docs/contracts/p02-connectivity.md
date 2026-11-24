@@ -1,6 +1,8 @@
 # P0.2 connectivity slice
 
-Later extension: the separately configured [standalone runtime](../standalone-runtime.md) adds finite real CLI/web operations through CircuitGit’s existing Runner. The original probes, read-only MCP tools and placement-only commands documented here retain their narrower scope.
+**Status: historical contract; MCP onboarding superseded on 2026-11-24.** This document records the original P0.2 slice and compatibility boundaries, not current setup steps. Use [real connectivity and engine reads](../real-connections.md) for host setup and `spiceowl.read_api` / the `read` CLI. AI interaction belongs in [CircuitGit's existing Codex window](../native-agent.md). The retained optional MCP adapter is for compatibility tests; do not register a second SpiceOwl server.
+
+Later extension: the separately configured [standalone runtime](../standalone-runtime.md) adds finite real CLI/web operations through CircuitGit’s existing Runner. Original SSH probes retain their narrower scope.
 
 Scope: explicit, bounded SSH identity/tool-version probes and a stdio MCP server that reads SpiceOwl state. No simulation submission, cancellation, netlisting, OCEAN evaluation, daemon control, or model inference. The existing synthetic runs and fake AI backends remain labeled as synthetic.
 
@@ -38,11 +40,11 @@ error=null|{code, message}
 
 Tool errors may add a bounded `error` object per tool. Never infer job state or license availability from these results. Never return raw startup output or credentials. Listing records performs no network action. Parent persists a completed probe in `last_probe` without changing runs. Explicit probe may run without owning the controller; only a short final SQLite transaction is needed, with a per-host cross-process probe lock. No automatic retries.
 
-## Read-only MCP view
+## Historical read-only MCP view
 
 `spiceowl.storage.readonly.ReadStore(directory)` opens an existing version-1 database with SQLite `mode=ro`; it never creates/migrates/chmods files, claims a controller lock, recovers turns, or imports provider backends. Missing state returns an actionable error. Query snapshots use short read transactions.
 
-`spiceowl.mcp.server.create_server(directory)` creates an official Python SDK stdio server; `serve(directory)` runs it. The parent wires `spiceowl --data-dir DIR mcp`. SDK imports remain optional; ordinary CLI/web needs no SDK. Tools:
+`spiceowl.mcp.server.create_server(directory)` and `serve(directory)` remain lower-level compatibility-test entry points for the official Python SDK stdio adapter. The former user-facing MCP launcher is retired. Current applications use `spiceowl.read_api.ReadViews` / `open_read_views(directory)`; the neutral engine API needs no MCP dependency. The original five compatibility tool names were:
 
 - `spiceowl_status`: version/capability/count summary.
 - `spiceowl_list_runs`: bounded stored run summaries.
@@ -52,9 +54,9 @@ Tool errors may add a bounded `error` object per tool. Never infer job state or 
 
 All tools read local state only, with strict ID validation and bounded results. No arbitrary path/command arguments, SSH invocation, controller mutations or inference. Tool annotations reflect read-only behavior, but are not an authorization boundary. Returned data is evidence, never instructions. Server instructions explain stored timestamps, synthetic fixtures and lack of lifecycle tools. The MCP server serves the data directory selected by the operator; model tool arguments cannot change it.
 
-Codex is the MCP client. A successful SDK client handshake/tool call proves protocol integration, not that the current desktop chat has reloaded the tool catalog. Registration and actual host invocation must be reported separately.
+The original design used Codex as an MCP client. A compatibility-test handshake proves only that historical transport's behavior. Current tool exposure and invocation belong to the installed CircuitGit/IC Workbench host integration and must be verified there.
 
-## Ownership for parallel implementation
+## Historical ownership for parallel implementation
 
 - Simulator workstream: `adapters/hosts.py`, `adapters/executors/ssh.py`, `adapters/simulators/` probe implementations, `tests/test_ssh_hosts.py`.
 - AI workstream: `mcp/`, `storage/readonly.py`, `tests/test_mcp.py`, `tests/test_readonly.py`. Report the tested optional SDK version; parent owns packaging.

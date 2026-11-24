@@ -1,8 +1,8 @@
 # Local console
 
-SpiceOwl 0.3.0a1 is a single-user alpha for macOS and Linux with Python 3.11 or newer. It provides a browser console and CLI backed by the same SQLite records. The core uses Python's standard library; browser assets ship in the package and do not require Node.js. Optional MCP support uses the pinned official Python SDK; native Q&A requires a separately installed, compatible Codex runtime.
+SpiceOwl 0.3.0a1 is a single-user alpha for macOS and Linux with Python 3.11 or newer. It provides a simulation engine SDK, browser console and CLI backed by the same SQLite records. The core uses Python's standard library; browser assets ship in the package and do not require Node.js. AI interaction uses [CircuitGit's existing Codex window](native-agent.md). Engine imports and read-only views do not require the optional MCP compatibility dependency.
 
-The console has separate **synthetic demo runs** and an optional **real standalone Spectre view**. Start with `serve --live-client-config PRIVATE_CONFIG` to use the shared client for CircuitGit’s existing Runner, explicit resource scans, submission, status, collection and background watches. The [standalone runtime guide](standalone-runtime.md) covers private grants, exact identities and limits. Simulation hosts, [native agent Q&A](native-agent.md) and read-only MCP remain separate. Automatic solver restart and parameter repair remain unimplemented. The HTTP server is intended for alpha use on loopback, not public or shared production hosting.
+The console has separate **synthetic demo runs** and an optional **real standalone Spectre view**. Start with `serve --live-client-config PRIVATE_CONFIG` to use the shared client for CircuitGit’s existing Runner, explicit resource scans, submission, status, collection and background watches. The [standalone runtime guide](standalone-runtime.md) covers private grants, exact identities and limits. The console manages simulation evidence and preserves earlier Q&A history; new AI conversations and model settings belong in CircuitGit. Automatic solver restart and parameter repair remain unimplemented. The HTTP server is intended for alpha use on loopback, not public or shared production hosting.
 
 A separate, explicitly authorized [developer inverter smoke utility](../examples/inverter/README.md) can execute the original MOS1 example on licensed Spectre. The [IC Workbench integration](ic-workbench.md) reads stored native records into a separate passive cache; IC Workbench retains submission and approval ownership. The real-client panel is configured separately; demo runs always retain their synthetic identity.
 
@@ -38,7 +38,7 @@ PYTHONPATH=src python3 -m spiceowl --data-dir .spiceowl serve --demo
 4. Ask the demo diagnostic assistant about the current snapshot. Its response is deterministic fixture output, not an LLM. Inspect stored events, evidence citations and an advisory policy decision.
 5. Refresh the page or restart the service to inspect the same run and session history. Display reconnection does not start another diagnosis. An interrupted accepted turn is marked `outcome_unknown` and is never automatically replayed.
 6. Use Simulation hosts → Add host or Import pool to register a private profile or preview an explicit pool; the CLI remains available. Then explicitly check connections/resources and evaluate requested CPU/memory. [Host onboarding](host-onboarding.md) explains the fields and separate diagnostic states. Results are timestamped; there is no automatic remote polling. Execution plans preserve standalone versus Virtuoso-native ownership and do not launch jobs.
-7. Import a native agent profile, open Agent chat and submit a short real question. The saved result records its actual provider/model and completion state. This is separate from per-run fixture diagnosis.
+7. Use CircuitGit's existing Codex/AI window for a real agent conversation. The console's AI page explains that route and lets you inspect historical SpiceOwl Q&A; it does not start another native question or readiness probe.
 
 In the synthetic diagnosis workflow, read-only suggestions can receive an allow decision, but **diagnostic action dispatch remains disabled**. There is no Execute fix button. Cancelling a diagnosis only stops that local fake turn; it does not change the run.
 
@@ -49,14 +49,16 @@ An unresolved turn blocks another diagnosis on its connection or run. This proto
 Read-only commands work while the web controller is running:
 
 ```bash
-spiceowl status
-spiceowl connections list
-spiceowl connections inspect demo-agent
-spiceowl runs list
-spiceowl session SESSION_ID --after 0
+spiceowl --data-dir /home/example/state/spiceowl read status
+spiceowl --data-dir /home/example/state/spiceowl read connections
+spiceowl --data-dir /home/example/state/spiceowl read hosts
+spiceowl --data-dir /home/example/state/spiceowl read runs
+spiceowl --data-dir /home/example/state/spiceowl read run RUN_ID
 ```
 
-Host registration/probes, read-only MCP queries and `live` CLI operations also work alongside the web controller. Point CLI and web at the same private live-client configuration to share their request journal. For the standalone synthetic mutation workflow below, stop the web controller first. Only one controller can own a state directory; this prevents one process from declaring another process's active turn interrupted.
+These examples require the console's already existing SpiceOwl state. They are optional stored-data access, not a new database or connection required by CircuitGit. CircuitGit's own Runner/Supervision records remain a separate dataset.
+
+Host registration/probes, the `read` CLI and read-only SDK queries, and `live` CLI operations also work alongside the web controller. Point CLI and web at the same private live-client configuration to share their request journal. For the standalone synthetic mutation workflow below, stop the web controller first. Only one controller can own a state directory; this prevents one process from declaring another process's active turn interrupted.
 
 ```bash
 spiceowl demo
@@ -71,6 +73,8 @@ The final command prints the persisted session. Repeating the same request key a
 ## What is durable
 
 SQLite stores connection metadata, private host profiles and their last probes, synthetic run snapshots, frozen diagnostic evidence, requests, turns, ordered events, proposals and policy decisions. A transaction claims a unique request key before starting work. One active or unresolved turn per connection/run prevents competing diagnosis. Event display uses a persistent cursor; identical text is not used as a deduplication key. Browser forms do not accept credentials or provider secrets; SSH authentication stays in OpenSSH configuration. The optional live connection loads its operator-provisioned private HMAC key from the server-side startup configuration, never from a browser request.
+
+Earlier native Q&A records remain readable through the historical view and `questions list` / `questions inspect QA_ID`. They are not migrated into a new AI conversation or resent. CircuitGit owns the current AI session lifecycle.
 
 Shutting down the SpiceOwl HTTP interface does not erase data or cancel a remote simulation. Synthetic run advancement is still explicit replay. Real observation runs inside the CircuitGit service using SpiceOwl’s shared monitor, so that service must stay running and connected overnight. Watch recovery after gateway restart is explicit by default, with operator-configured authorized resumption available. Watches do not automatically collect or restart simulations; see [monitor lifecycle](standalone-runtime.md#keeping-watch-overnight).
 

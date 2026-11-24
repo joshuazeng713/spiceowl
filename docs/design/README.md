@@ -1,10 +1,12 @@
 # Connection and supervision design workstreams
 
-Status: design drafts assembled and interfaces coordinated, 2026-11-13. These documents prepare implementation; they do not establish working provider or simulator integrations. Start with the [integrated implementation plan](integration-plan.md).
+Status updated **2026-11-24**. Current AI interaction uses CircuitGit's existing Codex window and IC Workbench integration; SpiceOwl provides the simulation engine SDK and CLI. Start with [the current AI route](../native-agent.md), [connectivity and SDK reads](../real-connections.md), and [the roadmap](../roadmap.md).
 
-The maintainer has prioritized connecting and managing user-owned agents and model APIs, with parallel design work for simulator execution and simulation debugging. The coordinating chat integrates the three workstreams and owns shared documents and Git operations.
+The designs below preserve the original workstreams assembled on 2026-11-13. The [AI connection proposal](ai-connections.md) and [integrated implementation plan](integration-plan.md) are superseded for AI ownership and sequencing. They are not setup instructions for another native-agent service or MCP server, and they do not establish provider or simulator qualification.
 
-## Ownership
+The original planning round covered user-owned agents/model APIs, simulator execution and simulation debugging. The coordinating chat integrated the three workstreams and owned shared documents and Git operations. Current cross-repository ownership follows [the CircuitGit integration profile](../circuitgit-integration.md).
+
+## Historical design ownership
 
 | Workstream | Owned deliverables | Boundary |
 | --- | --- | --- |
@@ -15,7 +17,7 @@ The maintainer has prioritized connecting and managing user-owned agents and mod
 
 All three workstreams have delivered their design and example files. Session assignments and integration status are tracked in [workstreams](../workstreams.md). Coordinator decisions in shared boundaries take precedence over the original recommendation lists in the specialist designs.
 
-## Collaboration rules
+## Original planning-round collaboration rules
 
 - Work only inside the selected repository checkout and within the assigned files.
 - Read repository guidance and the shared [interface boundaries](../contracts/interface-boundaries.md).

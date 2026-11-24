@@ -1,4 +1,4 @@
-"""CLI for demo records, connectivity and an optional bound simulation client."""
+"""Simulation engine CLI; CircuitGit owns the Codex agent conversation."""
 
 import argparse
 import json
@@ -8,18 +8,19 @@ import sys
 import time
 
 from spiceowl import __version__
+from spiceowl.agent_channel import agent_channel_error, agent_channel_info
 from spiceowl.domain.common import DomainError, new_id
 from spiceowl.service import Controller
 from spiceowl.storage.sqlite import Store
 
 
 def parser():
-    result = argparse.ArgumentParser(prog="spiceowl", description="Local console: synthetic demos, host connectivity and an optional real simulation client.")
+    result = argparse.ArgumentParser(prog="spiceowl", description="Simulation engine SDK/CLI and synthetic console. Agent conversations use CircuitGit's Codex channel.")
     result.add_argument("--version", action="version", version=f"SpiceOwl {__version__}")
     default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "spiceowl"
     result.add_argument("--data-dir", default=str(default), help="Local persistent state directory (put before the command).")
     commands = result.add_subparsers(dest="command", required=True)
-    serve = commands.add_parser("serve", help="Open a loopback-only web console.")
+    serve = commands.add_parser("serve", help="Open the loopback engine/demo console; agents use CircuitGit's Codex window.")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--demo", action="store_true", help="Idempotently add synthetic demo data.")
     serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
@@ -73,7 +74,15 @@ def parser():
             command.add_argument("--timeout", type=float, default=600.0, help="Total waiting deadline in seconds; original IDs are returned on timeout.")
             command.add_argument("--poll-seconds", type=float, default=3.0)
     commands.add_parser("status", help="Print locally stored connection/run/session records as JSON.")
-    commands.add_parser("mcp", help="Serve read-only local queries over stdio (requires the mcp extra).")
+    commands.add_parser("mcp", help="Retired launcher; use CircuitGit's Codex tool bridge or 'spiceowl read'.",
+                        description="Agent tools belong to CircuitGit's Codex channel. This command starts no MCP server; use 'spiceowl read' for local SDK projections.")
+    reads = commands.add_parser("read", help="Read bounded stored SDK views without an Agent or MCP server.").add_subparsers(dest="action", required=True)
+    for name in ("status", "runs", "run", "connections", "hosts", "ic-gateways", "ic-runs", "ic-run"):
+        command = reads.add_parser(name)
+        if name in ("ic-runs", "ic-run"):
+            command.add_argument("gateway_id")
+        if name in ("run", "ic-run"):
+            command.add_argument("run_id")
     ic = commands.add_parser("ic", help="Read saved IC Workbench tasks through a registered local gateway.").add_subparsers(dest="action", required=True)
     ic.add_parser("list", help="List registered gateways without a network request.")
     ic.add_parser("register", help="Save an explicit private gateway profile; no network request.").add_argument("--file", required=True)
@@ -107,17 +116,18 @@ def parser():
     for name in ("inspect", "probe"):
         command = hosts.add_parser(name, help="Read stored profile." if name == "inspect" else "Check SSH identity and tool versions. Does not start a simulation.")
         command.add_argument("host_id")
-    agents = commands.add_parser("agents", help="Register and query a native agent runtime.").add_subparsers(dest="action", required=True)
-    agents.add_parser("list")
-    agent_add = agents.add_parser("add")
+    agents = commands.add_parser("agents", help="Inspect legacy agent metadata; new conversations use CircuitGit.",
+        description="Legacy list/inspect remain available. Add/probe/ask are retired; use CircuitGit's Codex conversation and existing authentication.").add_subparsers(dest="action", required=True)
+    agents.add_parser("list", help="List saved legacy metadata without launching a runtime.")
+    agent_add = agents.add_parser("add", help="Retired; configure the Agent in CircuitGit.")
     agent_add.add_argument("--file", required=True)
     for name in ("inspect", "probe", "ask"):
-        command = agents.add_parser(name)
+        command = agents.add_parser(name, help="Read saved legacy metadata." if name == "inspect" else "Retired; use CircuitGit's Codex channel.")
         command.add_argument("agent_id")
         if name == "ask":
             command.add_argument("--question", required=True)
             command.add_argument("--request-key", default=None)
-    questions = commands.add_parser("questions").add_subparsers(dest="action", required=True)
+    questions = commands.add_parser("questions", help="Read saved legacy Q&A history; does not resume requests.").add_subparsers(dest="action", required=True)
     questions.add_parser("list")
     questions.add_parser("inspect").add_argument("qa_id")
     execution = commands.add_parser("execution").add_subparsers(dest="action", required=True)
@@ -204,14 +214,17 @@ def main(argv=None):
                 output(receipt)
                 return 0 if receipt["observation"]["state"] == "readable" else 1
             return 0
-        if args.command == "mcp":
-            try:
-                from spiceowl.mcp.server import serve
-            except ModuleNotFoundError as exc:
-                if exc.name == "mcp" or (exc.name or "").startswith("mcp."):
-                    raise DomainError("Install the optional MCP dependency: python -m pip install 'spiceowl[mcp]' (or '.[mcp]' from source).", "missing_dependency") from None
-                raise
-            serve(args.data_dir)
+        if args.command == "mcp" or args.command == "agents" and args.action in ("add", "probe", "ask"):
+            raise agent_channel_error()
+        if args.command == "read":
+            from spiceowl.read_api import open_read_views
+            views = open_read_views(args.data_dir)
+            methods = {"status": views.status, "runs": views.list_runs, "run": views.get_run,
+                       "connections": views.list_connections, "hosts": views.list_hosts,
+                       "ic-gateways": views.list_ic_gateways, "ic-runs": views.list_ic_runs,
+                       "ic-run": views.get_ic_run}
+            values = [getattr(args, name) for name in ("gateway_id", "run_id") if hasattr(args, name)]
+            output(methods[args.action](*values))
             return 0
         if args.command == "hosts":
             from spiceowl.hosts import HostRegistry, load_profile
@@ -237,18 +250,13 @@ def main(argv=None):
                 output(result)
                 return 0 if result["identity"]["verified"] and not result.get("error") and all(t["status"] == "available" for t in result["tools"]) else 1
             return 0
-        if args.command == "agents" and args.action != "ask":
+        if args.command == "agents":
             from spiceowl.agent.qa import NativeRegistry
-            from spiceowl.hosts import load_profile
             registry = NativeRegistry(args.data_dir)
-            if args.action == "add":
-                output(registry.add(load_profile(args.file)))
-            elif args.action == "list":
+            if args.action == "list":
                 output(registry.list())
-            elif args.action == "inspect":
-                output(registry.inspect(args.agent_id))
             else:
-                output(registry.probe(args.agent_id))
+                output(registry.inspect(args.agent_id))
             return 0
         if args.command == "questions":
             from spiceowl.agent.qa import Questions
@@ -268,7 +276,7 @@ def main(argv=None):
             if args.command == "status":
                 from spiceowl.hosts import host_summary
                 from spiceowl.agent.qa import agent_summary, question_summary
-                output({"mode": "server_pool_and_native_qa", "connections": [c for c in store.list("connection") if not c.get("deleted")], "hosts": [host_summary(h) for h in store.list("host")], "native_agents": [agent_summary(a) for a in store.list("agent_profile")], "questions": [question_summary(q) for q in store.list("qa")[:50]], "runs": store.list("run"), "sessions": store.list("session")})
+                output({"mode": "engine_console", "agent_channel": agent_channel_info(), "connections": [c for c in store.list("connection") if not c.get("deleted")], "hosts": [host_summary(h) for h in store.list("host")], "native_agents": [agent_summary(a) for a in store.list("agent_profile")], "questions": [question_summary(q) for q in store.list("qa")[:50]], "runs": store.list("run"), "sessions": store.list("session")})
             elif args.command == "session":
                 if args.after < 0:
                     raise DomainError("Event cursor must be nonnegative.")
@@ -286,7 +294,7 @@ def main(argv=None):
                     app.seed_demo()
                 with make_server(app, args.port, live_client_config=args.live_client_config) as server:
                     simulation_mode = "configured real simulation client + separate synthetic demos" if args.live_client_config else "synthetic simulation runs"
-                    print(f"SpiceOwl {__version__} · server pool + native Q&A · {simulation_mode}", flush=True)
+                    print(f"SpiceOwl {__version__} · simulation engine · Agent channel: CircuitGit Codex · {simulation_mode}", flush=True)
                     print(f"http://127.0.0.1:{server.server_address[1]}", flush=True)
                     try:
                         server.serve_forever()
@@ -294,15 +302,6 @@ def main(argv=None):
                         pass
             elif args.command == "demo":
                 output(app.seed_demo())
-            elif args.command == "agents" and args.action == "ask":
-                receipt = app.ask({"agent_id": args.agent_id, "question": args.question, "request_key": args.request_key or new_id("question")})
-                for _ in range(2400):
-                    record = app.questions.get(receipt["qa_id"])
-                    if record["status"] not in ("queued", "running"):
-                        break
-                    time.sleep(0.1)
-                output(record)
-                return 0 if record["status"] == "completed" else 1
             elif args.command == "connections":
                 if args.action == "add":
                     output(app.add_connection({"label": args.label, "kind": args.kind, "backend": f"fake_{args.kind}", "scenario": args.scenario}))

@@ -9,7 +9,12 @@ import {fileURLToPath} from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUTPUT = resolve(process.env.LIVE_QA_DIR || join(ROOT, '.spiceowl/live-browser-qa'));
 const STATIC = join(ROOT, 'src/spiceowl/web/static');
-const fixture = {version: 'fixture', connections: [], hosts: [], native_agents: [], questions: [], sessions: [],
+const fixture = {version: 'fixture', connections: [], hosts: [], native_agents: [],
+  questions: ['queued', 'running', 'outcome_unknown', 'completed'].map(status => ({
+    qa_id: `legacy-${status}`, agent_id: 'removed-legacy-profile', status,
+    question: `Saved ${status} question <img src=x onerror=window.agentHistoryInjection=true>`,
+    answer: status === 'completed' ? 'Saved legacy answer.' : '', updated_at: '2026-01-01T00:00:00Z',
+    model: 'saved-model', provider: 'saved-provider', synthetic: false})), sessions: [],
   csrf_token: 'offline-browser-fixture-token', runs: [{run_id: 'demo-only', label: 'Synthetic fixture remains separate',
     attempt_id: 'demo-attempt', execution: 'running', observation: 'current', measurement_validity: 'unknown',
     specification_result: 'unknown', progress: .5, events: [], synthetic: true}]};
@@ -73,6 +78,8 @@ try {
   const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
   browser = await chromium.launch({headless: true, ...(process.env.CHROME_PATH ? {executablePath: process.env.CHROME_PATH} : {channel: 'chrome'}), args: ['--disable-background-networking']});
   const context = await browser.newContext({viewport: {width: 1440, height: 1050}, serviceWorkers: 'block'});
+  const legacyPending = JSON.stringify({agent_id: 'removed-legacy-profile', question: 'Old unresolved question', request_key: 'preserve-old-key'});
+  await context.addInitScript(pending => sessionStorage.setItem('spiceowl.native-pending', pending), legacyPending);
   await context.route('**/*', route => {
     if (new URL(route.request().url()).origin !== origin) { blocked.push(route.request().url()); return route.abort(); }
     return route.continue();
@@ -80,6 +87,37 @@ try {
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   page.on('dialog', dialog => { dialogs.push(dialog.message()); dialog.dismiss(); });
+  await page.goto(origin + '/#agents', {waitUntil: 'networkidle'});
+  await page.locator('[data-agent-channel="circuitgit"]').waitFor();
+  const channel = page.locator('[data-agent-channel="circuitgit"]');
+  assert.equal(await channel.locator('a').getAttribute('href'), 'https://circuitgit-dev.github.io/CircuitGit/');
+  assert.match(await channel.innerText(), /not been checked/i);
+  assert.equal(await page.locator('#native-question-form, [data-action="native-probe"]').count(), 0);
+  assert.equal(await page.locator('[data-action="native-select"]').count(), 4, 'History remains visible without registered profiles');
+  assert.equal(await page.locator('#native-response img').count(), 0);
+  assert.equal(await page.evaluate(() => window.agentHistoryInjection), undefined);
+  const beforeAgentIdle = requests.length;
+  await page.waitForTimeout(1250);
+  assert.equal(requests.length, beforeAgentIdle, 'Legacy queued/running history must not poll');
+  for (const status of ['running', 'outcome_unknown', 'completed', 'queued']) {
+    await page.locator(`[data-action="native-select"][data-id="legacy-${status}"]`).click();
+    assert.match(await page.locator('#native-response').innerText(), new RegExp(`Saved ${status}`));
+  }
+  assert.equal(requests.length, beforeAgentIdle, 'Selecting history uses only the saved state');
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('spiceowl.native-pending')), legacyPending);
+  await page.reload({waitUntil: 'networkidle'});
+  await page.locator('[data-agent-channel="circuitgit"]').waitFor();
+  assert.equal(requests.some(item => item.method === 'POST' || item.path.startsWith('/api/agent-questions')
+    || item.path.startsWith('/api/native-agents')), false, 'No native dispatch, readiness request, detail poll or old-key replay');
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('spiceowl.native-pending')), legacyPending);
+  await page.screenshot({path: join(OUTPUT, 'agent-channel-desktop.png'), fullPage: true});
+  report.screenshots.push('agent-channel-desktop.png');
+  await page.setViewportSize({width: 390, height: 844});
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1));
+  await page.screenshot({path: join(OUTPUT, 'agent-channel-mobile.png'), fullPage: true});
+  report.screenshots.push('agent-channel-mobile.png');
+  await page.setViewportSize({width: 1440, height: 1050});
+  report.checks.push('CircuitGit channel and orphaned legacy history are read-only; no native requests, polling or pending-key replay');
   await page.goto(origin + '/#live');
   await page.locator('[data-action="live-submit"]').waitFor();
   assert.equal(requests.filter(item => item.method === 'POST').length, 0, 'Opening the view must not scan or submit');
@@ -165,6 +203,12 @@ try {
   await publicPage.locator('[data-public-demo-info="live"]').waitFor();
   assert.equal(requests.slice(publicStart).some(item => item.path.startsWith('/api/')), false);
   assert.equal(await publicPage.locator('#live-configuration').count(), 0);
+  await publicPage.goto(origin + '/#agents');
+  await publicPage.locator('[data-public-demo-info="agents"]').waitFor();
+  assert.equal(await publicPage.locator('[data-public-demo-info="agents"] a[target="_blank"]').getAttribute('href'),
+    'https://circuitgit-dev.github.io/CircuitGit/');
+  assert.equal(await publicPage.locator('#native-question-form, [data-action="native-probe"]').count(), 0);
+  assert.equal(requests.slice(publicStart).some(item => item.path.startsWith('/api/')), false);
   await publicContext.close();
   report.checks.push('Public synthetic demo exposes no live inputs or API calls');
   assert.deepEqual(pageErrors, []); assert.deepEqual(blocked, []); assert.deepEqual(dialogs, []);

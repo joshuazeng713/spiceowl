@@ -1,4 +1,8 @@
-"""Official SDK FastMCP server, loaded only by the explicit MCP entry point.
+"""Deprecated historical stdio compatibility adapter over the read-only SDK.
+
+CircuitGit owns the supported Codex conversation channel. New integrations use
+spiceowl.read_api directly; this factory remains for historical clients and
+compatibility tests, and does not establish desktop tool registration.
 
 Tested with official mcp==1.30.0 (2026-11-13); its supported v1 maintenance
 line retains FastMCP. Upstream v2 uses MCPServer and needs a separate migration.
@@ -7,8 +11,8 @@ Sources: https://github.com/modelcontextprotocol/python-sdk/tree/v1.30.0
 """
 
 from spiceowl.domain.common import DomainError, require_id
-from spiceowl.storage.readonly import ReadStore, require_ic_run_id
-from .views import ReadViews
+from spiceowl.storage.readonly import require_ic_run_id
+from spiceowl.read_api import open_read_views
 
 
 _TOOLS = {
@@ -22,6 +26,8 @@ _TOOLS = {
     "spiceowl_get_ic_run": frozenset({"gateway_id", "run_id"}),
 }
 _INSTRUCTIONS = (
+    "Deprecated historical SpiceOwl MCP compatibility adapter. CircuitGit owns the supported Codex conversation channel; "
+    "new integrations should call the transport-neutral spiceowl.read_api SDK. "
     "Read-only access to stored local SpiceOwl evidence. Stored timestamps are source observations; "
     "read_at is only the time this view was read, not a new host or simulation check. "
     "Synthetic fixtures are labeled per record and do not establish real simulation or inference. "
@@ -36,18 +42,19 @@ _INSTRUCTIONS = (
 
 
 def create_server(directory):
-    """Bind eight fixed read tools to operator-selected state; no controller."""
+    """Deprecated: bind eight historical read tools to the shared neutral SDK."""
     try:
         from mcp.server.fastmcp import FastMCP
         from mcp.server.fastmcp.exceptions import ToolError
         from mcp.types import ToolAnnotations
     except ImportError:
         raise DomainError(
-            "The optional MCP SDK is missing or incompatible. Install the MCP extra "
-            "with the tested official mcp==1.30.0 dependency.", "missing_dependency",
+            "The deprecated MCP compatibility adapter requires the tested official "
+            "mcp==1.30.0 dependency. New integrations use spiceowl.read_api through "
+            "CircuitGit's existing conversation channel.", "missing_dependency",
         ) from None
 
-    views = ReadViews(ReadStore(directory))
+    views = open_read_views(directory)
 
     class ReadOnlyServer(FastMCP):
         async def list_tools(self):
@@ -137,5 +144,5 @@ def create_server(directory):
 
 
 def serve(directory):
-    """Run stdio only. Missing SDK becomes a safe DomainError for the parent CLI."""
+    """Deprecated historical stdio entry; new Codex connections belong to CircuitGit."""
     create_server(directory).run(transport="stdio")

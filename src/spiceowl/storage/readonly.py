@@ -52,7 +52,7 @@ class ReadStore:
         except (OSError, ValueError):
             raise DomainError(
                 "Existing SpiceOwl state was not found or is unreadable. "
-                "Select the data directory used by the local console; MCP does not create state.",
+                "Select the data directory used by the local console; the read-only SDK reader does not create state.",
                 "storage_missing",
             ) from None
         if header[:16] != b"SQLite format 3\x00":
@@ -135,7 +135,7 @@ class ReadStore:
         return value
 
     def get(self, kind, identifier):
-        """Internal raw record read. MCP must use its separate allowlisted view."""
+        """Internal raw record read. SDK consumers use the allowlisted ReadViews."""
         self._kind(kind)
         require_id(identifier)
         with self.transaction() as db:

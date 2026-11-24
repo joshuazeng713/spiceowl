@@ -6,7 +6,7 @@ The hosted site reuses the local console's HTML, CSS and application code. A bro
 
 The public demo supports inspecting runs, advancing observations, managing fake connection cards and requesting scripted diagnoses. Browser state survives reloads within the same tab and build when session storage is available. If storage is unavailable, the page explains that state is temporary. **Reset demo** clears only this demo's stored state. A new build starts a fresh demo.
 
-SSH host configuration, native agent questions, real simulation execution and private IC records stay in the local installation. The hosted page does not connect to a visitor's localhost or request host credentials or API keys. Its local-feature pages explain how to install and use the source branch instead.
+SSH host configuration, real simulation execution and private IC records stay in the local installation. AI conversations use CircuitGit's existing Codex window. The demo's Agent channel page links to the CircuitGit entry page; it does not start or verify a live AI connection. The hosted page does not connect to a visitor's localhost or request host credentials or API keys. Its local-feature pages explain how to install and use the source branch instead.
 
 ## Automatic publication
 

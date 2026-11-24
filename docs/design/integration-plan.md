@@ -1,8 +1,10 @@
 # Integrated implementation plan
 
-Status: coordinated design, 2026-11-13. P0.1 now has a bounded implementation described in the [local console guide](../local-console.md), including an early small web console accepted by the maintainer. No real integration is certified. The three specialist designs are [AI connections](ai-connections.md), [simulator connections](simulator-connections.md), and [simulation debugging](simulation-debug.md); [shared boundaries](../contracts/interface-boundaries.md) resolve their interface recommendations.
+**Status: historical implementation plan, superseded for AI ownership and sequencing on 2026-11-24.** The current route is CircuitGit's existing Codex window and IC Workbench integration, with SpiceOwl as the independent simulation engine SDK and CLI. Use [current AI integration](../native-agent.md), [the standalone runtime](../standalone-runtime.md), and [the roadmap](../roadmap.md). This plan is not an instruction to start another native-agent/MCP service or implement a second provider manager.
 
-## Selected route
+The original coordinated design below dates from **2026-11-13**. P0.1's bounded implementation is described in the [local console guide](../local-console.md). The specialist designs are [AI connections](ai-connections.md), [simulator connections](simulator-connections.md), and [simulation debugging](simulation-debug.md); [shared boundaries](../contracts/interface-boundaries.md) record their original interface coordination. Historical acceptance sketches do not certify a real provider, site or simulator.
+
+## Historical selected route
 
 Build the first usable capability around connection management. The initial user is a single researcher running a local controller, with a simulation host that may be separate. Connect an existing agent runtime through `AgentBackend`; connect inference endpoints through `ModelBackend`. The distinction preserves authentication, sessions, tools, billing and cancellation semantics.
 
@@ -20,7 +22,7 @@ P0's synthetic diagnostic turn demonstrates the connection pipeline only. It doe
 
 For the simulator path, begin with exported, frozen netlists and batch Spectre in one qualified environment. Import existing ADE jobs read-only with explicit native identities. If the site already uses a scheduler, retain its ownership. Native ADE control, additional analysis families and checkpoint continuation have separate qualification gates.
 
-## First runnable offline demonstration
+## Historical first runnable offline demonstration
 
 P0.1 should let a contributor:
 
@@ -32,7 +34,7 @@ P0.1 should let a contributor:
 
 Use stdlib components and original fake peers first. Runtime loaders reject the committed `example_only` fixtures; a demo creates its own explicitly synthetic runtime configuration. P0.1 does not install provider SDKs, start native agents, collect credentials, or run a model. P0.2 adds optional pinned dependencies only when its concrete adapters need them.
 
-## Module ownership for implementation
+## Historical module ownership for implementation
 
 | Owner | Planned modules | Shared dependency |
 | --- | --- | --- |
@@ -53,7 +55,7 @@ The paths are proposed future modules. Use `tests/contracts/` for common backend
 - **Authority:** AI runtime permission answers, policy decisions and simulation action grants are distinct records. Neither an agent reply nor a log entry grants authority.
 - **Persistence:** connection/inference operations and simulator submissions have different keys and lifetimes. All store migrations remain coordinated; no framework owns scientific acceptance.
 
-## Information needed only for real integration
+## Historical information requested for real integration
 
 Public fake-backed development can proceed now. Before qualifying real connections, record the AI host OS, official runtime/schema versions, permitted authentication route and tested isolation profile. Before private simulation integration, record the full Cadence build/ISR, analysis/engine, execution owner, scheduler/storage profile, native result reader, dependency identity method and concrete operation grants. Unknowns remain explicit until that environment is selected.
 

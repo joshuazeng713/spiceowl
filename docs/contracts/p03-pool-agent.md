@@ -1,6 +1,8 @@
 # P0.3 server pool, placement and native Q&A
 
-Later extension: the separately configured [standalone runtime](../standalone-runtime.md) adds finite real CLI/web operations through CircuitGit’s existing Runner. The original probes, read-only MCP tools and placement-only commands documented here retain their narrower scope.
+**Status: historical contract; native Q&A onboarding superseded on 2026-11-24.** Host/resource and placement interfaces below retain their documented scope. The separate SpiceOwl native-agent inference path is retained as compatibility code and historical records, not current setup guidance. New AI work uses [CircuitGit's existing Codex window](../native-agent.md); engine reads use [the SDK or `read` CLI](../real-connections.md#5-read-saved-state-through-the-engine-sdk).
+
+Later extension: the separately configured [standalone runtime](../standalone-runtime.md) adds finite real CLI/web operations through CircuitGit’s existing Runner. The original probes and placement-only commands retain their narrower scope.
 
 This slice extends P0.2 with explicitly selected hosts, Linux resource snapshots, resource-based placement proposals, simulation-origin routing, and a real native Codex Q&A connection. A resource observation is not a reservation or proof that a simulation can run. No real simulation is submitted without an explicit experiment and launch request.
 
@@ -33,7 +35,9 @@ Collect bounded Linux aggregate data (/proc and home-filesystem capacity), not o
 
 `plan_execution(origin, placement) -> dict` returns a reviewable plan. Standalone plans can propose the highest-ranked host; native plans preserve their bound host and explain the native ownership boundary. Neither claims a job was launched. Actual launch requires frozen input/include closure, license/environment/resource validation, remote ownership and a persisted submission receipt; no such input was supplied for the live test in this slice.
 
-## Real agent Q&A
+## Historical native Q&A contract
+
+The following records the old adapter contract for compatibility tests. It does not direct current users to add a native profile, probe a runtime or submit a question from SpiceOwl. Those user-facing launch operations are retired. Existing `agents list` / `agents inspect` and `questions list` / `questions inspect` provide historical inspection only.
 
 `spiceowl.agent.native.validate_agent_profile(data) -> dict`: strict `{schema:"spiceowl.agent.v1", agent_id, label, executable: absolute codex binary path, model: string|null}`. No keys, tokens, arbitrary flags/commands, external URLs or borrowed thread IDs. Native Codex reads its own existing provider/auth configuration. Do not assume a subscription when the configured provider uses an API route.
 
@@ -41,7 +45,7 @@ Collect bounded Linux aggregate data (/proc and home-filesystem capacity), not o
 
 Parent persists native profile metadata under `agent_profile`; Q&A records under `qa`, independently of synthetic diagnoses. Parent owns request-key deduplication and controller recovery (unfinished Q&A becomes outcome_unknown, never replayed). UI allows a small question, shows actual provider/model and status, and preserves the response. No secret configuration enters HTTP/MCP projections. Existing five read-only MCP tools remain query-only; pool details may be included in host projections, without adding active tools.
 
-## Work ownership
+## Historical work ownership
 
 - Simulator: `adapters/hosts.py`, `adapters/executors/ssh.py`, new resource parser module under `adapters/`, and `tests/test_host_resources.py` plus needed additions to `test_ssh_hosts.py`.
 - AI: `agent/native.py` and optional submodules only under `agent/native_support/`; `tests/test_native_agent.py`. No live inference in the child; parent performs one real Q&A after review. Report native version/config constraints.

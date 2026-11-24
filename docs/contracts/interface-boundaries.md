@@ -1,6 +1,6 @@
 # Shared interface boundaries
 
-Status: draft `0.1`, 2026-11-13. Use this vocabulary across the three design workstreams. Names are proposed contracts, not implemented Python APIs.
+Status: historical draft `0.1`, **2026-11-13**. Names below are proposed contracts, not implemented Python APIs. The AI deployment and implementation sequence was superseded on **2026-11-24**: CircuitGit owns its existing Codex window, model/provider configuration and host tool integration; SpiceOwl supplies the independent simulation engine SDK and CLI. Use [the current AI route](../native-agent.md) and [engine read views](../real-connections.md#5-read-saved-state-through-the-engine-sdk). The execution, evidence and scientific-acceptance distinctions below remain the design boundary; this document does not add a second Agent or MCP service.
 
 ## Independent identities
 
@@ -19,13 +19,13 @@ AI-only `turn_id`, `request_key`, `connection_revision`, and `auth_epoch` identi
 
 ## AI boundary
 
-Distinguish `AgentBackend` (an existing runtime with its own session/tool lifecycle) from `ModelBackend` (inference endpoints used by a SpiceOwl-owned diagnostic loop). Expose them through a connection manager but do not pretend their capabilities are identical.
+The original draft distinguished `AgentBackend` (an existing runtime with its own session/tool lifecycle) from `ModelBackend` (inference endpoints used by a proposed SpiceOwl diagnostic loop). That distinction remains useful in the synthetic contracts and historical design. Real AI routing now belongs to CircuitGit; these names do not require a new provider/session manager in SpiceOwl.
 
 Use provider-owned login flows or explicit user-provided API credential references. Do not turn subscription credentials into a general API pool. A provider's advertised models do not prove that the current account may call them. Unknown quota/cost is unknown, not zero.
 
 The first diagnostic mode receives a bounded evidence package and emits a structured proposal. It has no direct execution authority. A proposal contains target identities, action kind, evidence references, intended parameter/resource diff, known uncertainty, and validation requirements.
 
-The selected implementation order is fake backends and registry, then native local Codex app-server plus the official OpenAI Python SDK API-key route, then ACP's official Python SDK. LiteLLM is a later optional normalization adapter once a second API provider requires it. These are design selections, not installed dependencies or verified integrations. See the [AI design](../design/ai-connections.md) for dated upstream evidence and authentication limits.
+The original fake-backend → native-Codex/API-key → ACP sequence and optional LiteLLM expansion are superseded. The [archived AI design](../design/ai-connections.md) preserves the dated research; it is not current provider setup guidance. Current callers use CircuitGit's supported tools or SpiceOwl's direct engine SDK/CLI, with the existing simulation authority unchanged.
 
 ## Simulator boundary
 
@@ -66,7 +66,7 @@ The logical flow is `Evidence -> ActionProposal -> PolicyDecision -> OperationRe
 | `OperationResult` | Tagged service result: execution, action, collection, or postprocess; reference the authoritative receipt/manifest, or an unresolved operation record. It is not a second receipt store. Read-only collection can return a manifest directly. |
 | `ValidationReport` | Immutable, versioned check results and measurement/specification outcomes tied to a frozen contract and artifact snapshots. Superseding a report preserves its history and reason. |
 
-Shared contracts live under `domain`; provider code under `agent/connections`; simulator/executor implementations under `adapters`; service composition, dispatch and postprocessing under a future `execution` package. The coordinator owns common schema migrations through `storage`. All workstreams use `tests/contracts/` and `tests/fault_injection/` when those tests are implemented. No new runtime directories are implied by this design document.
+The historical layout proposed shared contracts under `domain`, provider code under `agent/connections`, simulator/executor implementations under `adapters`, and service composition under a future `execution` package. The coordinator owns common schema migrations through `storage`. Suggested `tests/contracts/` and `tests/fault_injection/` directories remain design sketches where unimplemented. These names do not imply new runtime directories or change CircuitGit's current AI and execution ownership.
 
 ## Event and capability rules
 

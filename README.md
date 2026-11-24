@@ -5,18 +5,20 @@
 <h1 align="center">SpiceOwl</h1>
 
 <p align="center"><strong>You sleep. SpiceOwl keeps watch.</strong></p>
-<p align="center">An open-source agent console for long-running circuit simulations.</p>
+<p align="center">An open-source simulation engine SDK and CLI for CircuitGit's Codex workflow.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
 <p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open the interactive demo</strong></a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Current alpha source</a></p>
 
-> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH, real agents and simulation execution require a local installation. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
+> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use CircuitGit's Codex channel. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
-> **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [native Q&A guide](docs/native-agent.md).
+> **Early alpha — real standalone Spectre runs through an optional CircuitGit connection.** The local CLI and a separate real-simulation panel can scan an authorized server pool, submit committed inputs through CircuitGit’s existing Runner, observe existing runs in the background, and explicitly collect results. SpiceOwl provides the shared monitor, Spectre diagnostics, PSF ASCII parser and signed client. Synthetic demos remain available; the public demo executes no simulation. Automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [unified Agent channel guide](docs/native-agent.md).
+
+**Agent ownership:** CircuitGit owns the Codex conversation, credentials and tool bridge. SpiceOwl is the reusable simulation engine; it does not launch a parallel Agent service. See the [paired integration and submodule contract](docs/circuitgit-integration.md).
 
 The paired CircuitGit development branch also provides a [fresh simulation intake](docs/onboarding-discovery.md): parse an imported inverter, discover selected SSH environments and model candidates, then freeze explicit experiment conditions. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
 
-[Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired workbench and MCP tools return exact next actions; missing evidence and uncertain submissions remain explicit.
+[Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The paired CircuitGit workbench and its tools return exact next actions; missing evidence and uncertain submissions remain explicit.
 
 The pure [cached scope selection SDK](docs/pdk-scope-selection.md) combines explicitly selected sections of one observed PDK entry, checks the full dependency namespace and TMI options, and compares a subsequent audit against every expected file hash and scope. It preserves partial-library status and requires the execution owner's fresh audit and review.
 
@@ -38,12 +40,12 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 
 | Capability | Intended behavior | Status |
 | --- | --- | --- |
-| Connect | Manage user-owned agent runtimes and model APIs with explicit auth, capability, and usage boundaries | Native Codex Q&A, fake agent/API management, MCP queries and SSH host/resource checks implemented |
+| Connect | Reuse CircuitGit's Codex conversation and tool bridge | CircuitGit owns Agent/authentication; SpiceOwl supplies Python SDK read views and explicit SSH host/resource checks |
 | Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Frozen inverter/prepared-transient recipes, finite authored-TB validation, and optional named ADC algorithms; general TB intent remains explicit |
 | Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; automatic restart, migration and parameter repair are not implemented |
-| Diagnose | Explain evidence and propose actions | Deterministic Spectre failure classification; native agent Q&A and synthetic diagnosis remain separate |
+| Diagnose | Explain evidence and propose actions | Deterministic Spectre classification and five-dimension reports; CircuitGit presents evidence in its Codex conversation |
 | Report | Separate execution outcome, measurement validity, and circuit performance | Five independent experiment dimensions: execution, measurement, performance, operating qualification and dependency provenance |
 
 ### A morning report should answer three different questions
@@ -67,26 +69,25 @@ The report also shows observation freshness separately, so an old running status
 - **Recovery preserves experimental intent.** Changes to tolerances, stimuli, corners, seeds, or measurement definitions require an explicit policy or a reviewed new experiment.
 - **Resume means what the backend supports.** Controller recovery, job reconnection, and solver checkpoint recovery are separate capabilities.
 
-## Planned architecture
+## Integration architecture
 
 ```mermaid
 flowchart TD
-    UI[CLI / web console] --> Controller[Controller and policy engine]
-    Controller <--> Store[Durable run records]
-    Controller --> Executor[Execution adapter]
-    Executor --> Simulator[Simulator adapter]
-    Simulator --> Evidence[Logs, resources, and result artifacts]
-    Evidence --> Checks[Monitoring and validation]
-    Checks --> Store
-    Checks --> UI
-    Checks --> Agent[Optional diagnostic agent]
-    Agent --> Proposal[Evidence-backed action proposal]
-    Proposal --> Controller
+    UI[CircuitGit workspace and Codex conversation] --> Bridge[Existing app-server dynamic tools / ic-workbench]
+    Bridge --> Review[CircuitGit validation and human review]
+    Review --> SDK[SpiceOwl Python SDK]
+    SDK --> Checks[Host pool / PDK LUT / TB validation]
+    Review --> Runner[CircuitGit existing Runner]
+    Runner --> Simulator[Remote simulator]
+    Simulator --> Evidence[Logs and saved results]
+    Evidence --> SDK
+    SDK --> Report[Diagnostics / PSF / FFT / AC / DC]
+    Report --> UI
 ```
 
 The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
 
-The current [standalone runtime](docs/standalone-runtime.md) builds on **server pools, execution-origin planning and native Q&A** from the [P0.3 contract](docs/contracts/p03-pool-agent.md). The earlier [P0.2 contract](docs/contracts/p02-connectivity.md) covers SSH/MCP fundamentals. The broader [implementation plan](docs/design/integration-plan.md) also proposes API-key and ACP routes; these remain future work. The [three design workstreams](docs/design/README.md) share the [interface boundaries](docs/contracts/interface-boundaries.md).
+The current [standalone runtime](docs/standalone-runtime.md) uses server-pool and execution-origin SDKs with CircuitGit's existing Runner. **All Agent connections reuse CircuitGit's Codex window**, its `codex app-server` dynamic-tool bridge and `ic-workbench` integration. Historical [P0.2](docs/contracts/p02-connectivity.md), [P0.3](docs/contracts/p03-pool-agent.md) and connection designs remain for compatibility context; their separate Agent/MCP setup is superseded.
 
 ## Repository map
 
@@ -109,21 +110,22 @@ spiceowl/
 │   ├── validation/            # Input and measurement acceptance checks
 │   ├── recovery/              # Policy evaluation and action proposals
 │   ├── storage/               # Durable records and artifact references
-│   ├── agent/                 # Connections, sessions and optional diagnosis
-│   ├── mcp/                   # Optional read-only tools for existing agents
+│   ├── agent/                 # Synthetic diagnosis and historical native compatibility
+│   ├── read_api.py            # Transport-neutral stored read views for CircuitGit
+│   ├── mcp/                   # Historical MCP compatibility shim and protocol tests
 │   ├── scheduling/            # Resource placement and simulation-origin plans
 │   ├── cli/                   # Local command interface
 │   └── web/                   # Loopback API and bundled browser assets
 └── tests/                     # Offline tests and synthetic fixtures
 ```
 
-The package includes synthetic replay, native Q&A, private host profiles, bounded SSH probes, optional read-only MCP queries, shared real-run monitoring/diagnostics/PSF parsing, and one signed client reused by CLI and web. CircuitGit owns project materialization, execution identity, dispatch and native collection. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
+The independently maintained SDK/CLI contains server-pool probes, PDK discovery/LUT, Agent-TB checks, diagnostics, PSF parsing, adctools, read views and the existing signed simulation client. CircuitGit owns the Codex conversation, authentication, project materialization, execution identity, review, dispatch and native collection. Its `submodules/spiceowl` gitlink and integration lock pin the same reviewed commit. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
 
 For a complete development environment, run `python3 scripts/setup_dev.py`
 after cloning, then `.venv/bin/spiceowl serve --demo`. Setup installs the pinned
-MCP and numerical extras, downloads a project-local Python if needed, and runs
+numerical extras and historical MCP test dependencies, downloads a project-local Python if needed, and runs
 a quick self-check. Use `--serve-demo` to install and start in one command.
 See [developer setup](docs/developer-setup.md) for requirements and recovery.
 
@@ -141,11 +143,11 @@ Open the printed loopback URL. Explore Connections, inspect a synthetic run, adv
 
 To add a real connection, use **Simulation hosts → Add host**, or import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`. Registration saves local configuration; **Check connection** explicitly verifies the selected host. OpenSSH uses your existing alias and jump-host configuration. The [host onboarding guide](docs/host-onboarding.md) explains setup, safe retries and separate trust, authentication, network and stale-resource states. Version queries do not establish license availability, job state, or simulation validity.
 
-To expose stored observations to Codex or another MCP client, install `.[mcp]` and configure the client to run `spiceowl --data-dir ABSOLUTE_STATE_DIR mcp`. This optional server uses the official Python MCP SDK and reads the same local database without owning the controller. It cannot launch simulations or query arbitrary paths. Follow the [real connection guide](docs/real-connections.md) for the profile schema, commands and verification boundaries.
+When an existing SpiceOwl history store is the intended source, CircuitGit can read it with `spiceowl.read_api.open_read_views(directory)`; no MCP dependency, process or second conversation is needed. CircuitGit's own Runner records remain authoritative and need no duplicate store. The same eight bounded views are available through `spiceowl --data-dir ABSOLUTE_STATE_DIR read ...`. See the [SDK method mapping](docs/circuitgit-integration.md#direct-sdk-read-views). The old `spiceowl mcp` launcher now returns migration guidance; importable MCP symbols and the optional extra remain for historical protocol tests.
 
 For multiple nodes, use **Simulation hosts → Import pool** to preview an explicit hostname list and register it using an existing route template, or use `hosts import-pool`. Select up to 32 rows and use **Check selected hosts**; the CLI offers `hosts scan --hosts HOST_ID ...`. The browser evaluates requested CPUs and memory within the same selected batch. Unknown or stale nodes are excluded. Placement retains a resource margin and is a proposal, not a reservation. Standalone plans select a candidate for a new exported netlist; Virtuoso-managed plans preserve the original host/native run mapping.
 
-For real text answers, register a private native runtime profile using `agents add --file PROFILE.json`, then open **Agent chat**. This uses the runtime's existing provider/auth configuration, which may be a subscription or a separately configured API route. Requests have durable keys, no automatic provider fallback, and no simulator tools. See the [native Q&A guide](docs/native-agent.md).
+For AI assistance, use **CircuitGit's Codex conversation** with its existing authentication and tools. SpiceOwl's former Agent page explains that channel and displays saved legacy Q&A; it cannot send questions or probe a second runtime. Legacy `agents add/probe/ask` commands return migration guidance; metadata and question history remain readable. See the [unified Agent channel guide](docs/native-agent.md).
 
 ## Connect the real simulation console
 
@@ -176,17 +178,17 @@ If the remote launch environment needs explicit license configuration, append th
 
 `prepare` actively checks the selected hosts and freezes a local source/acceptance bundle; it does not reserve resources or launch a job. `stage` writes the frozen input to an isolated remote directory. `launch` rechecks resource headroom, verifies the remote identity/version and claims one bounded attempt. If delivery is uncertain, use `status` with the same saved run directory; do not prepare a new key or blindly relaunch. Collect only after a confirmed terminal result. Collection checks hashes and completion evidence, saves native PSF ASCII and logs, and produces separate execution, measurement-validity and toy-inverter results. Optional `collect --plots` needs a separately installed local matplotlib.
 
-Keep `.spiceowl/smoke/` private. The original educational models represent no fabrication process, and a passing smoke test does not qualify a PDK or unattended recovery. This utility remains a separate developer workflow. The optional real CLI/web client dispatches through CircuitGit’s existing Runner; MCP cache queries and placement-only commands retain their read-only or planning scope. Limits and acceptance criteria are documented with the [example](examples/inverter/README.md).
+Keep `.spiceowl/smoke/` private. The original educational models represent no fabrication process, and a passing smoke test does not qualify a PDK or unattended recovery. This utility remains a separate developer workflow. The optional real CLI/web client dispatches through CircuitGit’s existing Runner; SDK cache queries and placement-only commands retain their read-only or planning scope. Limits and acceptance criteria are documented with the [example](examples/inverter/README.md).
 
-SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three optional MCP tools expose the local cache to agents. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. That passive cache interface does not enable monitoring or automatic recovery. The optional real client enables explicit watches separately. See the [IC Workbench integration guide](docs/ic-workbench.md).
+SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three transport-neutral SDK methods expose the local cache to CircuitGit. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. That passive cache interface does not enable monitoring or automatic recovery. The optional real client enables explicit watches separately. See the [IC Workbench integration guide](docs/ic-workbench.md).
 
-CircuitGit can use the [external resource-selection API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit) to scan a configured server pool, freeze the selected site in a reviewed plan and recheck it before its existing Runner submits the simulation. Stored runs carry optional historical library/cell and execution-target metadata. SpiceOwl’s optional real CLI/web entry point reuses that same Runner, and MCP remains read-only. Both repositories’ simulation integration is delivered and tested together.
+CircuitGit can use the [external resource-selection API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit) to scan a configured server pool, freeze the selected site in a reviewed plan and recheck it before its existing Runner submits the simulation. Stored runs carry optional historical library/cell and execution-target metadata. SpiceOwl’s optional real CLI/web entry point reuses that same Runner, and cached SDK views remain read-only. Both repositories’ simulation integration is delivered and tested together.
 
 ## Contributing
 
 We welcome analog designers, CAD engineers, and developers working on reliable scientific computing. Useful first contributions include sanitized failure cases, measurement validators, and small implementations with failure-injection tests.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before sharing data. Use [SECURITY.md](SECURITY.md) for reporting vulnerabilities and handling sensitive materials. Background references and candidate dependencies are listed in [docs/references.md](docs/references.md). The core uses Python's standard library; the optional MCP extra pins the tested official SDK version.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before sharing data. Use [SECURITY.md](SECURITY.md) for reporting vulnerabilities and handling sensitive materials. Background references and candidate dependencies are listed in [docs/references.md](docs/references.md). The core uses Python's standard library. The optional MCP extra is retained only for historical compatibility and protocol tests; CircuitGit's SDK integration does not require it.
 
 ## License
 

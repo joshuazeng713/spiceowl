@@ -1,16 +1,22 @@
 # ADR 0002: Separate agent runtimes from model APIs
 
 - Date: 2026-11-13
-- Status: proposed integration design; the maintainer has set connection management as the next implementation priority
+- Status: superseded for AI ownership and implementation ordering on 2026-11-24; retained as historical design
 - Supersedes: the implementation ordering in ADR 0001, not its execution/validation principles
 
-## Context
+## Current decision
+
+AI conversations, provider/model configuration and AI tool interaction use CircuitGit's existing Codex window and IC Workbench host integration. SpiceOwl is the independently usable simulation engine SDK and CLI. Its neutral `spiceowl.read_api` supplies bounded stored reads without requiring MCP. The earlier native-agent chat service and user-facing MCP launcher are retired; their lower-level adapters remain for compatibility tests and earlier records remain inspectable.
+
+Use [AI through CircuitGit](../native-agent.md), [current connectivity setup](../real-connections.md), and [the CircuitGit integration profile](../circuitgit-integration.md) for current instructions. The proposal below does not authorize building or configuring a second provider/session manager in SpiceOwl. Its distinctions between evidence, provider state, tool permissions and simulation authority still apply.
+
+## Historical context
 
 The maintainer wants SpiceOwl to connect to and manage the agents they already subscribe to as well as model APIs. They requested parallel ownership of AI connections, simulator connections, and simulation debugging, with one coordinating workstream.
 
 Existing coding agents provide their own tool loop, authentication, session state, and permission behavior. A model API supplies inference; SpiceOwl must own any diagnostic loop around it. Treating both as one chat-completions endpoint would discard important differences.
 
-## Decision proposal
+## Superseded decision proposal
 
 1. Introduce a connection manager over separate `AgentBackend` and `ModelBackend` interfaces.
 2. Start with a local, single-user deployment. Record the owner and host of each connection; the AI host and simulation host may differ.
@@ -23,7 +29,7 @@ Existing coding agents provide their own tool loop, authentication, session stat
 
 No provider, SDK, protocol version, executable, package version, or account entitlement is validated merely by this ADR. The AI workstream supplies the researched support matrix and acceptance gates.
 
-## Interface coordination
+## Historical interface coordination
 
 Use [shared boundaries](../contracts/interface-boundaries.md) for identities, proposals, and event semantics. [Workstreams](../workstreams.md) records exclusive file ownership and review responsibilities.
 
@@ -31,7 +37,7 @@ The connection manager must distinguish configuration, transport, authentication
 
 The [integrated implementation plan](../design/integration-plan.md) records the reviewed workstream decisions and the first runnable offline acceptance scenario. Detailed upstream support evidence is in the [AI design](../design/ai-connections.md).
 
-## Consequences
+## Historical consequences
 
 SpiceOwl can share common management and presentation while preserving provider-specific semantics. Reusing a protocol/SDK reduces integration work, but ownership, side-effect reconciliation, evidence isolation, and scientific acceptance remain SpiceOwl responsibilities.
 

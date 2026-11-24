@@ -5,7 +5,8 @@ import fcntl
 import threading
 
 from spiceowl import __version__
-from spiceowl.domain.common import DomainError, digest, new_id, require_id, utcnow
+from spiceowl.agent_channel import agent_channel_error, agent_channel_info
+from spiceowl.domain.common import DomainError, digest, require_id, utcnow
 from spiceowl.storage.sqlite import Store
 
 
@@ -32,7 +33,6 @@ class Controller:
         from spiceowl.agent.qa import NativeRegistry, Questions
         self.native_agents = NativeRegistry(directory)
         self.questions = Questions(self.store)
-        self.questions.recover()
 
     def close(self):
         self._closing.set()
@@ -48,27 +48,22 @@ class Controller:
 
     def state(self):
         from spiceowl.adapters.executors.mock import list_scenarios
-        return {"version": __version__, "mode": "server_pool_and_native_qa", "connections": [c for c in self.store.list("connection") if not c.get("deleted")], "hosts": self.hosts.list(), "native_agents": self.native_agents.list(), "questions": self.questions.list(), "runs": self.store.list("run"), "sessions": self.store.list("session"), "scenarios": list_scenarios(), "capabilities": {"real_inference": True, "real_simulation": False, "dispatch": False, "synthetic_replay": True, "ssh_connectivity_probe": True, "host_resources": True, "placement_plans": True, "mcp_local_queries": True}}
+        return {"version": __version__, "mode": "engine_console", "agent_channel": agent_channel_info(),
+                "connections": [c for c in self.store.list("connection") if not c.get("deleted")],
+                "hosts": self.hosts.list(), "native_agents": self.native_agents.list(),
+                "questions": self.questions.list(), "runs": self.store.list("run"),
+                "sessions": self.store.list("session"), "scenarios": list_scenarios(),
+                "capabilities": {"real_inference": False, "real_simulation": False, "dispatch": False,
+                    "synthetic_replay": True, "ssh_connectivity_probe": True, "host_resources": True,
+                    "placement_plans": True, "mcp_local_queries": False, "sdk_read_views": True}}
 
     def ask(self, data):
-        if not self._slots.acquire(blocking=False):
-            raise DomainError("The local question queue is full.", "busy")
-        try:
-            record, created = self.questions.claim(data)
-            if created:
-                self._workers.submit(self._question_worker, record)
-            else:
-                self._slots.release()
-            return {"qa_id": record["qa_id"], "status": record["status"], "created": created}
-        except BaseException:
-            self._slots.release()
-            raise
+        """Keep old clients from creating or replaying a local native request."""
+        raise agent_channel_error()
 
-    def _question_worker(self, record):
-        try:
-            self.questions.run(record)
-        finally:
-            self._slots.release()
+    def probe_native_agent(self, agent_id):
+        """A saved native profile is historical metadata, not a dispatch route."""
+        raise agent_channel_error()
 
     def plan_execution(self, data):
         from spiceowl.scheduling.origins import plan_execution, validate_origin

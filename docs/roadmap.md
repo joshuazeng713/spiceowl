@@ -1,6 +1,6 @@
 # Roadmap
 
-This is a milestone plan, not a release or delivery-date promise. The offline prototype, host/native-Q&A slice and optional standalone Spectre client are implemented. M1/M2/M3 have bounded implementations; broader acceptance criteria remain open. A milestone closes when its observable acceptance criteria pass.
+This is a milestone plan, not a release or delivery-date promise. The offline prototype, host/resource checks, independent engine SDK/CLI and optional standalone Spectre client are implemented. AI interaction uses CircuitGit's existing Codex window; the earlier separate native-Q&A and MCP launch paths are superseded. M1/M2/M3 have bounded implementations; broader acceptance criteria remain open. A milestone closes when its observable acceptance criteria pass.
 
 ## M0 — Project foundation (current)
 
@@ -23,28 +23,29 @@ The repository includes an installable alpha package, local CLI/web console, syn
 - [x] Four finite synthetic run scenarios with explicit manual replay.
 - [x] Public tests for domain contracts, service restart/deduplication and loopback API boundaries.
 
-This section records the original offline milestone. Later slices add native inference and a real client backed by CircuitGit’s existing Runner. Synthetic replay remains separate and cannot establish real execution, monitoring or scientific acceptance. Automatic recovery remains absent.
+This section records the original offline milestone. Later slices add a real client backed by CircuitGit's existing Runner; current AI work uses CircuitGit's existing host integration. Synthetic replay remains separate and cannot establish real execution, monitoring or scientific acceptance. Automatic recovery remains absent.
 
-## P0 — Agent and model-API connections (partially implemented)
+## AI host and simulation engine separation — current route
 
-Added at the maintainer's request on 2026-11-13. See [workstreams](workstreams.md) and the [connection-layer decision](decisions/0002-connection-layer.md). This milestone precedes M1; the simulation reliability and scientific acceptance boundaries remain unchanged.
+The maintainer selected this route on **2026-11-24**. CircuitGit owns AI conversations, model/provider settings, its app-server dynamic tools and the IC Workbench host integration. SpiceOwl remains an independently importable simulation engine and CLI. The engine's diagnostics, PSF readers and saved-data algorithms do not require an AI service.
 
-Deliver connection configuration/registry, separate agent-runtime and model-API contracts, capability-aware auth/session state, secret references, usage/budget records, and an initial management interface. Begin with deterministic fake backends, then verify one official local Codex path and an API-key route through the official OpenAI Python SDK before broadening ACP support. The [integrated implementation plan](design/integration-plan.md) defines P0.1–P0.3 and their observable demos. LiteLLM remains a later optional adapter.
+- [x] Neutral `spiceowl.read_api.ReadViews` and `open_read_views(directory)` for eight bounded reads of an already existing SpiceOwl store; optional compatibility, not another required CircuitGit database.
+- [x] A `read` CLI over the same stored views, without a separate tool server.
+- [x] Current guides use CircuitGit's existing AI window and Service/Runner ownership.
+- [x] Retire separate native-agent onboarding/inference and the user-facing MCP launcher; retain lower-level compatibility tests and historical Q&A inspection.
+- [ ] Qualify the intended installed CircuitGit session and its advertised tools for each supported environment; package tests alone do not prove host integration.
 
-P0.2 provides private SSH profiles, explicit identity/tool-version probes, a browser host view, and optional read-only stdio MCP tools. Public tests use a fake SSH peer and an actual local MCP handshake. These checks do not close M1 or M2. Direct API adapters, persistent credential entry and account-scoped usage limits remain planned. See the [connectivity contract](contracts/p02-connectivity.md).
+The optional official MCP SDK extra supports retained transport tests only; it is not required for CircuitGit or direct engine use. See [the AI migration guide](native-agent.md), [connectivity and SDK reads](real-connections.md), and [the CircuitGit integration profile](circuitgit-integration.md).
 
-P0.3 adds native Codex text Q&A, explicit multi-host Linux resource snapshots, conservative placement recommendations and standalone/Virtuoso-origin execution plans. See [server pool](server-pool.md) and [native Q&A](native-agent.md). A successfully completed native question verifies that request's configured provider route. Those P0.3 planning commands remain non-dispatching. The later standalone runtime adds real submission and existing-run monitoring; reservations, native ADE control and automatic recovery remain open.
+The original [P0.2 contract](contracts/p02-connectivity.md), [P0.3 contract](contracts/p03-pool-agent.md), [connection ADR](decisions/0002-connection-layer.md) and [integration plan](design/integration-plan.md) remain historical references. Their SSH profiles, explicit resource snapshots and placement/origin boundaries still describe those interfaces. Their separate AI service and provider-adapter sequence is superseded, not an additional current roadmap.
 
-Acceptance:
+Acceptance for the current boundary:
 
-- Add, list, inspect, disable, and remove connection metadata without invoking a model or logging credentials.
-- Distinguish configuration validity, transport reachability, login status, and a successfully tested inference request.
-- Negotiate optional operations and expose unsupported/unknown capabilities honestly.
-- Preserve the connection owner/host and provider session mapping; do not imply cross-provider native-session portability.
-- Deny paid fallback unless it is explicitly configured within a budget; record model switches and their new session/context boundaries.
-- Keep provider-session cancellation separate from simulation cancellation.
-- Keep all public tests independent of subscriptions, API keys, Cadence, and private servers.
-- Real login and small paid smoke tests are separately authorized, opt-in integration checks, not automatic discovery.
+- Engine imports and stored reads work without MCP or provider credentials.
+- Reads preserve bounded evidence, original timestamps and synthetic provenance, with no inference, SSH or simulation dispatch.
+- CircuitGit keeps AI tool routing and simulation authority; no second session manager, action ledger or executor is introduced.
+- Existing native profiles and Q&A remain inspectable without reissuing a request.
+- Public tests remain independent of subscriptions, API keys, Cadence and private servers. Host invocation and simulation qualification remain separate, authorized checks.
 
 ## Standalone Spectre integration — implemented alpha slice
 
@@ -132,9 +133,9 @@ Acceptance:
 - Electrical, seed, stimulus, corner, tolerance, and measurement changes follow their declared authorization class.
 - Preserve the original attempt and its outputs.
 
-## M5 — Diagnostic agent and console
+## M5 — Evidence-backed diagnosis through CircuitGit
 
-Add typed agent proposals and a web console over the stable run API. The console shows a run list, progress evidence, resource trends, validation results, and recovery history. An optional notification integration delivers meaningful changes and a final report.
+Extend CircuitGit's existing AI interaction with typed, evidence-backed proposals using SpiceOwl's engine interfaces. The existing simulation views show runs, progress evidence, resource trends, validation results and recovery history. An optional notification integration can deliver meaningful changes and a final report. This milestone does not introduce another chat service or provider manager in SpiceOwl.
 
 Acceptance:
 
@@ -149,7 +150,7 @@ Acceptance:
 1. Qualify the paired standalone runtime on explicitly authorized sites and preserve native evidence.
 2. Extend input/measurement validation with real experiment requirements and missing-output/window cases.
 3. Improve observation coverage, log rotation and gateway lifecycle checks without weakening uncertainty handling.
-4. Add an explicit API-key route and expand ACP after shared connection contracts pass.
+4. Improve CircuitGit's existing tool integration and end-to-end evidence tests while keeping the simulation engine independently usable.
 5. Add bounded recovery only after ownership, outcome reconciliation and scientific validation are established.
 
 ## Later, after the first backend works
@@ -157,7 +158,7 @@ Acceptance:
 - Additional site schedulers and native ADE integrations.
 - PVT and Monte Carlo batch policies.
 - More analysis-specific validators and checkpoint compatibility profiles.
-- Local or hosted model providers behind the same proposal interface.
+- Additional CircuitGit-supported model/provider routes behind the same evidence and proposal boundary.
 - Multi-user operation, stronger isolation, and resource accounting.
 
 These are candidates, not current features. Automatic circuit optimization, unattended schematic editing, and arbitrary control of unrelated jobs are outside the initial scope.

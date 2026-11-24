@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spiceowl"
 version = "0.3.0a1"
-description = "A local console for circuit simulation supervision"
+description = "Circuit simulation engine SDK and CLI for CircuitGit's Codex workflow"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}
@@ -18,6 +18,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# Historical MCP compatibility/protocol tests only. CircuitGit calls the Python
+# SDK through its existing Codex channel; the engine requires no MCP service.
 mcp = ["mcp==1.30.0"]
 adctools = ["numpy>=1.26,<3", "scipy>=1.11,<2", "adctoolbox==0.9.3"]
 

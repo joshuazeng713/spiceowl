@@ -40,9 +40,10 @@ The builder only emits its explicit asset allowlist; it never copies `.spiceowl`
 
 ## Visual experiment guide (2026-11-24)
 
-`workflow.html` now opens with a diagram-led walkthrough, a cropped real workbench capture,
-and switchable Bootstrap sample-and-hold / CMOS inverter experiments. Seven Matplotlib
-plots derive from three native Spectre result archives. The two 4,096-point spectra were
+`workflow.html` opens with Agent-assisted simulation management: resource selection,
+PDK setup, testbench preparation, run supervision and diagnosis. Real Bootstrap
+sample-and-hold and CMOS inverter results support that story. Seven Matplotlib plots
+derive from three native Spectre result archives. The two 4,096-point spectra were
 independently recomputed with NumPy; the downloadable samples can be checked with:
 
 ```bash
@@ -59,3 +60,23 @@ layout qualification is claimed. The AC plot does not assert feedback-loop phase
 
 The explicit `spiceowl.web.showcase_assets.SHOWCASE_ASSETS` list is shared by the local
 HTTP server and Pages builder; no filesystem scan imports private runtime data.
+
+## Product-specific management story
+
+The revised guide centers Agent-assisted simulation management. It now explains
+user-provided information and observed evidence; standalone vs embedded Agent
+configuration; resource scans, freshness and CPU/RAM reserves; bounded PDK discovery,
+section/closure selection and SQLite LUT reuse; Agent-authored TBs; exact run/key
+identity; monitoring, collection, and five distinct scientific report dimensions.
+
+`pool-demo.json` is explicitly synthetic teaching data. The four CPU/RAM combinations
+were evaluated offline using the production `recommend_hosts` function with unit-test
+style fixtures. They are not current observations of any real server. The five-dimensional
+diagnostic cards and example conversation are also clearly labeled teaching material.
+The plots remain real native-result derivatives. A fresh inspection of the saved 1 V
+Bootstrap logs found CMI-2752/SOA-related warnings, recorded separately in the evidence
+manifest and discussed alongside improved SNDR. No model qualification is inferred.
+
+CircuitGit's corresponding page instead leads with local AI design, Git, the RNL
+renderer, Agent/developer configuration and the contrast with online Virtuoso editing.
+The two guides no longer share one generic simulation-results narrative.

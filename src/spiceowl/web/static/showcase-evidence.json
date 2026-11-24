@@ -65,5 +65,40 @@
     "interpolation": "linear between consecutive full native PSF samples",
     "tphl_ps": 22.60155281773131,
     "tplh_ps": 28.910479723009498
-  }
+  },
+  "operating_warning_check": [
+    {
+      "case": "runs",
+      "log_sha256": "406db5f04165a7dec2866043163f445dcca141a96c3fc9df17ce56de32989f61",
+      "visible_soa_warning_lines": 25,
+      "vendor_codes": [
+        "CMI-2751",
+        "CMI-2752",
+        "CMI-2753",
+        "CMI-2754",
+        "CMI-2755"
+      ],
+      "scope": "visible log entries only; not a count of all suppressed diagnostics"
+    },
+    {
+      "case": "runs_iter2",
+      "log_sha256": "a8bf67f7e8790b8d7e52d6d922e0dee9d012c3becca87b6c587267c11dd38244",
+      "visible_soa_warning_lines": 73,
+      "vendor_codes": [
+        "CMI-2751",
+        "CMI-2752",
+        "CMI-2753",
+        "CMI-2754",
+        "CMI-2755"
+      ],
+      "scope": "visible log entries only; not a count of all suppressed diagnostics"
+    },
+    {
+      "case": "runs_inv",
+      "log_sha256": "aeaa7058681a8647b84d366c75b8bb94b75df427650af047cd523cb407bb26c9",
+      "visible_soa_warning_lines": 0,
+      "vendor_codes": [],
+      "scope": "visible log entries only; not a count of all suppressed diagnostics"
+    }
+  ]
 }

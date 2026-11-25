@@ -1375,13 +1375,13 @@ dialog .muted {
 .direct-dim-card { padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:#fafcfb; }
 .direct-dim-card span { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); }
 .direct-dim-card strong { display:block; margin-top:4px; font-size:13px; color:var(--ink); }
-.direct-rec-panel { margin-top:18px; }
-.direct-rec-filters { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
-.direct-rec-filters input { flex:1 1 220px; min-width:0; }
-.direct-rec-filters select { flex:0 1 180px; }
-.direct-rec-card { margin-top:14px; padding:16px; border:1px solid var(--line); border-radius:7px; background:#fcfcfa; }
-.direct-rec-integrity { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; padding:10px 12px; border-radius:6px; background:#eef6f0; border:1px solid #c9dcd2; font-size:12px; color:#2b5748; }
-.direct-rec-table-wrap { overflow-x:auto; margin:12px 0; }
+.direct-rec-panel { margin-top:18px; min-width:0; max-width:100%; }
+.direct-rec-filters { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; min-width:0; max-width:100%; }
+.direct-rec-filters input { flex:1 1 220px; min-width:0; max-width:100%; }
+.direct-rec-filters select { flex:1 1 180px; min-width:0; max-width:100%; text-overflow:ellipsis; }
+.direct-rec-card { margin-top:14px; padding:16px; border:1px solid var(--line); border-radius:7px; background:#fcfcfa; min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.direct-rec-integrity { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; padding:10px 12px; border-radius:6px; background:#eef6f0; border:1px solid #c9dcd2; font-size:12px; color:#2b5748; min-width:0; max-width:100%; }
+.direct-rec-table-wrap { overflow-x:auto; margin:12px 0; max-width:100%; }
 .direct-rec-table { width:100%; border-collapse:collapse; font-size:12px; }
 .direct-rec-table th,.direct-rec-table td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
 .direct-rec-table th { font-size:11px; color:var(--muted); font-weight:600; }

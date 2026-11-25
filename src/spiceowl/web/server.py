@@ -1,5 +1,6 @@
 """Bounded loopback HTTP interface for synthetic runs and host connectivity."""
 
+from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 import json
@@ -8,6 +9,7 @@ import secrets
 import time
 from urllib.parse import parse_qs, urlsplit
 
+from spiceowl import __version__
 from spiceowl.domain.common import DomainError, require_id
 from spiceowl.web.showcase_assets import SHOWCASE_ASSETS
 
@@ -43,10 +45,88 @@ def _live_request(body):
     return operation, args, key
 
 
+DEFAULT_WEB_ORIGINS = frozenset({"https://spiceowl-dev.github.io"})
+
+
+def _connect_page_html(target_origin: str, port: int, nonce: str) -> bytes:
+    """Render the 1-click local Connector authorization popup for the official web app."""
+    safe_origin = html_escape(target_origin, quote=True)
+    safe_nonce = html_escape(nonce, quote=True)
+    js_origin = json.dumps(target_origin)
+    js_nonce = json.dumps(nonce)
+    js_base = json.dumps(f"http://127.0.0.1:{port}")
+    body = f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>授权 SpiceOwl 本机连接器</title>
+<style>
+body{{margin:0;padding:24px;font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f0;color:#172e35}}
+.card{{max-width:460px;margin:16px auto;background:#fff;border:1px solid #d7dcd3;border-radius:10px;padding:22px;box-shadow:0 8px 24px rgba(23,46,53,.08)}}
+h1{{margin:0 0 8px;font-size:19px}}p{{margin:0 0 12px;color:#4a5d62}}
+code{{background:#eef2ee;padding:2px 6px;border-radius:4px;font-size:12px}}
+ul{{margin:8px 0 16px;padding-left:18px;color:#2f474d}}li{{margin-bottom:4px}}
+.actions{{display:flex;gap:10px;margin-top:16px}}
+button{{border:0;border-radius:6px;padding:10px 16px;font:600 14px/1 inherit;cursor:pointer}}
+.primary{{background:#1f6f54;color:#fff}}.secondary{{background:#eef2ee;color:#172e35}}
+.err{{color:#b42318;font-size:13px;min-height:18px}}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🦉 授权网页连接本机 SpiceOwl Connector</h1>
+  <p>以下网页请求连接您本机后台运行的服务（<code>127.0.0.1:{port}</code>）：</p>
+  <p><strong>{safe_origin}</strong></p>
+  <ul>
+    <li>读取本机 <code>~/.ssh/config</code> 别名并校验远端 EDA 服务器</li>
+    <li>按您的操作提交 SSH / LSF / Slurm 仿真与流式读取远端大波形</li>
+    <li>连接本机已安装的 Codex Agent 并接收夜间值守事件</li>
+  </ul>
+  <p style="font-size:12px">授权仅保存在当前浏览器标签页，关闭标签页或点击“断开连接”后立即失效。</p>
+  <div id="err" class="err"></div>
+  <div class="actions">
+    <button id="approve" class="primary" type="button">确认授权并回到网页</button>
+    <button id="cancel" class="secondary" type="button">取消</button>
+  </div>
+</div>
+<script>
+const targetOrigin = {js_origin};
+const nonce = {js_nonce};
+const baseUrl = {js_base};
+document.getElementById('cancel').onclick = () => {{ window.close(); }};
+document.getElementById('approve').onclick = async () => {{
+  const btn = document.getElementById('approve');
+  btn.disabled = true;
+  document.getElementById('err').textContent = '';
+  try {{
+    const res = await fetch('/connect/approve', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{origin: targetOrigin, nonce}}),
+    }});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || '授权失败');
+    if (window.opener) {{
+      window.opener.postMessage({{type: 'spiceowl.connector.authorized', token: data.token, baseUrl, version: data.version}}, targetOrigin);
+    }}
+    window.close();
+  }} catch (e) {{
+    btn.disabled = false;
+    document.getElementById('err').textContent = e.message || '授权失败';
+  }}
+}};
+</script>
+</body>
+</html>"""
+    return body.encode("utf-8")
+
+
 def make_server(controller, port=0, live_client_config=None, *, codex_executable=None,
                 codex_model=None, pdk_lut_path=None, circuitgit_client_config=None,
-                circuitgit_sdk_path=None, enable_direct_exec=False):
+                circuitgit_sdk_path=None, enable_direct_exec=False, allowed_origins=None):
     token = secrets.token_urlsafe(32)
+    extra_origins = frozenset(allowed_origins) if allowed_origins is not None else DEFAULT_WEB_ORIGINS
+    pairing_nonces: dict[str, tuple[str, float]] = {}
     live_client = None
     if live_client_config is not None:
         from spiceowl.integrations.live import LiveSimulationClient
@@ -91,14 +171,28 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             # Do not log user questions, bodies, tokens, or URLs.
             pass
 
-        def send_content(self, status, body, content_type="application/json; charset=utf-8"):
+        def _cors_origin(self):
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return None
+            actual_port = self.server.server_address[1]
+            loopback = {f"http://127.0.0.1:{actual_port}", f"http://localhost:{actual_port}"}
+            if origin in loopback or origin in extra_origins:
+                return origin
+            return None
+
+        def send_content(self, status, body, content_type="application/json; charset=utf-8", *, csp=None):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+            self.send_header("Content-Security-Policy", csp or "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+            cors_origin = self._cors_origin()
+            if cors_origin is not None:
+                self.send_header("Access-Control-Allow-Origin", cors_origin)
+                self.send_header("Vary", "Origin")
             self.send_header("Connection", "close")
             self.end_headers()
             try:
@@ -109,15 +203,34 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
         def reply(self, value, status=200):
             self.send_content(status, json.dumps(value, ensure_ascii=False, allow_nan=False).encode())
 
-        def check_origin(self):
+        def check_origin(self, *, path: str = ""):
             actual_port = self.server.server_address[1]
             authorities = {f"127.0.0.1:{actual_port}", f"localhost:{actual_port}"}
             hosts = self.headers.get_all("Host", [])
             if len(hosts) != 1 or hosts[0] not in authorities:
                 raise DomainError("This server accepts only its loopback origin.", "forbidden")
             origin = self.headers.get("Origin")
-            if origin is not None and origin not in {f"http://{host}" for host in authorities}:
+            loopback_origins = {f"http://{host}" for host in authorities}
+            is_web_origin = origin is not None and origin in extra_origins
+            if origin is not None and origin not in loopback_origins and not is_web_origin:
                 raise DomainError("Cross-origin access is not permitted.", "forbidden")
+            if self.command == "OPTIONS":
+                return
+            if path == "/health" and self.command == "GET":
+                return
+            if path in ("/connect", "/connect/approve"):
+                if is_web_origin:
+                    raise DomainError("Pairing confirmation must occur inside the local connector popup.", "forbidden")
+                return
+            # Cross-origin web app MUST present the paired session token for EVERY API call (including GET & SSE).
+            if is_web_origin:
+                supplied = self.headers.get("X-SpiceOwl-Token", "")
+                if not supplied and path == "/api/codex/events" and self.command == "GET":
+                    q = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    supplied = (q.get("token") or [""])[0]
+                if not secrets.compare_digest(supplied, token):
+                    raise DomainError("Pair this web tab with your local SpiceOwl Connector first.", "forbidden")
+                return
             if self.command != "GET":
                 supplied = self.headers.get("X-SpiceOwl-Token", "")
                 if not secrets.compare_digest(supplied, token):
@@ -147,15 +260,20 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             values = parse_qs(query, keep_blank_values=True)
             raw = values.get('after', ['0'])
             last = self.headers.get('Last-Event-ID', '0')
-            if set(values) - {'after'} or len(raw) != 1 or any(not v.isdigit() or len(v) > 15 for v in (*raw, last)):
+            if set(values) - {'after', 'token'} or len(raw) != 1 or any(not v.isdigit() or len(v) > 15 for v in (*raw, last)):
                 raise DomainError('Invalid Codex event cursor.')
             after = max(int(raw[0]), int(last))
             # Validate before sending SSE headers. This endpoint only reads events.
             batch = controller.codex.events(after=after)
             self.send_response(200)
-            for key, value in {'Content-Type': 'text/event-stream; charset=utf-8',
+            headers_map = {'Content-Type': 'text/event-stream; charset=utf-8',
                     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
-                    'Referrer-Policy': 'no-referrer', 'Connection': 'close'}.items():
+                    'Referrer-Policy': 'no-referrer', 'Connection': 'close'}
+            cors_origin = self._cors_origin()
+            if cors_origin is not None:
+                headers_map['Access-Control-Allow-Origin'] = cors_origin
+                headers_map['Vary'] = 'Origin'
+            for key, value in headers_map.items():
                 self.send_header(key, value)
             self.end_headers()
             deadline = time.monotonic() + 15
@@ -198,9 +316,56 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             return bridge.disconnect()
 
         def dispatch(self):
-            self.check_origin()
             url = urlsplit(self.path)
             path = url.path
+            self.check_origin(path=path)
+            if self.command == "OPTIONS":
+                cors_origin = self._cors_origin()
+                if cors_origin is None:
+                    raise DomainError("Cross-origin preflight is not permitted.", "forbidden")
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", cors_origin)
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-SpiceOwl-Token")
+                self.send_header("Access-Control-Max-Age", "600")
+                self.send_header("Vary", "Origin")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            if self.command == "GET" and path == "/health":
+                return self.reply({
+                    "ok": True,
+                    "product": "spiceowl",
+                    "connector": True,
+                    "version": __version__,
+                    "port": self.server.server_address[1],
+                })
+            if self.command == "GET" and path == "/connect":
+                query = parse_qs(url.query, keep_blank_values=True)
+                target = (query.get("origin") or [""])[0]
+                if target not in extra_origins:
+                    raise DomainError("This origin is not permitted to pair with the local SpiceOwl Connector.", "forbidden")
+                now_mono = time.monotonic()
+                for stale in [k for k, (_, exp) in pairing_nonces.items() if exp < now_mono]:
+                    pairing_nonces.pop(stale, None)
+                nonce = secrets.token_urlsafe(24)
+                pairing_nonces[nonce] = (target, now_mono + 300.0)
+                page = _connect_page_html(target, self.server.server_address[1], nonce)
+                return self.send_content(
+                    200,
+                    page,
+                    "text/html; charset=utf-8",
+                    csp="default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+                )
+            if self.command == "POST" and path == "/connect/approve":
+                req = self.body()
+                target = req.get("origin")
+                nonce = req.get("nonce")
+                entry = pairing_nonces.pop(nonce, None) if isinstance(nonce, str) else None
+                if entry is None or entry[0] != target or entry[1] < time.monotonic():
+                    raise DomainError("Pairing session expired or invalid; reopen from SpiceOwl Web.", "forbidden")
+                return self.reply({"authorized": True, "token": token, "version": __version__})
             static = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/owl.svg": ("owl.svg", "image/svg+xml")}
             static.update({'/workflow.html': ('workflow.html', 'text/html; charset=utf-8'),
                 '/workflow.js': ('workflow.js', 'text/javascript; charset=utf-8'),
@@ -821,7 +986,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             except Exception:
                 self.reply({"error": {"code": "internal_error", "message": "The local operation failed. Stored history is preserved."}}, 500)
 
-        do_GET = do_POST = do_PATCH = do_DELETE = handle_request
+        do_GET = do_POST = do_PATCH = do_DELETE = do_OPTIONS = handle_request
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     original_close = server.server_close

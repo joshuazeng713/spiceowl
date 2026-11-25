@@ -33,6 +33,21 @@ def parser():
     serve.add_argument("--demo", action="store_true", help="Idempotently add synthetic demo data.")
     serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
     serve.add_argument("--enable-direct-exec", action="store_true", help="Expose standalone SSH Direct / LSF / Slurm execution tools to the local Codex window (still requires human tool approval).")
+    serve.add_argument("--headless", action="store_true", help="Run silently as the local Connector for https://spiceowl-dev.github.io/spiceowl/ without promoting a second local web UI.")
+    conn_cmd = commands.add_parser("connector", help="Install, wake, or check the headless local SpiceOwl Connector (spiceowl://) for the official github.io web app.")
+    conn_sub = conn_cmd.add_subparsers(dest="conn_action", required=True)
+    c_inst = conn_sub.add_parser("install", help="One-time user-level registration of spiceowl:// protocol and optional background autostart (no admin needed).")
+    c_inst.add_argument("--port", type=int, default=8765)
+    c_inst.add_argument("--no-autostart", action="store_true", help="Register spiceowl:// on-demand wake only without login autostart.")
+    c_inst.add_argument("--no-start-now", action="store_true", help="Do not start the background connector immediately after installing.")
+    conn_sub.add_parser("uninstall", help="Remove user-level spiceowl:// registration and autostart.")
+    c_start = conn_sub.add_parser("start", help="Ensure the headless local Connector is running in the background.")
+    c_start.add_argument("--port", type=int, default=8765)
+    c_stat = conn_sub.add_parser("status", help="Check whether the local Connector is reachable on 127.0.0.1:<port>/health.")
+    c_stat.add_argument("--port", type=int, default=8765)
+    c_uri = conn_sub.add_parser("handle-uri", help="Handle an OS-dispatched spiceowl:// URI.")
+    c_uri.add_argument("uri")
+    c_uri.add_argument("--port", type=int, default=8765)
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
     init_cmd = commands.add_parser("init", help="Cross-platform quickstart wizard: check local OS/SSH, bootstrap vivid demos, or register & prepare your first EDA simulation.")
     init_cmd.add_argument("--check", action="store_true", help="Inspect local OS, OpenSSH, ~/.ssh/config aliases, and workspace readiness.")
@@ -729,6 +744,34 @@ def main(argv=None):
                 result = registry.probe(args.host_id)
                 output(result)
                 return 0 if result["identity"]["verified"] and not result.get("error") and all(t["status"] == "available" for t in result["tools"]) else 1
+            return 0
+        if args.command == "connector":
+            from spiceowl.connector import (
+                connector_health,
+                handle_connector_uri,
+                install_connector,
+                start_connector_background,
+                uninstall_connector,
+            )
+            if args.conn_action == "install":
+                res = install_connector(port=args.port, data_dir=args.data_dir, autostart=not args.no_autostart)
+                if not args.no_start_now:
+                    res["background_start"] = start_connector_background(port=args.port, data_dir=args.data_dir)
+                output(res)
+                return 0
+            if args.conn_action == "uninstall":
+                output(uninstall_connector())
+                return 0
+            if args.conn_action == "start":
+                output(start_connector_background(port=args.port, data_dir=args.data_dir))
+                return 0
+            if args.conn_action == "status":
+                res = connector_health(port=args.port)
+                output(res)
+                return 0 if res["running"] else 1
+            if args.conn_action == "handle-uri":
+                output(handle_connector_uri(args.uri, port=args.port, data_dir=args.data_dir))
+                return 0
             return 0
         if args.command == "agents":
             from spiceowl.agent.qa import NativeRegistry

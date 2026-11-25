@@ -164,7 +164,7 @@ async function remotePages(page, report, label) {
     else await page.locator(`[data-nav="${section}"]`).click();
     const note = page.locator(`[data-public-demo-info="${section}"]`);
     await note.waitFor();
-    assert.match(await note.innerText(), /local|locally|本地/i);
+    assert.match(await note.innerText(), /local|locally|connector|本地|本机/i);
     for (const selector of ['#placement-form', '#execution-plan-form', '#native-question-form'])
       assert.equal(await page.locator(selector).isVisible(), false, `Remote form exposed on ${section}`);
     await noOverflow(page, report, `${label}-${section}`);
@@ -172,6 +172,9 @@ async function remotePages(page, report, label) {
 }
 
 async function interactiveTutorialAndWorkbench(page, report, label) {
+  // 0. Formal web workbench chrome: topbar connector trigger must be visible (zero unsolicited loopback calls)
+  await page.locator('#connector-trigger').waitFor({state: 'visible'});
+
   // 1. 5-step interactive Web UI tutorial (#quickstart)
   await page.locator('[data-nav="quickstart"]').click();
   await page.locator('.tut-stepper').waitFor();

@@ -74,7 +74,19 @@ let directDraft = {
 const LIVE_PENDING = 'spiceowl.live-pending';
 const LIVE_COLLECT_PENDING = 'spiceowl.live-collect-pending';
 const livePendingKey = operation => operation === 'collect' ? LIVE_COLLECT_PENDING : LIVE_PENDING;
-const isPublicDemo = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
+const CONNECTOR_STORAGE_KEY = 'spiceowl.connector.session';
+const DEFAULT_CONNECTOR_BASE = 'http://127.0.0.1:8765';
+const connectorState = {
+  connected: false,
+  baseUrl: DEFAULT_CONNECTOR_BASE,
+  token: '',
+  version: '',
+  phase: 'idle', // idle | probing | waking | ready_to_pair | not_installed | connected
+  note: '',
+};
+const isHostedPages = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
+const isConnectorLive = () => Boolean(connectorState.connected && connectorState.baseUrl && connectorState.token);
+const isPublicDemo = () => isHostedPages() && !isConnectorLive();
 const demoRepository = 'https://github.com/spiceowl-dev/spiceowl';
 const circuitGitEntry = 'https://circuitgit-dev.github.io/CircuitGit/';
 function demoSource() {
@@ -88,28 +100,209 @@ const pendingGet = key => isPublicDemo() ? demoPendingRequests.get(key) || null 
 const pendingSet = (key, value) => isPublicDemo() ? demoPendingRequests.set(key, value) : sessionStorage.setItem(key, value);
 const pendingRemove = key => isPublicDemo() ? demoPendingRequests.delete(key) : sessionStorage.removeItem(key);
 
+async function probeConnectorHealth(baseUrl = connectorState.baseUrl, timeoutMs = 1200) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch(`${baseUrl}/health`, {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+      ...(controller ? {signal: controller.signal} : {}),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.ok === true && data.product === 'spiceowl' ? data : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function triggerConnectorUriScheme() {
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = 'spiceowl://start';
+    document.body.appendChild(iframe);
+    setTimeout(() => { try { iframe.remove(); } catch {} }, 1500);
+  } catch { /* ignore */ }
+}
+
+async function restoreConnectorSession() {
+  if (!isHostedPages()) return false;
+  try {
+    const raw = sessionStorage.getItem(CONNECTOR_STORAGE_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!saved?.baseUrl || !saved?.token) return false;
+    const health = await probeConnectorHealth(saved.baseUrl, 1200);
+    if (!health) {
+      sessionStorage.removeItem(CONNECTOR_STORAGE_KEY);
+      return false;
+    }
+    const res = await fetch(`${saved.baseUrl}/api/state`, {
+      method: 'GET',
+      mode: 'cors',
+      headers: {'X-SpiceOwl-Token': saved.token},
+    });
+    if (!res.ok) {
+      sessionStorage.removeItem(CONNECTOR_STORAGE_KEY);
+      return false;
+    }
+    connectorState.connected = true;
+    connectorState.baseUrl = saved.baseUrl;
+    connectorState.token = saved.token;
+    connectorState.version = health.version || '';
+    connectorState.phase = 'connected';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function disconnectConnector() {
+  try { sessionStorage.removeItem(CONNECTOR_STORAGE_KEY); } catch {}
+  connectorState.connected = false;
+  connectorState.token = '';
+  connectorState.phase = 'idle';
+  connectorState.note = '';
+  directState.loaded = false;
+  wizardState.loaded = false;
+  live.loaded = false;
+  codexPanelState.loaded = false;
+  if (codexPanelState.stream) { try { codexPanelState.stream.close(); } catch {} codexPanelState.stream = null; }
+}
+
+function renderConnectorDialog() {
+  const box = $('#connector-dialog-content');
+  if (!box) return;
+  if (connectorState.connected) {
+    box.innerHTML = `<div class="direct-rec-integrity"><strong>🟢 本机 SpiceOwl Connector 已连接</strong><span>·</span><code>${escape(connectorState.baseUrl)}</code>${connectorState.version ? `<span>· v${escape(connectorState.version)}</span>` : ''}</div><p class="subtle-note">当前网页已直连您的本机无界面连接器：可直接探测 <code>~/.ssh/config</code>、提交真实 SSH/LSF/Slurm 仿真、原位流式读取远端大波形并唤醒本机 Codex Agent。同标签页刷新会自动续连，关闭标签页自动吊销授权。</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="connector-disconnect">断开本机连接（切回网页预览）</button><button type="button" class="button primary" data-action="connector-close">返回工作台</button></div>`;
+    return;
+  }
+  if (connectorState.phase === 'probing' || connectorState.phase === 'waking') {
+    const msg = connectorState.phase === 'probing'
+      ? `正在探测本机连接器 (${connectorState.baseUrl}/health)…`
+      : '未检测到运行中的连接器，正在通过 spiceowl://start 静默唤起本机连接器（等待最多 3.5 秒）…';
+    box.innerHTML = `<p class="subtle-note">${escape(msg)}</p><p class="subtle-note">若浏览器弹出“是否打开 SpiceOwl Connector？”，勾选“始终允许”后以后将无感直连。</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="connector-close">取消</button></div>`;
+    return;
+  }
+  if (connectorState.phase === 'ready_to_pair') {
+    box.innerHTML = `<div class="direct-rec-integrity"><strong>✓ 已检测到本机 SpiceOwl Connector 在线！</strong><span>·</span><code>${escape(connectorState.baseUrl)}</code></div><p class="subtle-note">点击下方按钮完成一次性网页授权（确认后弹窗自动关闭，您始终留在当前网页工作台）。</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="connector-close">稍后再连</button><button type="button" class="button primary" data-action="connector-authorize">确认授权连接</button></div>`;
+    return;
+  }
+  box.innerHTML = `<p class="muted"><strong>继续此功能需要安装一次本机 SpiceOwl Connector（仅需安装一次，免管理员权限）。</strong></p><p class="subtle-note">安装后会注册 <code>spiceowl://</code> 协议并在后台静默待命。从此您只需直接访问本网页工作台，无需再敲命令行或打开第二套本地界面。</p><div class="public-feature-grid"><article><h3>Windows（免管理员）</h3><p>下载项目包后双击一次 <code>Install SpiceOwl Connector.bat</code>，自动写入当前用户注册表 <code>HKCU</code> 并启动后台无黑框连接器。</p></article><article><h3>macOS（免管理员）</h3><p>下载项目包后双击一次 <code>Install SpiceOwl Connector.command</code>，自动在 <code>~/Applications</code> 生成轻量 <code>SpiceOwl Connector.app</code> 并后台常驻。</p></article></div><details class="host-form-details"><summary>或用一行命令安装（已有 Python 3.11+ 的开发者）</summary><pre class="public-command">git clone https://github.com/spiceowl-dev/spiceowl.git && cd spiceowl
+python3 -m pip install -e . && spiceowl connector install</pre></details><div class="dialog-actions"><a class="button secondary" href="${demoRepository}/archive/refs/heads/${escape(demoSource().branch)}.zip" target="_blank" rel="noopener noreferrer">下载安装压缩包 (.zip)</a><button type="button" class="button primary" data-action="connector-retry">我已安装，重新检测</button></div>`;
+}
+
+async function startConnectorFlow({openModal = true} = {}) {
+  const dlg = $('#connector-dialog');
+  if (connectorState.connected) {
+    renderConnectorDialog();
+    if (openModal && dlg && !dlg.open) dlg.showModal();
+    return;
+  }
+  connectorState.phase = 'probing';
+  renderConnectorDialog();
+  if (openModal && dlg && !dlg.open) dlg.showModal();
+  let health = await probeConnectorHealth(connectorState.baseUrl, 1200);
+  if (health) {
+    connectorState.version = health.version || '';
+    connectorState.phase = 'ready_to_pair';
+    renderConnectorDialog();
+    return;
+  }
+  // Not running yet: try custom URI scheme wake (spiceowl://start) and poll up to 3.5s
+  connectorState.phase = 'waking';
+  renderConnectorDialog();
+  triggerConnectorUriScheme();
+  const deadline = Date.now() + 3500;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 500));
+    health = await probeConnectorHealth(connectorState.baseUrl, 800);
+    if (health) {
+      connectorState.version = health.version || '';
+      connectorState.phase = 'ready_to_pair';
+      renderConnectorDialog();
+      return;
+    }
+  }
+  connectorState.phase = 'not_installed';
+  renderConnectorDialog();
+}
+
+function openConnectorAuthorizationPopup() {
+  const url = `${connectorState.baseUrl}/connect?origin=${encodeURIComponent(location.origin)}`;
+  const popup = window.open(url, 'spiceowl_connector_pair', 'width=520,height=520,resizable=yes,scrollbars=yes');
+  if (!popup) {
+    toast('浏览器拦截了授权确认窗，请允许弹出窗口后重试。');
+  }
+}
+
+window.addEventListener('message', async event => {
+  if (!isHostedPages()) return;
+  if (event.origin !== connectorState.baseUrl) return;
+  const msg = event.data;
+  if (!msg || msg.type !== 'spiceowl.connector.authorized' || typeof msg.token !== 'string' || !msg.token) return;
+  connectorState.connected = true;
+  connectorState.token = msg.token;
+  connectorState.version = msg.version || connectorState.version;
+  connectorState.phase = 'connected';
+  try {
+    sessionStorage.setItem(CONNECTOR_STORAGE_KEY, JSON.stringify({baseUrl: connectorState.baseUrl, token: connectorState.token}));
+  } catch {}
+  const dlg = $('#connector-dialog');
+  if (dlg?.open) dlg.close();
+  directState.loaded = false;
+  wizardState.loaded = false;
+  live.loaded = false;
+  codexPanelState.loaded = false;
+  try {
+    await refresh();
+    render();
+    toast('🟢 已连接到本机 SpiceOwl Connector！现在可直接在当前网页使用真实 SSH、远端仿真与本机 Codex Agent。');
+  } catch (error) {
+    disconnectConnector();
+    render();
+    toast('连接器授权后同步失败：' + error.message);
+  }
+});
+
 function publicDemoChrome() {
-  if (!isPublicDemo()) return;
-  document.body.classList.add('public-demo');
-  document.title = 'SpiceOwl · Public interactive demo';
-  $('#public-demo-banner').hidden = false;
-  $('#public-github-link').hidden = false;
-  $('#workspace-scope').textContent = 'Interactive preview';
-  $('.local-tag').textContent = 'DEMO';
-  $('.breadcrumb').textContent = 'Public demo';
-  $('.prototype-badge').textContent = 'Synthetic · Scripted';
-  $('.page-footer span').textContent = 'Browser demo · No live connections';
+  const hosted = isHostedPages();
+  const liveConn = isConnectorLive();
+  const preview = isPublicDemo();
+  document.body.classList.toggle('public-demo', preview);
+  document.title = 'SpiceOwl · Simulation workspace';
+  if ($('#public-demo-banner')) $('#public-demo-banner').hidden = !preview;
+  if ($('#public-github-link')) $('#public-github-link').hidden = !hosted;
+  const connBtn = $('#connector-trigger');
+  if (connBtn) {
+    connBtn.hidden = !hosted;
+    connBtn.textContent = liveConn ? '🟢 本机已连接' : '🔌 连接本机连接器';
+    connBtn.className = liveConn ? 'button secondary small' : 'button primary small';
+  }
+  if (!hosted) return;
+  $('#workspace-scope').textContent = liveConn ? 'Local Connector · Live' : 'Web Workbench';
+  $('.local-tag').textContent = liveConn ? 'LIVE' : 'WEB';
+  $('.breadcrumb').textContent = liveConn ? 'SpiceOwl · 本机已连接' : 'SpiceOwl Web';
+  $('.prototype-badge').textContent = liveConn ? 'Connector live · SSH & Agent' : '网页预览 · 点击连接本机';
+  $('.page-footer span').textContent = liveConn ? 'Connected to local SpiceOwl Connector · Explicit SSH checks' : 'SpiceOwl Web · Browser preview until Connector paired';
   const metadata = window.SpiceOwlDemo?.metadata || {};
   const commit = /^[a-f0-9]{7,40}$/i.test(metadata.commit || '') ? metadata.commit.slice(0, 8) : 'unversioned';
   const date = typeof metadata.build_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(metadata.build_date) ? metadata.build_date.slice(0, 10) : 'date unavailable';
-  $('#demo-build').textContent = `Build ${commit} · ${date}`;
-  if (typeof window.SpiceOwlDemo?.request !== 'function') $('[data-action="demo-reset"]').disabled = true;
-  $('#demo-storage-notice').textContent = (state.demo_storage || window.SpiceOwlDemo?.storage_mode) === 'memory'
-    ? 'Storage unavailable: changes reset on refresh.'
-    : 'Changes stay in this browser tab; a new build or Reset clears them.';
-  // Public pages offer local setup instructions, never connection or credential forms.
-  $('#host-dialog')?.remove(); $('#pool-dialog')?.remove();
-  $('#connection-dialog .muted').textContent = 'Try a scripted agent or model API. No provider is contacted and no credentials are needed.';
+  if ($('#demo-build')) $('#demo-build').textContent = `Build ${commit} · ${date}`;
+  if (typeof window.SpiceOwlDemo?.request !== 'function' && $('[data-action="demo-reset"]')) $('[data-action="demo-reset"]').disabled = true;
+  if ($('#demo-storage-notice')) {
+    $('#demo-storage-notice').textContent = (state.demo_storage || window.SpiceOwlDemo?.storage_mode) === 'memory'
+      ? '预览数据仅存于当前内存；刷新后重置。'
+      : '预览数据保存在当前浏览器标签页；连接本机连接器后将自动切换为您的真实工作区。';
+  }
+  // Keep #host-dialog and #pool-dialog mounted so connecting the local Connector unlocks them seamlessly in-place!
+  const connMuted = $('#connection-dialog .muted');
+  if (connMuted && preview) connMuted.textContent = '在浏览器内安全演练不同 AI 故障场景。不会连接任何外部 API，也无需填写密钥。';
 }
 
 function publicDirectPage() {
@@ -235,24 +428,25 @@ function quickstartPage() {
     {
       num: 5,
       short: '连自己的 EDA 服务器',
-      badge: pub ? '进阶 · 本地连接真实算力' : '本机直连 · 4 步开跑',
+      badge: pub ? '一键唤起本机连接器 · 无需换网页' : '本机连接器已就绪 · 4 步开跑',
       title: '第 5 步：连接你自己的远程 EDA 服务器并跑通首个仿真',
       goal: pub
-        ? '浏览器出于安全沙箱限制不能直接读取你电脑上的 SSH 密钥；当你要连接自己的 Spectre / ngspice / LSF / Slurm 服务器时，在本地启动 SpiceOwl 即可出现完整的 4 步网页连接向导。'
+        ? '您无需离开当前网页或另开本地界面：只需安装一次无界面本机连接器（注册 spiceowl:// 协议，免管理员），然后直接在本页点击「连接本机连接器」，即可识别 ~/.ssh/config 并驱动您自己的 Spectre / ngspice / LSF / Slurm 服务器。'
         : '全程网页点选：自动体检本机环境与 SSH 别名 → 验证远端主机与仿真器 → 一键冻结零 PDK 烟雾网表 → 网页端启动并看波形。',
       bullets: pub
         ? [
-          '前面 1 ~ 4 步的所有核心功能都可以在当前网页版直接点着玩，无需打开任何终端。',
-          '当你想把自己的实验室/公司 EDA 服务器接进来跑真实网表时，在自己电脑（macOS / Linux / 原生 Windows）启动本地控制台即可。',
-          '本地启动后回到本页第 5 步，会自动识别你的 ~/.ssh/config 别名并提供免手写网表的 RC 烟雾测试。',
+          '前面 1 ~ 4 步的所有核心功能都可以在当前网页直接体验，零安装、零命令行。',
+          '需要连真实 SSH 服务器或本机 Codex 时，点下方「🔌 连接本机连接器」：若已安装过连接器，网页会自动通过 spiceowl://start 在后台唤起并秒连；若首次使用，会给出 Windows / macOS 一键安装引导。',
+          '连上后直接留在当前网页的第 5 步，即可识别您的 ~/.ssh/config 别名并用零 PDK 烟雾网表跑通首个真实仿真。',
         ]
         : [
           '第 ① 步自动检测本机操作系统、OpenSSH 客户端以及 ~/.ssh/config 中已有的主机别名（绝不读取私钥或密码）。',
           '第 ② 步从下拉框选中别名并点击「保存并立即测试」，验证 SSH 身份和 Spectre / ngspice 路径。',
           '第 ③~④ 步直接用内置零 PDK 的 RC 烟雾网表冻结计划，再依次点 ① 上传 → ② 启动 → ③ 查状态 → ④ 收集看波形。',
         ],
-      ctaLabel: pub ? '查看本地安装与启动方式 →' : '',
-      route: pub ? '#local' : '',
+      ctaLabel: pub ? '' : '',
+      connectorCta: pub,
+      route: '',
       tab: '',
       run: '',
       batch: '',
@@ -273,7 +467,7 @@ function quickstartPage() {
   html += `<section class="panel tut-shell"><div class="tut-stepper" role="tablist" aria-label="新手教程步骤">${steps.map(s => `<button type="button" role="tab" aria-selected="${s.num === step ? 'true' : 'false'}" class="tut-step-pill ${s.num === step ? 'active' : s.num < step ? 'done' : ''}" data-action="wizard-step" data-step="${s.num}"><span class="tut-step-index">${s.num}</span><span class="tut-step-text">${escape(s.short)}</span></button>`).join('')}</div>`;
 
   // Active step card
-  html += `<div class="tut-card"><div class="tut-card-head"><div><span class="chip blue">${escape(cur.badge)}</span><h2>${escape(cur.title)}</h2></div><span class="section-note">步骤 ${step} / ${steps.length}</span></div><p class="tut-goal">${escape(cur.goal)}</p><ol class="tut-list">${cur.bullets.map(b => `<li>${escape(b)}</li>`).join('')}</ol><div class="tut-actions">${cur.ctaLabel ? `<button type="button" class="button primary" data-action="wizard-goto" data-route="${escape(cur.route)}" data-tab="${escape(cur.tab)}" data-run="${escape(cur.run)}" data-batch="${escape(cur.batch)}">${escape(cur.ctaLabel)}</button>` : ''}${cur.secondaryLabel ? `<button type="button" class="button secondary" data-action="wizard-goto" data-route="${escape(cur.secondaryRoute)}" data-tab="" data-run="" data-batch="">${escape(cur.secondaryLabel)}</button>` : ''}<div class="tut-nav-pair"><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.max(1, step - 1)}" ${step <= 1 ? 'disabled' : ''}>← 上一步</button><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.min(5, step + 1)}" ${step >= 5 ? 'disabled' : ''}>下一步 →</button></div></div></div></section>`;
+  html += `<div class="tut-card"><div class="tut-card-head"><div><span class="chip blue">${escape(cur.badge)}</span><h2>${escape(cur.title)}</h2></div><span class="section-note">步骤 ${step} / ${steps.length}</span></div><p class="tut-goal">${escape(cur.goal)}</p><ol class="tut-list">${cur.bullets.map(b => `<li>${escape(b)}</li>`).join('')}</ol><div class="tut-actions">${cur.connectorCta ? '<button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器（唤起或安装）</button><a class="button secondary" href="#local">查看安装说明</a>' : ''}${cur.ctaLabel ? `<button type="button" class="button primary" data-action="wizard-goto" data-route="${escape(cur.route)}" data-tab="${escape(cur.tab)}" data-run="${escape(cur.run)}" data-batch="${escape(cur.batch)}">${escape(cur.ctaLabel)}</button>` : ''}${cur.secondaryLabel ? `<button type="button" class="button secondary" data-action="wizard-goto" data-route="${escape(cur.secondaryRoute)}" data-tab="" data-run="" data-batch="">${escape(cur.secondaryLabel)}</button>` : ''}<div class="tut-nav-pair"><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.max(1, step - 1)}" ${step <= 1 ? 'disabled' : ''}>← 上一步</button><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.min(5, step + 1)}" ${step >= 5 ? 'disabled' : ''}>下一步 →</button></div></div></div></section>`;
 
   // On step 5, show either local EDA server onboarding (local mode) or clean local-connect explanation (public demo)
   if (step === 5) {
@@ -1575,26 +1769,19 @@ function renderAgentEvalHtml(ev) {
 }
 
 function publicLocalPage() {
-  return heading('本地运行 · RUN LOCALLY', '在你的电脑上连接真实 EDA 服务器', '日常体验全部核心功能只需留在本网页即可；只有当你要通过本机 SSH 连接自己的 Spectre / ngspice / LSF / Slurm 服务器时，才需要本地启动控制台。') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><span class="chip green">macOS · Linux · 原生 Windows（无需 WSL）</span><h2>两步在本地打开同款网页控制台</h2><p>需要 Python 3.11+。在你自己的电脑上运行以下命令后，浏览器会自动打开与当前完全一致的本地网页（不会上传任何私钥、网表或数据）：</p><pre class="public-command"># macOS / Linux
-git clone --branch ${escape(demoSource().branch)} https://github.com/spiceowl-dev/spiceowl.git
+  return heading('本机连接器 · LOCAL CONNECTOR', '安装一次无界面连接器，从此所有操作全在当前网页完成', '您不需要另开一套本地网页或每次敲命令行。在自己的电脑上安装一次 SpiceOwl Connector（注册 spiceowl:// 协议，免管理员权限），以后只需打开当前网页点「连接本机连接器」即可直连 SSH 服务器与本机 Codex Agent。') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><span class="chip green">macOS · Linux · 原生 Windows（无需 WSL · 免管理员）</span><h2>一生只需安装一次本机连接器</h2><div class="direct-actions" style="margin-bottom:14px"><button type="button" class="button primary" data-action="connector-open">🔌 立即检测 / 唤起本机连接器</button><a class="button secondary" href="${demoRepository}/archive/refs/heads/${escape(demoSource().branch)}.zip" target="_blank" rel="noopener noreferrer">下载安装压缩包 (.zip)</a></div><div class="public-feature-grid"><article><h3>Windows 一键安装</h3><p>解压后双击 <code>Install SpiceOwl Connector.bat</code>，自动写入当前用户注册表 <code>HKCU\\Software\\Classes\\spiceowl</code> 并静默启动后台连接器（无黑框）。</p></article><article><h3>macOS 一键安装</h3><p>解压后双击 <code>Install SpiceOwl Connector.command</code>，自动在 <code>~/Applications</code> 生成轻量 <code>SpiceOwl Connector.app</code> 并后台常驻。</p></article></div><details class="host-form-details"><summary>开发者命令行一键安装（需要 Python 3.11+）</summary><pre class="public-command">git clone --branch ${escape(demoSource().branch)} https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
-python3 -m venv .venv
-.venv/bin/python -m pip install .
-.venv/bin/spiceowl serve --demo
-
-# Windows (PowerShell)
-py -3 -m venv .venv
-.venv\\Scripts\\python.exe -m pip install .
-.venv\\Scripts\\spiceowl.exe serve --demo</pre><p>打开终端打印的本机地址（<code>http://127.0.0.1:...</code>），进入「✦ 新手步步教程 → 第 5 步」，网页端会自动识别你的 <code>~/.ssh/config</code> 别名，引导你用内置零 PDK 网表跑通首个真实仿真。</p><div class="public-info-links"><a class="button primary" href="#quickstart">回到 5 步网页教程</a><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">本地启动说明</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">SSH 服务器接入指南</a><a class="button secondary" href="#overview">返回仿真总览</a></div></div></section>`;
+python3 -m pip install -e .
+spiceowl connector install</pre></details><p class="subtle-note">安装完成后直接留在本网页点击「🔌 连接本机连接器」，系统会自动通过 <code>spiceowl://start</code> 唤起连接器并在本页解锁「✦ 新手步步教程 → 第 5 步」真实 SSH 服务器向导。</p><div class="public-info-links"><a class="button primary" href="#quickstart">回到 5 步网页教程</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">SSH 服务器接入指南</a><a class="button secondary" href="#overview">返回仿真总览</a></div></div></section>`;
 }
 
 function publicHostPage() {
-  return heading('EDA 服务器管理预览 · HOSTS PREVIEW', '在本地安全管理你的仿真服务器池', '当前在线演示版不访问本机 SSH，也不会扫描或请求任何外部主机；以下展示本地模式下的选机与体检流程。') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">LOCAL WORKFLOW · 本地模式功能</span><h2>你的 SSH 密钥与服务器配置始终留在本机</h2><div class="public-feature-grid"><article><h3>1. 自动识别 SSH 别名</h3><p>本地启动后直接读取 <code>~/.ssh/config</code> 别名列表，零密码输入，原生支持跳板机（ProxyJump）。</p></article><article><h3>2. 显式身份与工具校验</h3><p>点击校验才会核对远端 <code>hostname</code>、<code>id -un</code> 与 Spectre / ngspice 版本，绝不后台静默扫描。</p></article><article><h3>3. 智能选机与新鲜度保护</h3><p>对比各节点 CPU / 内存余量并标注观测时间；超时或失联的机器绝不会被误当成空闲节点。</p></article></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>示例计算节点（只读示意）</th><th>连接校验</th><th>CPU 占用 / 核数</th><th>可用 / 总内存</th><th>选机结论</th></tr></thead><tbody><tr><td><code>sim-node-a</code></td><td>${chip('Verified', 'green')}</td><td>18% / 32 核</td><td>96 / 128 GiB</td><td>${chip('推荐优先', 'green')}</td></tr><tr><td><code>sim-node-b</code></td><td>${chip('Verified', 'green')}</td><td>84% / 32 核</td><td>14 / 128 GiB</td><td>${chip('负载较高', 'amber')}</td></tr><tr><td><code>sim-node-c</code></td><td>${chip('Stale / Unverified', 'red')}</td><td>Unknown</td><td>Unknown</td><td>${chip('自动排除', 'red')}</td></tr></tbody></table></div><p class="subtle-note">本页不采集任何主机名、账号、私钥或凭据。如需接入自己的 EDA 服务器，请在本地运行 SpiceOwl。</p><div class="public-info-links"><a class="button primary" href="#local">查看本地运行方法</a><a class="button secondary" href="#direct">先在线体验仿真与大波形</a></div></div></section>`;
+  return heading('EDA 服务器管理 · SIMULATION HOSTS', '连接本机连接器后，直接在本网页管理您的仿真服务器池', '当前为浏览器预览模式，不会读取本机 SSH；点击下方按钮唤起本机连接器后，即可在本页直接识别 ~/.ssh/config、核验主机并扫描 CPU/内存余量。') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">需本机连接器 · SSH CONNECTOR</span><h2>你的 SSH 密钥与服务器配置始终留在本机</h2><div class="public-feature-grid"><article><h3>1. 自动识别 SSH 别名</h3><p>连上本机连接器后直接读取 <code>~/.ssh/config</code> 别名列表，零密码输入，原生支持跳板机（ProxyJump）。</p></article><article><h3>2. 显式身份与工具校验</h3><p>点击校验才会核对远端 <code>hostname</code>、<code>id -un</code> 与 Spectre / ngspice 版本，绝不后台静默扫描。</p></article><article><h3>3. 智能选机与新鲜度保护</h3><p>对比各节点 CPU / 内存余量并标注观测时间；超时或失联的机器绝不会被误当成空闲节点。</p></article></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>示例计算节点（只读示意）</th><th>连接校验</th><th>CPU 占用 / 核数</th><th>可用 / 总内存</th><th>选机结论</th></tr></thead><tbody><tr><td><code>sim-node-a</code></td><td>${chip('Verified', 'green')}</td><td>18% / 32 核</td><td>96 / 128 GiB</td><td>${chip('推荐优先', 'green')}</td></tr><tr><td><code>sim-node-b</code></td><td>${chip('Verified', 'green')}</td><td>84% / 32 核</td><td>14 / 128 GiB</td><td>${chip('负载较高', 'amber')}</td></tr><tr><td><code>sim-node-c</code></td><td>${chip('Stale / Unverified', 'red')}</td><td>Unknown</td><td>Unknown</td><td>${chip('自动排除', 'red')}</td></tr></tbody></table></div><p class="subtle-note">本页不采集任何主机名、账号、私钥或凭据。点击下方按钮唤起本机连接器即可直接管理您的真实服务器。</p><div class="public-info-links"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器管理服务器</button><a class="button secondary" href="#direct">先体验仿真与大波形</a></div></div></section>`;
 }
 
 function publicAgentPage() {
   const firstRun = state.runs[0];
-  return heading('AI 助手与安全护栏评测 · AGENT & EVAL', '既能在线跑 10 项 AI 安全评测，也能在本地接入 Codex', '当前在线演示版不连接外部大模型；下方 10 项安全闭环评测可在浏览器内一键运行，本地安装后还可接入 Codex 对话。') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><span class="chip green">可直接在浏览器运行 · INTERACTIVE BENCHMARK</span><h2>1. 一键在线运行 10 项 Agent 安全闭环评测</h2><p>验证 SpiceOwl 的确定性 Next-Action 编排器如何在 10 类高风险场景（缺项拒猜、断线防重发、有效测量但指标未达标、降采样拦截量测、MC 失败种子防丢弃等）下实现 <strong>100% 通过且 0 安全违规</strong>。</p><div class="direct-actions"><button type="button" class="button primary" data-action="public-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '正在运行 10 项评测…' : codexPanelState.evalReport ? '重新运行 10 项安全评测' : '🚀 立即在线运行 10 项 Agent 安全评测'}</button></div><div id="public-eval-output" style="margin-top:10px">${renderAgentEvalHtml(codexPanelState.evalReport)}</div><hr class="tut-divider"><h2>2. 本地运行时的两种 AI 协作模式</h2><div class="public-feature-grid"><article><h3>独立本地控制台（Standalone）</h3><p>在本地安装后显式连接本机 Codex，流式工具调用与人工审批卡片同屏展示，所有发往仿真器的动作均受人工确认保护。</p></article><article><h3>嵌入 CircuitGit（Embedded）</h3><p>复用 CircuitGit 当前的 Codex 会话，不额外创建第二个连接，保持统一上下文。</p></article><article><h3>只读诊断体验</h3><p>无需配置任何 API 密钥，现在就可以在「仿真总览」任意场景里点击「✧ Diagnose snapshot」体验只读证据诊断。</p></article></div><div class="public-info-links"><a class="button primary" href="#local">在本地连接 Codex</a><a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">打开 CircuitGit</a>${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">体验场景诊断</a>` : '<a class="button secondary" href="#overview">前往仿真总览</a>'}</div></div></section>`;
+  return heading('AI 助手与安全护栏评测 · AGENT & EVAL', '既能直接跑 10 项 AI 安全评测，也能一键连接本机 Codex Agent', '下方 10 项安全闭环评测可直接在浏览器内运行；点击「连接本机连接器」后即可在本网页直接接入您的本机 Codex Agent 并接收夜间值守异常。') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><span class="chip green">可直接在浏览器运行 · INTERACTIVE BENCHMARK</span><h2>1. 一键在线运行 10 项 Agent 安全闭环评测</h2><p>验证 SpiceOwl 的确定性 Next-Action 编排器如何在 10 类高风险场景（缺项拒猜、断线防重发、有效测量但指标未达标、降采样拦截量测、MC 失败种子防丢弃等）下实现 <strong>100% 通过且 0 安全违规</strong>。</p><div class="direct-actions"><button type="button" class="button primary" data-action="public-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '正在运行 10 项评测…' : codexPanelState.evalReport ? '重新运行 10 项安全评测' : '🚀 立即在线运行 10 项 Agent 安全评测'}</button></div><div id="public-eval-output" style="margin-top:10px">${renderAgentEvalHtml(codexPanelState.evalReport)}</div><hr class="tut-divider"><h2>2. 接入您自己的 Agent 进行夜间值守</h2><div class="public-feature-grid"><article><h3>网页直连本机 Codex</h3><p>连上本机连接器后直接在本网页接入 Codex，排队超时或 OOM 发生时自动推送给您的 Agent 排查资源并按睡前策略重提。</p></article><article><h3>嵌入 CircuitGit（Embedded）</h3><p>复用 CircuitGit 当前的 Codex 会话，不额外创建第二个连接，保持统一上下文。</p></article><article><h3>只读诊断体验</h3><p>无需配置任何 API 密钥，现在就可以在「仿真总览」任意场景里点击「✧ Diagnose snapshot」体验只读证据诊断。</p></article></div><div class="public-info-links"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器接入 Codex</button><a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">打开 CircuitGit</a>${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">体验场景诊断</a>` : '<a class="button secondary" href="#overview">前往仿真总览</a>'}</div></div></section>`;
 }
 
 function toast(message) {
@@ -1606,12 +1793,23 @@ function toast(message) {
 
 async function api(path, options = {}) {
   if (isPublicDemo()) {
-    if (typeof window.SpiceOwlDemo?.request !== 'function') throw new Error('The public demo could not load. Reload this page to try again.');
-    // This explicit adapter owns demo requests; errors never fall back to a live API.
+    if (typeof window.SpiceOwlDemo?.request !== 'function') throw new Error('The web preview adapter could not load. Reload this page to try again.');
+    // This explicit adapter owns preview requests; errors never fall back silently.
     return window.SpiceOwlDemo.request(path, options);
   }
   const method = options.method || 'GET';
-  const response = await fetch(path, {method, headers: {'Content-Type': 'application/json', ...(method !== 'GET' ? {'X-SpiceOwl-Token': csrf} : {})}, ...(method !== 'GET' ? {body: JSON.stringify(options.body || {})} : {})});
+  const targetUrl = isConnectorLive() ? `${connectorState.baseUrl}${path}` : path;
+  const authToken = isConnectorLive() ? connectorState.token : csrf;
+  const headers = {'Content-Type': 'application/json'};
+  if (isConnectorLive() || method !== 'GET') {
+    headers['X-SpiceOwl-Token'] = authToken;
+  }
+  const response = await fetch(targetUrl, {
+    method,
+    ...(isConnectorLive() ? {mode: 'cors'} : {}),
+    headers,
+    ...(method !== 'GET' ? {body: JSON.stringify(options.body || {})} : {}),
+  });
   const data = await response.json();
   if (!response.ok) {
     const error = new Error(data.error?.message || 'The local request failed.');
@@ -2046,7 +2244,9 @@ function openCodexEvents() {
   if (!isStandaloneAgent() || location.hash !== '#agents' || codexPanelState.stream
       || (!codexPanelState.status?.connected && (!codexPanelState.status?.cursor
         || codexPanelState.cursor >= codexPanelState.status.cursor))) return;
-  const stream = new EventSource(`/api/codex/events?after=${codexPanelState.cursor}`);
+  const sseBase = isConnectorLive() ? connectorState.baseUrl : '';
+  const sseToken = isConnectorLive() ? `&token=${encodeURIComponent(connectorState.token)}` : '';
+  const stream = new EventSource(`${sseBase}/api/codex/events?after=${codexPanelState.cursor}${sseToken}`);
   codexPanelState.stream = stream;
   codexPanelState.streamState = 'connecting';
   stream.addEventListener('bridge', event => {
@@ -2374,8 +2574,28 @@ document.addEventListener('click', async event => {
     finally { codexPanelState.evalBusy = false; render(); }
     return;
   }
+  if (action === 'connector-open' || action === 'connector-retry') {
+    await startConnectorFlow({openModal: true});
+    return;
+  }
+  if (action === 'connector-close') {
+    $('#connector-dialog')?.close();
+    return;
+  }
+  if (action === 'connector-authorize') {
+    openConnectorAuthorizationPopup();
+    return;
+  }
+  if (action === 'connector-disconnect') {
+    disconnectConnector();
+    $('#connector-dialog')?.close();
+    await refresh();
+    render();
+    toast('已断开本机连接器，当前切换回网页预览模式。');
+    return;
+  }
   if (isPublicDemo() && ['add-host', 'import-pool', 'host-probe', 'pool-scan', 'native-select'].includes(action)) {
-    location.hash = '#local'; return;
+    await startConnectorFlow({openModal: true}); return;
   }
   if (action === 'native-select') { selectedQa = id; qaView = state.questions.find(q => q.qa_id === id) || null; renderNativeResponse(); return; }
   if (action === 'add-connection') {
@@ -3182,5 +3402,5 @@ setInterval(() => {
     if (badge) badge.outerHTML = chip(status.label, status.color);
   });
 }, 10000);
-try { await refresh(); render(); }
-catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>${isPublicDemo() ? 'Could not open the public demo.' : 'Could not open the local workspace.'}</h2><p>${escape(error.message)} ${isPublicDemo() ? 'Reload this page to try again.' : 'Refresh this page after the service is available.'}</p></div>`; }
+try { await restoreConnectorSession(); await refresh(); render(); }
+catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>${isPublicDemo() ? 'Could not open SpiceOwl Web.' : 'Could not open the local workspace.'}</h2><p>${escape(error.message)} ${isPublicDemo() ? 'Reload this page to try again.' : 'Refresh this page after the Connector is available.'}</p></div>`; }

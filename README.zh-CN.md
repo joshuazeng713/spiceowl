@@ -8,9 +8,9 @@
 <p align="center">面向工程师与 AI Agent 的独立仿真管理工具。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/direct-execution.md">直连执行与有界恢复</a> · <a href="docs/cross-platform.md">跨平台与自动测试</a> · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/#quickstart"><strong>零安装在线体验 5 步网页教程</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/#direct">在线玩 500 周期大波形与 PVT 矩阵</a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">产品展示页</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>打开 SpiceOwl 正式网页工作台（唯一交互入口）</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/#quickstart">5 步网页教程</a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">产品展示页</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">源码仓库</a></p>
 
-SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，**原生支持 macOS、Linux 与 Windows**。它帮助你检查服务器资源、配置 PDK 依赖、准备实验、直接提交与监督 SSH/LSF/Slurm 仿真任务、执行带可搜索报告的有界自动恢复，并解释仿真结果。工程师可以直接使用这些工具，也可以与 Agent 协作；将工具嵌入电路设计环境是可选的集成方式。
+SpiceOwl 原生支持 **macOS、Linux 与 Windows**，定位与 CircuitGit 完全一致：**[`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/) 就是唯一的正式产品和全部用户交互界面**，不再要求用户打开命令行或切换第二套本地网址。需要连接自己的 SSH/LSF/Slurm 服务器或本机 Codex Agent 时，只需一键安装一次无界面 **SpiceOwl Connector**（Windows 双击 `Install SpiceOwl Connector.bat`，macOS 双击 `Install SpiceOwl Connector.command`，免管理员注册 `spiceowl://` 协议并后台静默待命），从此全部操作在网页端一键直连完成。
 
 ## 最新功能亮点
 

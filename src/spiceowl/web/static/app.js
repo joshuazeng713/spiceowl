@@ -297,7 +297,7 @@ function publicDemoChrome() {
   if (typeof window.SpiceOwlDemo?.request !== 'function' && $('[data-action="demo-reset"]')) $('[data-action="demo-reset"]').disabled = true;
   if ($('#demo-storage-notice')) {
     $('#demo-storage-notice').textContent = (state.demo_storage || window.SpiceOwlDemo?.storage_mode) === 'memory'
-      ? '预览数据仅存于当前内存；刷新后重置。'
+      ? '预览数据仅存于当前内存 (memory; resets on refresh)。'
       : '预览数据保存在当前浏览器标签页；连接本机连接器后将自动切换为您的真实工作区。';
   }
   // Keep #host-dialog and #pool-dialog mounted so connecting the local Connector unlocks them seamlessly in-place!
@@ -1820,7 +1820,12 @@ async function api(path, options = {}) {
   return data;
 }
 
+let connectorSessionChecked = false;
 async function refresh() {
+  if (!connectorSessionChecked) {
+    connectorSessionChecked = true;
+    await restoreConnectorSession();
+  }
   publicDemoChrome();
   state = await api('/api/state');
   publicDemoChrome();
@@ -3402,5 +3407,5 @@ setInterval(() => {
     if (badge) badge.outerHTML = chip(status.label, status.color);
   });
 }, 10000);
-try { await restoreConnectorSession(); await refresh(); render(); }
+try { await refresh(); render(); }
 catch (error) { $('#main').innerHTML = `<div class="error-panel"><h2>${isPublicDemo() ? 'Could not open SpiceOwl Web.' : 'Could not open the local workspace.'}</h2><p>${escape(error.message)} ${isPublicDemo() ? 'Reload this page to try again.' : 'Refresh this page after the Connector is available.'}</p></div>`; }

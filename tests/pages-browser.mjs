@@ -193,10 +193,11 @@ async function interactiveTutorialAndWorkbench(page, report, label) {
   await page.locator('[data-action="direct-wf-mode"][data-mode="cursor"]').click();
   await page.locator('.wf-cursor-bar').waitFor();
   const wfSvg = page.locator('svg[data-wf-zoom-svg="1"]');
+  await wfSvg.scrollIntoViewIfNeeded();
   const box = await wfSvg.boundingBox();
   if (box && box.width > 40) {
-    await page.mouse.click(box.x + box.width * 0.35, box.y + box.height * 0.5);
-    await page.mouse.click(box.x + box.width * 0.65, box.y + box.height * 0.5);
+    await wfSvg.click({position: {x: Math.round(box.width * 0.35), y: Math.round(box.height * 0.5)}});
+    await wfSvg.click({position: {x: Math.round(box.width * 0.65), y: Math.round(box.height * 0.5)}});
     await page.locator('.wf-cur-pill.cur-delta').first().waitFor();
   }
   // Test 1-click Lossless Analog Metrics Card

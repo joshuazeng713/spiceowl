@@ -6,11 +6,17 @@
 
 <p align="center"><strong>你去休息，仿真我盯。</strong></p>
 <p align="center">面向工程师与 AI Agent 的独立仿真管理工具。</p>
-<p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
+<p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/direct-execution.md">直连执行与有界恢复</a> · <a href="docs/cross-platform.md">跨平台与自动测试</a> · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
 <p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>查看产品展示</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/">体验交互控制台</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
 
-SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，帮助你检查服务器资源、配置 PDK 依赖、准备实验、监督长任务并解释仿真结果。工程师可以直接使用这些工具，也可以与 Agent 协作；将工具嵌入电路设计环境是可选的集成方式。
+SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，**原生支持 macOS、Linux 与 Windows**。它帮助你检查服务器资源、配置 PDK 依赖、准备实验、直接提交与监督 SSH/LSF/Slurm 仿真任务、执行带可搜索报告的有界自动恢复，并解释仿真结果。工程师可以直接使用这些工具，也可以与 Agent 协作；将工具嵌入电路设计环境是可选的集成方式。
+
+## 最新功能亮点
+
+- **原生跨平台支持（macOS / Linux / Windows）与全功能自动测试工作流**（[跨平台兼容与测试指南](docs/cross-platform.md)）：本地控制端通过 [`src/spiceowl/_platform.py`](src/spiceowl/_platform.py) 自动识别操作系统，Windows 无需 WSL 即可原生运行。每次提交与 PR 均在 GitHub Actions 上执行覆盖 **Ubuntu、macOS、Windows** 的 17 项全功能测试矩阵（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)），并由 AST 静态守卫（`tests/test_cross_platform.py`）持续防止后续开发引入不兼容 POSIX 调用。新开发者和用户可通过 `scripts/run_full_tests.py` 一键完成本地全量自检。
+- **不依赖网关的原生直连仿真后端（`ssh_direct` / `lsf` / `slurm`）**（[原生直连执行指南](docs/direct-execution.md)）：通过网页 `#direct` 面板、`spiceowl direct` CLI 或 `--enable-direct-exec` Agent 工具，直接经已登记的 OpenSSH 主机提交、观测、取消并收集 Spectre / ngspice 仿真任务。全程保持 SHA-256 输入冻结、原子启动占位（断连记为 `launch_outcome_unknown` 拒绝盲重跑）、验证归属的 PID/作业取消、后台 `RuntimeMonitor` 观测及五维结构化报告。
+- **M4 有界自动恢复与可搜索恢复报告中心**（[原生直连执行指南](docs/direct-execution.md)）：面向两类明确运维故障提供策略受控、可开关的自动恢复——**许可证不可用/排队超时 (`license_unavailable`)** 退避重提，以及**确认 OOM (`confirmed_oom`)** 内存扩配与可选大内存主机迁移，并支持服务重启自动续接后台 Watch。严守科学底线：绝不修改原始网表、激励、corner 或验收标准，绝不对语法/收敛错误或性能不达标自动重跑。每次恢复自动生成可按任务 ID、关键词、结论检索的 JSON + Markdown 报告，可在网页 `#direct` 报告中心查看与一键下载，或通过 `spiceowl direct recovery-reports` 查询。
 
 ## 产品展示
 
@@ -32,7 +38,7 @@ SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，帮�
 
 [从零接入仿真](docs/onboarding-discovery.md)：通过已配置的后端解析导入电路源、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
 
-> **早期 Alpha：在 SpiceOwl 自己的控制台或 CLI 中管理仿真。** 检查已授权的服务器池、提交已冻结的输入、后台观察已有任务并显式收集结果。SpiceOwl 提供监控、Spectre 诊断、PSF ASCII 解析和数值分析。远端执行同时支持不依赖网关的[原生直连执行后端](docs/direct-execution.md)（通过 `spiceowl direct` 或 `--enable-direct-exec` 直接经已登记 OpenSSH 路由运行 `ssh_direct` / `lsf` / `slurm`），以及可选的 CircuitGit Service/Runner 适配器。公开演示不执行仿真，自动重启求解器和参数修复仍待实现。见[原生直连执行指南](docs/direct-execution.md)、[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[Agent 配置指南](docs/dual-mode-agent.md)。
+> **早期 Alpha：在 SpiceOwl 自己的控制台或 CLI 中管理仿真。** 检查已授权的服务器池、提交已冻结的输入、后台观察已有任务、对许可证等待和确认 OOM 启用可选的 M4 有界自动恢复，并显式收集结果。SpiceOwl 提供监控、Spectre 诊断、PSF ASCII 解析和数值分析。远端执行同时支持不依赖网关的[原生直连执行后端](docs/direct-execution.md)（通过 `spiceowl direct`、网页 `#direct` 面板或 `--enable-direct-exec` 直接经已登记 OpenSSH 路由运行 `ssh_direct` / `lsf` / `slurm`），以及可选的 CircuitGit Service/Runner 适配器。公开演示不执行仿真；求解器 checkpoint 续算和自动数值参数修复仍待实现。见[原生直连执行指南](docs/direct-execution.md)、[跨平台与测试指南](docs/cross-platform.md)、[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[Agent 配置指南](docs/dual-mode-agent.md)。
 
 [引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。接入工具返回明确的下一步动作；新 intake 使用自己的网表及明确绑定来源的观测，缺失证据和提交结果不确定的状态会明确保留。
 
@@ -94,17 +100,19 @@ spiceowl/
 ├── docs/                      # 架构、实验约定、路线和设计决策
 ├── assets/brand/              # 可编辑图标与头像导出文件
 ├── examples/                  # 原创反相器与配置草案示例
-├── scripts/                   # 显式调用的开发者反相器 smoke 与结果工具
+├── scripts/                   # 开发者安装脚本、跨平台一键全量测试脚本与 smoke 工具
 ├── src/spiceowl/              # 可安装的 Python 软件包
+│   ├── _platform.py           # 统一的 macOS / Linux / Windows 跨平台兼容层
+│   ├── direct.py              # 独立 SSH/LSF/Slurm 直连执行与后台恢复监管
 │   ├── domain/                # 实验、尝试、回执与事件模型
-│   ├── adapters/              # 执行环境与仿真器适配
+│   ├── adapters/              # 执行环境（SSH / Direct / LSF / Slurm / Mock）与仿真器适配
 │   ├── integrations/          # CircuitGit 客户端／资源池、诊断与 PSF ASCII 解析
 │   ├── experiments/           # 源码抽取、固定配方与确定性测量
 │   ├── onboarding/            # 用户 TB 校验、模型发现与私有观测查找表
 │   ├── adctools/              # 可选 ADC 算法及固定版本上游适配器
 │   ├── monitoring/            # 已有真实任务的持久化观测
 │   ├── validation/            # 输入和测量验收
-│   ├── recovery/              # 恢复策略与动作提案
+│   ├── recovery/              # M4 有界自动恢复引擎、可搜索恢复报告与策略评估
 │   ├── storage/               # 持久化记录与产物引用
 │   ├── agent/                 # 合成诊断与历史 native 兼容代码
 │   ├── read_api.py            # 供 CircuitGit 直接调用的只读 SDK 视图
@@ -169,6 +177,27 @@ py -3 -m venv .venv
 AI 辅助可在独立 SpiceOwl 的 **Agent channel** 中显式 Connect；嵌入时使用 **CircuitGit 原有 Codex 窗口**。两种方式调用共用引擎，旧问答继续只读保留。见[双模式连接指南](docs/dual-mode-agent.md)。旧 `agents add/probe/ask` 命令返回迁移指引，已有元数据和问答历史仍可读取。见[统一 Agent 通道指南](docs/native-agent.md)。
 
 ## 接入真实仿真控制台
+
+### 方式一：原生直连执行（无需 CircuitGit 网关）
+
+登记 OpenSSH 主机后，即可直接通过网页控制台 `#direct` 面板或 `spiceowl direct` CLI 完成准备、提交、后台观测、有界恢复与结果收集：
+
+```bash
+# 冻结输入并开启 M4 有界自动恢复（许可证退避重提 + OOM 内存扩配/主机迁移）
+spiceowl direct prepare --run-key amp-tran-01 --netlist ./amp.scs --host lab-sim --backend slurm \
+  --enable-recovery --max-recovery-attempts 2 --max-memory-gb 32 --allow-host-relocation
+spiceowl direct stage amp-tran-01
+spiceowl direct launch amp-tran-01
+spiceowl direct watch amp-tran-01 --allow-collect --auto-resume-watch
+
+# 搜索与查看持久化恢复报告（也可在网页 #direct 恢复报告中心搜索与一键下载 .md）
+spiceowl direct recovery-reports --query oom
+spiceowl direct recovery-report amp-tran-01 --markdown
+```
+
+启动 `spiceowl serve --enable-direct-exec` 还可以把直连执行与恢复工具（保留人工审批门禁）开放给独立 Codex 窗口。详见[原生直连执行与有界恢复指南](docs/direct-execution.md)。
+
+### 方式二：接入 CircuitGit 网关
 
 为已授权且正在运行的 CircuitGit 网关准备私有 [live-client 配置](examples/live-client.example.json)，然后让 CLI 和网页使用同一文件：
 

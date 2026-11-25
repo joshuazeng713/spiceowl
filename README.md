@@ -6,11 +6,17 @@
 
 <p align="center"><strong>You sleep. SpiceOwl keeps watch.</strong></p>
 <p align="center">An independent simulation management tool for engineers and AI agents.</p>
-<p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/direct-execution.md">Direct Execution &amp; Recovery</a> · <a href="docs/cross-platform.md">Cross-Platform &amp; CI</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
 <p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>Explore the product showcase</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/">Open the interactive console demo</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Current alpha source</a></p>
 
-SpiceOwl has its own web console, Agent conversation, CLI and Python SDK. It helps you check server capacity, configure PDK dependencies, prepare experiments, supervise long runs and interpret simulation results. Engineers can use its tools directly or work with an Agent; embedding those tools in a circuit design environment is an optional integration.
+SpiceOwl has its own web console, Agent conversation, CLI and Python SDK — running natively on **macOS, Linux, and Windows**. It helps you check server capacity, configure PDK dependencies, prepare experiments, launch and supervise direct SSH/LSF/Slurm runs, apply bounded automatic recovery with searchable reports, and interpret simulation results. Engineers can use its tools directly or work with an Agent; embedding those tools in a circuit design environment is an optional integration.
+
+## What's new
+
+- **Native cross-platform support (macOS / Linux / Windows) & automated test workflow** ([cross-platform guide](docs/cross-platform.md)): SpiceOwl's local control plane detects your OS automatically via [`src/spiceowl/_platform.py`](src/spiceowl/_platform.py) — no WSL required on Windows. Every push and PR runs a 17-job **Ubuntu, macOS, and Windows** matrix ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) plus an AST static guardrail (`tests/test_cross_platform.py`). New developers and users can run full local verification in one command with `scripts/run_full_tests.py`.
+- **Standalone direct execution (`ssh_direct`, `lsf`, `slurm`)** ([direct execution guide](docs/direct-execution.md)): Submit Spectre or ngspice simulations directly over registered OpenSSH hosts from the `#direct` web console, `spiceowl direct` CLI, or `--enable-direct-exec` Agent tools — no CircuitGit gateway required. Preserves frozen SHA-256 input manifests, atomic launch-claim fencing (`launch_outcome_unknown` on disconnect), verified PID/job cancellation, background `RuntimeMonitor` watches, and five-dimensional reports.
+- **M4 bounded automatic recovery & searchable recovery reports** ([direct execution guide](docs/direct-execution.md)): Opt-in, policy-bounded recovery for two operational failures only — `license_unavailable` (backoff retries) and `confirmed_oom` (memory scale-up and optional host relocation) — with restart-safe watch resumption. Never alters netlists, stimuli, corners, or acceptance criteria, and refuses to auto-retry syntax/convergence failures or design target misses. Every recovery lineage writes searchable JSON + Markdown reports in the `#direct` console (with one-click `.md` download) and via `spiceowl direct recovery-reports`.
 
 ## Product showcase
 
@@ -28,7 +34,7 @@ The showcase distinguishes synthetic teaching controls from saved native simulat
 
 > **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use the standalone Codex window or CircuitGit's existing window in embedded mode. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
-> **Early alpha — simulation management from SpiceOwl's own console or CLI.** Scan an authorized server pool, submit committed inputs, observe existing runs in the background, and explicitly collect results. SpiceOwl provides monitoring, Spectre diagnostics, PSF ASCII parsing and numerical analysis. Remote execution supports both the [native direct execution backend](docs/direct-execution.md) (`ssh_direct`, `lsf`, and `slurm` directly over registered OpenSSH hosts via `spiceowl direct` or `--enable-direct-exec`) and the optional CircuitGit Service/Runner adapter. The public demo executes no simulation; automatic solver restart and parameter repair remain future work. Start with the [direct execution guide](docs/direct-execution.md), [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [Agent setup guide](docs/dual-mode-agent.md).
+> **Early alpha — simulation management from SpiceOwl's own console or CLI.** Scan an authorized server pool, submit committed inputs, observe existing runs in the background, apply opt-in M4 bounded recovery for license waits and confirmed OOM, and explicitly collect results. SpiceOwl provides monitoring, Spectre diagnostics, PSF ASCII parsing and numerical analysis. Remote execution supports both the [native direct execution backend](docs/direct-execution.md) (`ssh_direct`, `lsf`, and `slurm` directly over registered OpenSSH hosts via `spiceowl direct`, `#direct` web console, or `--enable-direct-exec`) and the optional CircuitGit Service/Runner adapter. The public demo executes no simulation; solver checkpoint continuation and automatic numerical-parameter repair remain future work. Start with the [direct execution guide](docs/direct-execution.md), [cross-platform guide](docs/cross-platform.md), [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [Agent setup guide](docs/dual-mode-agent.md).
 
 **Two Agent modes:** standalone SpiceOwl owns one explicitly connected Codex App-Server window; embedded SpiceOwl exports tools into CircuitGit's existing window and never starts a second Agent. Authentication stays with the selected Codex runtime. See the [dual-mode guide](docs/dual-mode-agent.md). See the [paired integration and submodule contract](docs/circuitgit-integration.md).
 
@@ -114,17 +120,19 @@ spiceowl/
 ├── docs/                      # Architecture, run contract, roadmap, decisions
 ├── assets/brand/              # Editable project icon and exported avatar
 ├── examples/                  # Original inverter and draft configuration examples
-├── scripts/                   # Opt-in developer inverter smoke and result utilities
+├── scripts/                   # Developer setup, one-command cross-platform test runner & smoke tools
 ├── src/spiceowl/              # Installable Python package
+│   ├── _platform.py           # Centralized macOS / Linux / Windows compatibility layer
+│   ├── direct.py              # Standalone SSH/LSF/Slurm direct execution & recovery supervisor
 │   ├── domain/                # Experiment, attempt, receipt, and event models
-│   ├── adapters/              # Execution and simulator integrations
+│   ├── adapters/              # Execution (SSH, direct/LSF/Slurm, mock) and simulator integrations
 │   ├── integrations/          # CircuitGit client/pool, diagnostics and PSF ASCII parsing
 │   ├── experiments/           # Source extraction, frozen recipes and deterministic measurements
 │   ├── onboarding/            # Authored-TB validation, model discovery and private observation LUT
 │   ├── adctools/              # Optional explicit ADC algorithms and pinned upstream adapters
 │   ├── monitoring/            # Durable observation of existing real runs
 │   ├── validation/            # Input and measurement acceptance checks
-│   ├── recovery/              # Policy evaluation and action proposals
+│   ├── recovery/              # M4 bounded recovery engine, searchable reports & policy evaluation
 │   ├── storage/               # Durable records and artifact references
 │   ├── agent/                 # Synthetic diagnosis and historical native compatibility
 │   ├── read_api.py            # Transport-neutral stored read views for CircuitGit
@@ -188,6 +196,27 @@ For multiple nodes, use **Simulation hosts → Import pool** to preview an expli
 For AI assistance, use **Agent channel in standalone SpiceOwl** and explicitly Connect, or **CircuitGit's existing Codex conversation** when embedded. Both share engine tools and preserve saved legacy Q&A. See the [dual-mode setup](docs/dual-mode-agent.md). Legacy `agents add/probe/ask` commands return migration guidance; metadata and question history remain readable. See the [unified Agent channel guide](docs/native-agent.md).
 
 ## Connect the real simulation console
+
+### Option 1: Standalone direct execution (no CircuitGit gateway needed)
+
+Register an SSH host, then prepare, launch, watch, recover, and collect directly from the web console (`#direct`) or CLI (`spiceowl direct`):
+
+```bash
+# Freeze inputs with opt-in M4 bounded recovery (license retries + OOM scale-up/relocation)
+spiceowl direct prepare --run-key amp-tran-01 --netlist ./amp.scs --host lab-sim --backend slurm \
+  --enable-recovery --max-recovery-attempts 2 --max-memory-gb 32 --allow-host-relocation
+spiceowl direct stage amp-tran-01
+spiceowl direct launch amp-tran-01
+spiceowl direct watch amp-tran-01 --allow-collect --auto-resume-watch
+
+# Search and inspect persisted recovery reports (also viewable & downloadable in the #direct web console)
+spiceowl direct recovery-reports --query oom
+spiceowl direct recovery-report amp-tran-01 --markdown
+```
+
+Add `--enable-direct-exec` to `spiceowl serve` to also expose these direct execution and recovery tools (with human approval gates) to the standalone Codex window. See the [direct execution & bounded recovery guide](docs/direct-execution.md).
+
+### Option 2: Connect through a CircuitGit gateway
 
 Provision a private [live-client configuration](examples/live-client.example.json) for an authorized, running CircuitGit gateway, then use the same file for CLI and web:
 

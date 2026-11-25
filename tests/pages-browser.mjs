@@ -66,14 +66,17 @@ async function inspectBuild(directory) {
     }
   }
   await visit(directory);
-  const actualFiles = inventory.map(file => file.name).sort();
-  const buildManifest = JSON.parse(await readFile(join(directory, 'build.json'), 'utf8'));
-  const expectedFromManifest = [...new Set([...(buildManifest.files || []), '.nojekyll'])].sort();
-  assert.deepEqual(actualFiles, expectedFromManifest, 'Public build files must match build.json manifest exactly');
-  for (const required of ['.nojekyll', 'LICENSE.txt', 'app.css', 'app.js', 'build.json', 'demo-data.js', 'demo.js', 'index.html', 'owl.svg',
-    'workflow.html', 'workflow.js', 'workflow.css', 'source-manifest.json']) {
-    assert.ok(actualFiles.includes(required), `Public build missing required asset: ${required}`);
-  }
+  const expectedFiles = [
+    '.nojekyll', 'LICENSE.txt', 'app.css', 'app.js', 'build.json', 'demo-data.js', 'demo.js', 'index.html', 'owl.svg',
+    'workflow.html', 'workflow.js', 'workflow.css', 'bootstrap-dut.publication.scs', 'inverter-dut.publication.scs',
+    'bootstrap-tb.publication.scs', 'bootstrap-evidence.publication.json', 'source-manifest.json',
+    'guide-data.js', 'guide.css', 'guide.js', 'pool-demo.json', 'showcase-bootstrap-tran.svg', 'showcase-bootstrap.svg',
+    'showcase-evidence.json', 'showcase-inverter-ac.svg', 'showcase-inverter-dc.svg', 'showcase-inverter-tran.svg',
+    'showcase-inverter.svg', 'showcase-samples.json', 'showcase-spectrum-baseline.svg', 'showcase-spectrum-wider.svg',
+    'showcase-spectrum.svg', 'showcase-studio.webp', 'showcase.css', 'showcase.js',
+  ].sort();
+  assert.deepEqual(inventory.map(file => file.name).sort(), expectedFiles,
+    'Public build must contain only the explicit static asset list');
   const serialized = (await readFile(join(directory, 'demo-data.js'), 'utf8')).trim();
   const marker = 'window.__SPICEOWL_DEMO_DATA__=';
   assert.ok(serialized.startsWith(marker) && serialized.endsWith(';'), 'Unexpected demo data wrapper');

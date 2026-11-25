@@ -52,6 +52,69 @@ FIRST_SIM_TEMPLATES: dict[str, dict] = {
             "tran tran stop=100n errpreset=moderate\n"
         ),
     },
+    "spectre_rlc_ringing": {
+        "id": "spectre_rlc_ringing",
+        "simulator": "spectre",
+        "output_format": "psfbin",
+        "title": "Spectre 二阶 RLC 欠阻尼阶跃响应（验证过冲 / 建立时间 / 双游标）",
+        "description": "零 PDK 理想二阶 RLC 网络，产生清晰可测的过冲与阻尼震荡，适合测试 SpiceOwl 的无损建立时间、过冲百分比与双游标卡尺。",
+        "netlist": (
+            "// SpiceOwl Zero-PDK 2nd-Order RLC Underdamped Step Testbench\n"
+            "simulator lang=spectre\n"
+            "global 0\n"
+            "parameters vdd=1.2 r_val=120 l_val=200n c_val=5p\n"
+            "V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=2n rise=0.2n fall=0.2n width=80n period=120n\n"
+            "R1 (in n1) resistor r=r_val\n"
+            "L1 (n1 out) inductor l=l_val\n"
+            "C1 (out 0) capacitor c=c_val\n"
+            "save in out\n"
+            "tran tran stop=60n maxstep=50p errpreset=conservative\n"
+        ),
+    },
+    "spectre_opamp_ac": {
+        "id": "spectre_opamp_ac",
+        "simulator": "spectre",
+        "output_format": "psfascii",
+        "title": "Spectre 理想两极点运放 AC 频响（验证 DC 增益 / UGBW / 相位裕度）",
+        "description": "零 PDK 宏观行为级两极点运放，无需工艺库即可直接验证 AC 小信号解析与直流增益、-3dB 带宽、单位增益带宽（UGBW）及相位裕度提取。",
+        "netlist": (
+            "// SpiceOwl Zero-PDK Two-Pole Macro Op-Amp AC Loop Testbench\n"
+            "simulator lang=spectre\n"
+            "global 0\n"
+            "parameters gm1=1m ro1=100k c1=10p gm2=1m ro2=10k c2=0.5p\n"
+            "V_ac (in 0) vsource type=dc dc=0 mag=1 phase=0\n"
+            "G1 (n1 0 in 0) vccs gm=gm1\n"
+            "R1 (n1 0) resistor r=ro1\n"
+            "C1 (n1 0) capacitor c=c1\n"
+            "G2 (out 0 n1 0) vccs gm=gm2\n"
+            "R2 (out 0) resistor r=ro2\n"
+            "C2 (out 0) capacitor c=c2\n"
+            "save out\n"
+            "ac ac start=10 stop=1G dec=20\n"
+        ),
+    },
+    "spectre_mos1_inverter": {
+        "id": "spectre_mos1_inverter",
+        "simulator": "spectre",
+        "output_format": "psfbin",
+        "title": "Spectre 零 PDK Level-1 CMOS 反相器瞬态（验证上升/下降时间与 PVT 扫角）",
+        "description": "内置理想 Level-1 NMOS/PMOS 模型，适合快速验证反相器翻转延迟、10%–90% 上升下降时间、压摆率以及 PVT 电压/温度批量矩阵。",
+        "netlist": (
+            "// SpiceOwl Zero-PDK Level-1 CMOS Inverter Transient Testbench\n"
+            "simulator lang=spectre\n"
+            "global 0\n"
+            "parameters vdd=1.2 cload=20f\n"
+            "model nch mos1 type=n vto=0.35 kp=180u\n"
+            "model pch mos1 type=p vto=-0.35 kp=90u\n"
+            "V_dd (vdd_n 0) vsource dc=vdd\n"
+            "V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=2n rise=0.2n fall=0.2n width=8n period=20n\n"
+            "MN (out in 0 0) nch w=1u l=0.18u\n"
+            "MP (out in vdd_n vdd_n) pch w=2u l=0.18u\n"
+            "CL (out 0) capacitor c=cload\n"
+            "save in out\n"
+            "tran tran stop=40n errpreset=moderate\n"
+        ),
+    },
     "ngspice_rc_smoke": {
         "id": "ngspice_rc_smoke",
         "simulator": "ngspice",

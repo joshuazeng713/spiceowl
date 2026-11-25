@@ -184,11 +184,27 @@ async function interactiveTutorialAndWorkbench(page, report, label) {
   // Click Step 2 CTA directly into #direct waveforms
   await page.locator('[data-action="wizard-goto"]').first().click();
 
-  // 2. #direct Tab 1: 500-cycle PSF Binary waveforms & Cycle Slicer #317
+  // 2. #direct Tab 1: 500-cycle PSF Binary waveforms, Dual Cursors A/B, Lossless Analog Metrics, Multi-Corner Overlay & Cycle Slicer #317
   await page.locator('.direct-tabs').waitFor();
   await page.locator('svg[data-wf-zoom-svg="1"]').waitFor({timeout: 15000});
   await page.locator('svg[data-wf-trend-svg="1"]').waitFor({timeout: 15000});
   assert.match(await page.locator('.wf-cycle-summary').innerText(), /#317/);
+  // Test Dual Cursors A/B mode & readout bar
+  await page.locator('[data-action="direct-wf-mode"][data-mode="cursor"]').click();
+  await page.locator('.wf-cursor-bar').waitFor();
+  const wfSvg = page.locator('svg[data-wf-zoom-svg="1"]');
+  const box = await wfSvg.boundingBox();
+  if (box && box.width > 40) {
+    await page.mouse.click(box.x + box.width * 0.35, box.y + box.height * 0.5);
+    await page.mouse.click(box.x + box.width * 0.65, box.y + box.height * 0.5);
+    await page.locator('.wf-cur-pill.cur-delta').first().waitFor();
+  }
+  // Test 1-click Lossless Analog Metrics Card
+  await page.locator('[data-action="direct-wf-measure"]').click();
+  await page.locator('.wf-metrics-card').waitFor({timeout: 15000});
+  // Test 1-click Multi-Corner Overlay (tt / ss / ff)
+  await page.locator('[data-action="direct-wf-compare-corners"]').click();
+  await page.waitForFunction(() => (document.querySelector('#main')?.innerText || '').includes('SS · 1.08V'));
   await noOverflow(page, report, `${label}-direct-waveforms`);
   if (label === 'desktop') await snapshot(page, report, `${label}-direct-waveforms`);
 
@@ -214,9 +230,11 @@ async function interactiveTutorialAndWorkbench(page, report, label) {
   await page.locator('.direct-report-grid').waitFor();
   await noOverflow(page, report, `${label}-direct-runs`);
 
-  // 5. #direct Tab 4: Recovery audit reports
+  // 5. #direct Tab 4: Recovery audit reports & Overnight Notification Card Preview
   await page.locator('.direct-tab[data-tab="recovery"]').click();
   await page.locator('.direct-rec-integrity').waitFor();
+  await page.locator('[data-action="direct-notify-preview"]').click();
+  await page.waitForFunction(() => (document.querySelector('#main')?.innerText || '').includes('msg_type'));
   await noOverflow(page, report, `${label}-direct-recovery`);
 
   // 6. #agents: 10-case online safety benchmark

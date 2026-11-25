@@ -201,6 +201,22 @@ await test('interactive browser sandbox covers waveforms, Cycle Slicer, PVT/MC b
   assert.equal(ev.deterministic.safety_counters.duplicate_dispatches, 0);
   assert.equal(ev.deterministic.safety_counters.false_scientific_passes, 0);
 
+  // Lossless analog measurement & multi-corner waveform comparison
+  const mres = await post(demo, '/api/direct/runs/demo-pvt-27-ff-1p32-m40/waveforms/measure', {dataset: ds, signal: 'v(out)', tol_pct: 2.0});
+  assert.equal(mres.exact, true);
+  assert.equal(mres.measurement_safe, true);
+  assert.ok(mres.metrics.rise_time > 0 && mres.metrics.overshoot_pct > 0);
+  const ssQuery = await post(demo, '/api/direct/runs/demo-pvt-27-ss-1p08-125/waveforms/query', {dataset: ds, signals: ['v(out)'], mode: 'exact'});
+  const ffQuery = await post(demo, '/api/direct/runs/demo-pvt-27-ff-1p32-m40/waveforms/query', {dataset: ds, signals: ['v(out)'], mode: 'exact'});
+  assert.ok(ffQuery.signals['v(out)'].max > ssQuery.signals['v(out)'].max);
+
+  // Overnight webhook notification preview (Feishu / Slack / DingTalk / Generic)
+  for (const provider of ['feishu', 'slack', 'dingtalk', 'generic']) {
+    const ntf = await post(demo, '/api/direct/notifications/preview', {provider, event_type: 'recovery_succeeded'});
+    assert.equal(ntf.provider, provider);
+    assert.ok(JSON.stringify(ntf.payload).includes('demo-oom-recover-r2'));
+  }
+
   const savedKeys = [...storage.data.values()].map(raw => Object.keys(JSON.parse(raw)).sort().join(','));
   for (const keys of savedKeys) assert.equal(keys, 'build_id,connections,cursors,diagnoses,schema,serial');
   assert.equal(networkCalls, 0);

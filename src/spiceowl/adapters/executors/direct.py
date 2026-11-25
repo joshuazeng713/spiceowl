@@ -79,6 +79,50 @@ _SCHED_TOKEN = re.compile(r"[A-Za-z0-9_.-]{1,64}", re.ASCII)
 _LSF_GROUP = re.compile(r"/[A-Za-z0-9_.-]{1,64}(?:/[A-Za-z0-9_.-]{1,64}){0,5}", re.ASCII)
 _LICENSE_VALUE = re.compile(r"[A-Za-z0-9_.:/@+-]{1,2048}", re.ASCII)
 _LICENSE_KEYS = frozenset({"CDS_LIC_FILE", "LM_LICENSE_FILE", "CDS_AUTO_64BIT"})
+_MODULE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./+-]{0,95}", re.ASCII)
+
+
+def _validate_remote_env(remote_env):
+    """Validate optional remote EDA environment bootstrap profile (modules / setup scripts / PATH).
+
+    Strict allowlist validation ensures zero shell metacharacters can enter the
+    remote environment setup sequence, while preserving auditable provenance in
+    the frozen manifest SHA-256.
+    """
+    if remote_env is None:
+        return None
+    if type(remote_env) is not dict:
+        raise DomainError("remote_env must be a JSON object.", "invalid_direct_plan")
+    allowed = {"modules", "setup_scripts", "extra_path", "shell"}
+    if set(remote_env) - allowed:
+        raise DomainError("remote_env accepts only modules, setup_scripts, extra_path, and shell.", "invalid_direct_plan")
+    modules = remote_env.get("modules", [])
+    scripts = remote_env.get("setup_scripts", [])
+    extra_path = remote_env.get("extra_path", [])
+    shell = remote_env.get("shell", "bash")
+    if shell not in ("bash", "sh"):
+        raise DomainError("remote_env.shell must be 'bash' or 'sh'.", "invalid_direct_plan")
+    if type(modules) is not list or len(modules) > 16:
+        raise DomainError("remote_env.modules must be a list of at most 16 module names.", "invalid_direct_plan")
+    clean_modules = []
+    for item in modules:
+        if not isinstance(item, str) or _MODULE_NAME.fullmatch(item) is None or ".." in item:
+            raise DomainError(f"Invalid environment module name: {item!r}.", "invalid_direct_plan")
+        clean_modules.append(item)
+    if type(scripts) is not list or len(scripts) > 8:
+        raise DomainError("remote_env.setup_scripts must be a list of at most 8 absolute POSIX script paths.", "invalid_direct_plan")
+    clean_scripts = [_validate_abs_dir(item, "remote_env.setup_scripts") for item in scripts]
+    if type(extra_path) is not list or len(extra_path) > 8:
+        raise DomainError("remote_env.extra_path must be a list of at most 8 absolute POSIX directories.", "invalid_direct_plan")
+    clean_paths = [_validate_abs_dir(item, "remote_env.extra_path") for item in extra_path]
+    if not clean_modules and not clean_scripts and not clean_paths:
+        return None
+    return {
+        "modules": clean_modules,
+        "setup_scripts": clean_scripts,
+        "extra_path": clean_paths,
+        "shell": shell,
+    }
 _RESERVED_FILES = frozenset({
     "input.scs", "wrapper.py", "job.sh", "manifest.json", "ready", "launch-claim",
     "accepted.json", "wrapper.json", "supervisor.json", "solver-launcher.json",
@@ -1068,6 +1112,34 @@ def solver_exec(path, manifest):
 def _build_env(manifest):
     threads = str(manifest["limits"]["cpu_count"])
     env = dict(os.environ)
+    rem_env = manifest.get("remote_env") or {}
+    if rem_env.get("setup_scripts") or rem_env.get("modules"):
+        shell_bin = "/bin/bash" if rem_env.get("shell", "bash") == "bash" else "/bin/sh"
+        parts = []
+        for sc in rem_env.get("setup_scripts", []):
+            parts.append(". " + shlex.quote(sc) + " >/dev/null 2>&1")
+        for mod in rem_env.get("modules", []):
+            parts.append("module load " + shlex.quote(mod) + " >/dev/null 2>&1")
+        py_dump = shlex.quote(manifest["remote_python"]) + " -c 'import json,os;print(json.dumps(dict(os.environ)))'"
+        parts.append(py_dump)
+        try:
+            proc = subprocess.run(
+                [shell_bin, "-lc", " && ".join(parts)],
+                stdin=DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=15, env=env,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                captured = json.loads(proc.stdout.decode("utf-8", "replace"))
+                if isinstance(captured, dict):
+                    for k, v in captured.items():
+                        if isinstance(k, str) and isinstance(v, str):
+                            env[k] = v
+        except Exception:
+            pass
+    if rem_env.get("extra_path"):
+        cur_path = env.get("PATH", "")
+        prefix = ":".join(rem_env["extra_path"])
+        env["PATH"] = (prefix + ":" + cur_path) if cur_path else prefix
     env.update(manifest["license_environment"])
     env.update(LC_ALL="C", LANG="C", OMP_NUM_THREADS=threads, MKL_NUM_THREADS=threads)
     return env
@@ -1314,6 +1386,7 @@ def prepare(
     remote_python="/usr/bin/python3",
     remote_root=".spiceowl-runs",
     license_environment=None,
+    remote_env=None,
 ):
     """Build a persistable, tamper-evident execution plan without I/O."""
     normalized = validate_host_profile(profile)
@@ -1379,6 +1452,7 @@ def prepare(
             raise DomainError("Total staged input bytes exceed the 4 MiB direct-execution limit.", "invalid_direct_plan")
         files[relpath] = raw_bytes
 
+    validated_remote_env = _validate_remote_env(remote_env)
     executable = tools[0]["executable"]
     argv = _simulator_argv(simulator, executable, validated_limits, output_format, validated_includes)
     manifest = {
@@ -1400,6 +1474,8 @@ def prepare(
         "argv": argv,
         "limits": validated_limits,
     }
+    if validated_remote_env is not None:
+        manifest["remote_env"] = validated_remote_env
     return {
         "schema": SCHEMA,
         "manifest": manifest,
@@ -1435,6 +1511,7 @@ def _validate(plan):
             remote_python=manifest["remote_python"],
             remote_root=manifest["remote_root"],
             license_environment=manifest["license_environment"],
+            remote_env=manifest.get("remote_env"),
         )
         if plan != expected:
             raise ValueError()

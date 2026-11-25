@@ -253,6 +253,7 @@ class DirectExecutionManager:
         remote_python: str = "/usr/bin/python3",
         remote_root: str = ".spiceowl-runs",
         license_environment: dict | None = None,
+        remote_env: dict | None = None,
         source_commit: str | None = None,
         recovery_policy: dict | None = None,
         root_run_id: str | None = None,
@@ -320,6 +321,7 @@ class DirectExecutionManager:
             remote_python=remote_python,
             remote_root=remote_root,
             license_environment=license_environment,
+            remote_env=remote_env,
         )
 
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1218,6 +1220,35 @@ class DirectExecutionManager:
         _atomic_write(run_dir / "run.json", record)
         return deepcopy(record)
 
+    def waveform_measure(
+        self,
+        run_id: str,
+        dataset: str,
+        signal: str,
+        *,
+        x_min: float | None = None,
+        x_max: float | None = None,
+        tol_pct: float = 2.0,
+        allow_remote: bool = True,
+    ) -> dict:
+        """Compute lossless analog metrics on an exact waveform window.
+
+        Strictly refuses downsampled previews by requesting ``mode="exact"``.
+        """
+        from spiceowl.experiments.analog_metrics import measure_waveform_query
+
+        q = self.waveform_query(
+            run_id,
+            dataset,
+            [signal],
+            x_min=x_min,
+            x_max=x_max,
+            max_points=psf_binary.MAX_PREVIEW_POINTS,
+            mode="exact",
+            allow_remote=allow_remote,
+        )
+        return measure_waveform_query(q, signal=signal, tol_pct=tol_pct)
+
 
 class DirectRecoverySupervisor:
     """Optional background supervisor pairing RuntimeMonitor with bounded M4 recovery.
@@ -1228,13 +1259,46 @@ class DirectRecoverySupervisor:
     the monitor loop.
     """
 
-    def __init__(self, manager: DirectExecutionManager, *, interval_seconds=30, max_backoff_seconds=300):
+    def __init__(self, manager: DirectExecutionManager, *, interval_seconds=30, max_backoff_seconds=300, notifier=None):
         self.manager = manager
         self.root = manager.root
+        self.notifier = notifier
         self._stop = threading.Event()
         self._timers: list[threading.Timer] = []
         self._lock = threading.Lock()
         self.monitor = RuntimeMonitor(self, interval_seconds=interval_seconds, max_backoff_seconds=max_backoff_seconds)
+
+    def _emit_notification(self, event_type: str, run_record: dict, detail: str = "") -> None:
+        if self.notifier is None:
+            return
+        try:
+            from spiceowl.notifications import build_notification_event
+            rep = None
+            try:
+                rep = self.manager.report(run_record["run_id"])
+            except DomainError:
+                pass
+            fd = {}
+            if isinstance(rep, dict) and rep.get("schema") == "spiceowl.simulation-report.v1":
+                fd = {
+                    "execution": rep.get("execution_status", {}).get("status"),
+                    "measurement": rep.get("measurement_validity", {}).get("status"),
+                    "performance": rep.get("functional_performance", {}).get("status"),
+                    "soa": rep.get("operating_qualification", {}).get("status"),
+                }
+            ev = build_notification_event(
+                event_type=event_type,
+                run_id=run_record["run_id"],
+                host_id=run_record.get("host_id", "unknown"),
+                backend=run_record.get("backend", "ssh_direct"),
+                simulator=run_record.get("simulator", "spectre"),
+                attempt_number=int(run_record.get("attempt_number") or 1),
+                five_dim_summary=fd,
+                detail=detail,
+            )
+            self.notifier.dispatch(ev)
+        except Exception:
+            pass
 
     def path(self, run_id: str) -> Path:
         return self.manager.path(run_id)
@@ -1247,6 +1311,13 @@ class DirectRecoverySupervisor:
 
     def collect(self, run_id: str) -> dict:
         result = self.manager.collect(run_id)
+        if result.get("state") == "simulator_complete_pending_measurements":
+            ev_type = "recovery_succeeded" if (result.get("attempt_number") or 1) > 1 else "completed"
+            self._emit_notification(ev_type, result, detail="后台盯守已自动收集产物并生成五维报告。")
+        else:
+            policy = validate_recovery_policy(result.get("recovery_policy"))
+            if not policy["enabled"]:
+                self._emit_notification("failed", result, detail="仿真以失败终态结束（未开启自动恢复）。")
         self._schedule_recovery_if_enabled(result)
         return result
 

@@ -32,8 +32,11 @@ let directState = {
   selectedId: null, detail: null, report: null, lookup: null, error: null,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
   recoveryQuery: '', recoveryOutcome: '',
+  notifyProvider: 'feishu', notifyEvent: 'recovery_succeeded', notifyPreview: null,
   wfIndex: null, wfDataset: '', wfSignals: [], wfQuery: null,
   wfWindow: {xMin: '', xMax: ''}, wfMaxPoints: 1200,
+  wfToolMode: 'zoom', wfCursorA: null, wfCursorB: null, wfCursorNext: 'A',
+  wfMeasure: null, wfCompare: null,
   wfCycles: null, wfCycleTab: 'worst_case', wfClock: '', wfPeriod: '',
   wfWorstMetric: 'peak_to_peak', wfWorstSignal: '', wfSelectedCycle: null,
   wfJumpCycle: '', wfBusy: false, wfError: null,
@@ -61,6 +64,7 @@ let directDraft = {
   output_format: 'psfascii', cpus: 2, memory_gib: 8, wall_seconds: 3600,
   queue: '', project: '', job_group: '', partition: '', account: '', qos: '', exclusive: false,
   remote_python: '/usr/bin/python3', remote_root: '.spiceowl-runs', include_dirs: '',
+  env_modules: '', env_scripts: '',
   netlist_text: '', lookup_key: '', allow_collect: true, recheck_resources: true,
   rec_enabled: false, rec_max_attempts: 2, rec_max_memory_gib: 64, rec_max_elapsed_min: 240,
   rec_retry_license: true, rec_license_backoff: 300, rec_retry_oom: true,
@@ -432,7 +436,9 @@ function directRecoveryReportsPanel() {
     detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
   }
 
-  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>异常自动恢复审计报告（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
+  const notifyCard = `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>过夜值守通知卡片预览（飞书 / 钉钉 / Slack / Webhook）</h2>${chip('零网表外发 · PRIVACY SAFE', 'green')}</div><p class="subtle-note">兑现 <em>“You sleep. SpiceOwl keeps watch.”</em>：当过夜仿真结束、触发 OOM 自动恢复成功或预算耗尽时，可选推送脱敏结构化摘要卡片（绝不发送网表、波形或 SSH 凭据）。</p><div class="direct-rec-filters"><select id="notify-provider"><option value="feishu" ${directState.notifyProvider === 'feishu' ? 'selected' : ''}>飞书机器人 (Feishu Card)</option><option value="dingtalk" ${directState.notifyProvider === 'dingtalk' ? 'selected' : ''}>钉钉机器人 (DingTalk Markdown)</option><option value="slack" ${directState.notifyProvider === 'slack' ? 'selected' : ''}>Slack Webhook (Block Kit)</option><option value="generic" ${directState.notifyProvider === 'generic' ? 'selected' : ''}>通用 JSON Webhook</option></select><select id="notify-event"><option value="recovery_succeeded" ${directState.notifyEvent === 'recovery_succeeded' ? 'selected' : ''}>异常自动恢复成功</option><option value="completed" ${directState.notifyEvent === 'completed' ? 'selected' : ''}>仿真顺利完成</option><option value="spec_missed" ${directState.notifyEvent === 'spec_missed' ? 'selected' : ''}>有效测量但指标未达标</option><option value="recovery_exhausted" ${directState.notifyEvent === 'recovery_exhausted' ? 'selected' : ''}>恢复预算耗尽已停止</option><option value="watch_disconnected" ${directState.notifyEvent === 'watch_disconnected' ? 'selected' : ''}>后台通信中断（状态未知）</option></select><button type="button" class="button primary small" data-action="direct-notify-preview">🔔 生成通知卡片预览</button></div>${directState.notifyPreview ? `<div class="direct-rec-card"><div class="section-title"><strong>🦉 ${escape(directState.notifyPreview.event?.title || '')}</strong>${chip(String(directState.notifyPreview.provider || '').toUpperCase(), directState.notifyPreview.event?.severity || 'green')}</div><p class="subtle-note">${escape(directState.notifyPreview.event?.detail || '')}</p><details open><summary>查看脱敏 Webhook JSON 载荷（确认不含任何网表与私钥）</summary><pre class="direct-rec-md">${escape(JSON.stringify(directState.notifyPreview.payload, null, 2))}</pre></details></div>` : ''}</section>`;
+
+  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>异常自动恢复审计报告（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>${notifyCard}`;
 }
 
 function directRunChip(run) {
@@ -527,7 +533,7 @@ function directPage() {
   if (pub) {
     html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>在线沙箱操作指引</h2><span class="chip green">BROWSER SANDBOX</span></div><p class="subtle-note">在右侧列表中选择 <code>demo-sandbox-rc</code>，依次体验完整的 4 步受控仿真生命周期：</p><ol class="tut-list"><li><strong>① 上传输入 (Stage)</strong>：将冻结后的网表与清单上传至隔离工作目录。</li><li><strong>② 启动仿真 (Launch)</strong>：通过幂等占位键原子启动，断线不盲目重提。</li><li><strong>③ 查询状态 (Status)</strong>：读取远端运行进度并观察结束事件。</li><li><strong>④ 收集报告 (Collect)</strong>：输出五维 Spectre 诊断报告并直接查看波形。</li></ol><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-select" data-id="demo-sandbox-rc">选中可交互沙箱任务 (demo-sandbox-rc)</button><a class="button secondary small" href="#local">在本地连接真实 SSH / 集群</a></div></section>`;
   } else {
-    html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>准备新仿真（本地冻结计划）</h2><span class="chip">PREPARE · NO LAUNCH</span></div><p class="subtle-note">先在本地冻结网表与配置，不联网、不扣算力。${!hostsList.length ? '还没有服务器？可前往 <a href="#quickstart">新手教程第 5 步</a> 或 <a href="#hosts">EDA 服务器管理</a> 登记。' : ''}</p><form id="direct-prepare-form"><div class="direct-grid"><label class="direct-wide">任务名称 / Run Key<input id="direct-run-key" value="${escape(directDraft.run_key)}" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="direct-inv-001"></label><label>执行后端<select id="direct-backend"><option value="ssh_direct" ${directDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连工作站</option><option value="lsf" ${directDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${directDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>仿真器<select id="direct-simulator"><option value="spectre" ${directDraft.simulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${directDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></label><label>选机方式<select id="direct-target-mode"><option value="host" ${directDraft.target_mode === 'host' ? 'selected' : ''}>指定单台主机</option><option value="pool" ${directDraft.target_mode === 'pool' ? 'selected' : ''}>按资源自动推荐</option></select></label><label>目标主机<select id="direct-host-id" ${directDraft.target_mode === 'pool' || !hostsList.length ? 'disabled' : ''}>${hostsList.length ? hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === directDraft.host_id ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})</option>`).join('') : '<option value="">尚未注册主机</option>'}</select></label></div>${schedBox}<details class="host-form-details"><summary>进阶：CPU / 内存 / 时长与波形格式（默认 2 核 · 8 GiB）</summary><div class="direct-grid"><label>CPU 核数<input id="direct-cpus" type="number" min="1" max="4096" value="${escape(directDraft.cpus)}" required></label><label>内存 (GiB)<input id="direct-memory" type="number" min="0.1" step="any" max="16384" value="${escape(directDraft.memory_gib)}" required></label><label>最大时长 (秒)<input id="direct-wall" type="number" min="10" max="604800" value="${escape(directDraft.wall_seconds)}" required></label><label>波形格式<select id="direct-format"><option value="psfascii" ${directDraft.output_format === 'psfascii' ? 'selected' : ''}>PSF ASCII</option><option value="psfbin" ${directDraft.output_format === 'psfbin' ? 'selected' : ''}>PSF Binary</option><option value="psfxl" ${directDraft.output_format === 'psfxl' ? 'selected' : ''}>PSFXL</option></select></label></div></details>${recBox}<details class="host-form-details"><summary>进阶：远端 Python 与 PDK Include 目录（可选）</summary><div class="direct-grid"><label>远端 Python3 路径<input id="direct-python" value="${escape(directDraft.remote_python)}"></label><label>远端工作根目录<input id="direct-root" value="${escape(directDraft.remote_root)}" placeholder=".spiceowl-runs 或 /scratch/..."></label><label class="direct-wide">Spectre Include 目录（每行一个绝对路径）<textarea id="direct-includes" rows="2" placeholder="/opt/pdk/models">${escape(directDraft.include_dirs)}</textarea></label></div></details><div class="direct-file-row"><label for="direct-netlist">网表内容（input.scs）</label><label class="direct-file-label">从本地文件读取 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label></div><textarea id="direct-netlist" class="direct-netlist" required placeholder="simulator lang=spectre&#10;...">${escape(directDraft.netlist_text)}</textarea><div class="direct-actions"><button class="button primary" type="submit" ${directState.busy || !hostsList.length ? 'disabled' : ''}>冻结并准备计划（Prepare）</button></div></form></section>`;
+    html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>准备新仿真（本地冻结计划）</h2><span class="chip">PREPARE · NO LAUNCH</span></div><p class="subtle-note">先在本地冻结网表与配置，不联网、不扣算力。${!hostsList.length ? '还没有服务器？可前往 <a href="#quickstart">新手教程第 5 步</a> 或 <a href="#hosts">EDA 服务器管理</a> 登记。' : ''}</p><form id="direct-prepare-form"><div class="direct-grid"><label class="direct-wide">任务名称 / Run Key<input id="direct-run-key" value="${escape(directDraft.run_key)}" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="direct-inv-001"></label><label>执行后端<select id="direct-backend"><option value="ssh_direct" ${directDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连工作站</option><option value="lsf" ${directDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${directDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>仿真器<select id="direct-simulator"><option value="spectre" ${directDraft.simulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${directDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></label><label>选机方式<select id="direct-target-mode"><option value="host" ${directDraft.target_mode === 'host' ? 'selected' : ''}>指定单台主机</option><option value="pool" ${directDraft.target_mode === 'pool' ? 'selected' : ''}>按资源自动推荐</option></select></label><label>目标主机<select id="direct-host-id" ${directDraft.target_mode === 'pool' || !hostsList.length ? 'disabled' : ''}>${hostsList.length ? hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === directDraft.host_id ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})</option>`).join('') : '<option value="">尚未注册主机</option>'}</select></label></div>${schedBox}<details class="host-form-details"><summary>进阶：CPU / 内存 / 时长与波形格式（默认 2 核 · 8 GiB）</summary><div class="direct-grid"><label>CPU 核数<input id="direct-cpus" type="number" min="1" max="4096" value="${escape(directDraft.cpus)}" required></label><label>内存 (GiB)<input id="direct-memory" type="number" min="0.1" step="any" max="16384" value="${escape(directDraft.memory_gib)}" required></label><label>最大时长 (秒)<input id="direct-wall" type="number" min="10" max="604800" value="${escape(directDraft.wall_seconds)}" required></label><label>波形格式<select id="direct-format"><option value="psfascii" ${directDraft.output_format === 'psfascii' ? 'selected' : ''}>PSF ASCII</option><option value="psfbin" ${directDraft.output_format === 'psfbin' ? 'selected' : ''}>PSF Binary</option><option value="psfxl" ${directDraft.output_format === 'psfxl' ? 'selected' : ''}>PSFXL</option></select></label></div></details>${recBox}<details class="host-form-details"><summary>进阶：远端环境（module load / setup 脚本）与 PDK Include 目录（可选）</summary><div class="direct-grid"><label>远端 Python3 路径<input id="direct-python" value="${escape(directDraft.remote_python)}"></label><label>远端工作根目录<input id="direct-root" value="${escape(directDraft.remote_root)}" placeholder=".spiceowl-runs 或 /scratch/..."></label><label>远端 Environment Modules（逗号分隔，如 cadence/spectre-23.1）<input id="direct-env-modules" value="${escape(directDraft.env_modules)}" placeholder="cadence/spectre-23.1"></label><label>远端 Setup 脚本绝对路径（逗号分隔）<input id="direct-env-scripts" value="${escape(directDraft.env_scripts)}" placeholder="/opt/cadence/env.sh"></label><label class="direct-wide">Spectre Include 目录（每行一个绝对路径）<textarea id="direct-includes" rows="2" placeholder="/opt/pdk/models">${escape(directDraft.include_dirs)}</textarea></label></div></details><div class="direct-file-row"><label for="direct-netlist">网表内容（input.scs）</label><label class="direct-file-label">从本地文件读取 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label></div><textarea id="direct-netlist" class="direct-netlist" required placeholder="simulator lang=spectre&#10;...">${escape(directDraft.netlist_text)}</textarea><div class="direct-actions"><button class="button primary" type="submit" ${directState.busy || !hostsList.length ? 'disabled' : ''}>冻结并准备计划（Prepare）</button></div></form></section>`;
   }
 
   html += `<div class="detail-stack"><section class="panel direct-panel"><div class="section-title"><h2>仿真任务列表 (${directState.runs.length})</h2><button class="button secondary small" data-action="direct-refresh" ${directState.busy ? 'disabled' : ''}>刷新列表</button></div><div class="direct-run-list">${directState.runs.map(item => `<button type="button" class="direct-run-row ${item.run_id === run?.run_id ? 'selected' : ''}" data-action="direct-select" data-id="${escape(item.run_id)}"><div><strong>${escape(item.run_id)}</strong><small>${escape(item.backend.toUpperCase())} · ${escape(item.simulator)} · ${escape(item.host_id)}${item.scheduler?.job_id ? ' · Job ' + escape(item.scheduler.job_id) : ''}</small></div>${directRunChip(item)}</button>`).join('') || '<p class="subtle-note">还没有运行记录。先在左侧准备一个实验。</p>'}</div>${!pub ? `<div class="direct-lookup"><input id="direct-lookup-key" value="${escape(directDraft.lookup_key)}" placeholder="按原 Run Key / Submission Key 对账查询"><button type="button" class="button secondary small" data-action="direct-lookup" ${directState.busy ? 'disabled' : ''}>查询原 Key</button></div>${directState.lookup ? `<p class="subtle-note" role="status">${directState.lookup.found ? `已找到原记录：<code>${escape(directState.lookup.run_id)}</code>（状态：${escape(title(directState.lookup.run?.state))}）` : escape(directState.lookup.note)}</p>` : ''}` : ''}</section>`;
@@ -699,6 +705,10 @@ function syncWaveformSelection(resetData = false) {
   if (resetData) {
     directState.wfQuery = null;
     directState.wfCycles = null;
+    directState.wfMeasure = null;
+    directState.wfCursorA = null;
+    directState.wfCursorB = null;
+    directState.wfCursorNext = 'A';
     directState.wfWindow = {xMin: '', xMax: ''};
     directState.wfSelectedCycle = null;
     directState.wfJumpCycle = '';
@@ -814,6 +824,99 @@ async function runWaveformCycles(explicitCycleIndex = null) {
   }
 }
 
+function sampleSignalAtX(q, sigName, targetX) {
+  if (!q || !q.signals?.[sigName]) return null;
+  const s = q.signals[sigName];
+  const xs = q.x || s.x || [], ys = s.values || [];
+  if (!xs.length || xs.length !== ys.length) return null;
+  const toNum = v => (v && typeof v === 'object' ? Number(v.mag ?? v.real ?? 0) : Number(v));
+  let lo = 0, hi = xs.length - 1;
+  if (targetX <= xs[0]) return {x: xs[0], y: toNum(ys[0])};
+  if (targetX >= xs[hi]) return {x: xs[hi], y: toNum(ys[hi])};
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] <= targetX) lo = mid; else hi = mid;
+  }
+  const dx = xs[hi] - xs[lo];
+  const frac = dx > 0 ? (targetX - xs[lo]) / dx : 0;
+  const y = toNum(ys[lo]) + frac * (toNum(ys[hi]) - toNum(ys[lo]));
+  return {x: targetX, y};
+}
+
+function renderCursorReadoutBar(q) {
+  const ca = directState.wfCursorA, cb = directState.wfCursorB;
+  if (ca === null && cb === null) {
+    if (directState.wfToolMode !== 'cursor') return '';
+    return `<div class="wf-cursor-bar"><span><strong>📏 双游标卡尺模式已开启：</strong>点击下方波形图放置 <strong>游标 A（琥珀色）</strong>，再次点击放置 <strong>游标 B（紫色）</strong>，实时计算 Δt、等效频率、ΔV 与压摆率。</span></div>`;
+  }
+  const sig = Object.keys(q?.signals || {})[0] || 'v(out)';
+  const unit = q?.sweep?.unit || 's';
+  const pa = ca !== null ? sampleSignalAtX(q, sig, ca) : null;
+  const pb = cb !== null ? sampleSignalAtX(q, sig, cb) : null;
+  const items = [];
+  if (pa) items.push(`<span class="wf-cur-pill cur-a"><strong>A</strong> t=${escape(formatEng(pa.x, unit))} · ${escape(sig)}=${escape(formatEng(pa.y, 'V'))}</span>`);
+  if (pb) items.push(`<span class="wf-cur-pill cur-b"><strong>B</strong> t=${escape(formatEng(pb.x, unit))} · ${escape(sig)}=${escape(formatEng(pb.y, 'V'))}</span>`);
+  if (pa && pb) {
+    const dt = pb.x - pa.x, dv = pb.y - pa.y;
+    const freq = Math.abs(dt) > 1e-18 ? (1 / Math.abs(dt)) : null;
+    const sr = Math.abs(dt) > 1e-18 ? Math.abs(dv / dt) : null;
+    items.push(`<span class="wf-cur-pill cur-delta"><strong>Δt</strong> ${escape(formatEng(dt, unit))}${freq ? ` (f=${escape(formatEng(freq, 'Hz'))})` : ''}</span>`);
+    items.push(`<span class="wf-cur-pill cur-delta"><strong>ΔV</strong> ${escape(formatEng(dv, 'V'))}${sr ? ` · |ΔV/Δt|=${escape(formatEng(sr, 'V/s'))}` : ''}</span>`);
+  }
+  return `<div class="wf-cursor-bar">${items.join('')}<button type="button" class="button secondary small" data-action="direct-wf-clear-cursors">清除游标</button></div>`;
+}
+
+function renderAnalogMetricsCard(mRes) {
+  if (!mRes || !mRes.metrics) return '';
+  const m = mRes.metrics, u = mRes.unit || 'V', xu = mRes.x_unit || 's';
+  const fmt = (val, unitStr = '') => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '—' : formatEng(val, unitStr);
+  const cards = [
+    ['最小值 / 最大值', `${fmt(m.min, u)} / ${fmt(m.max, u)}`],
+    ['峰峰值 (Vpp)', fmt(m.peak_to_peak, u)],
+    ['均值 / RMS', `${fmt(m.mean, u)} / ${fmt(m.rms, u)}`],
+    ['上升时间 (10–90%)', fmt(m.rise_time, xu)],
+    ['下降时间 (90–10%)', fmt(m.fall_time, xu)],
+    [`建立时间 (±${m.settling_tol_pct ?? 2}%)`, fmt(m.settling_time, xu)],
+    ['过冲 / 下冲', `${m.overshoot_pct !== null && m.overshoot_pct !== undefined ? m.overshoot_pct.toFixed(2) + '%' : '—'} / ${m.undershoot_pct !== null && m.undershoot_pct !== undefined ? m.undershoot_pct.toFixed(2) + '%' : '—'}`],
+    ['正压摆率 (SR+)', fmt(m.slew_rate_pos, `${u}/${xu}`)],
+    ['周期 / 频率', m.period_mean ? `${fmt(m.period_mean, xu)} / ${fmt(m.frequency_hz, 'Hz')}` : '—'],
+    ['占空比 / RMS 抖动', m.duty_cycle_pct !== null && m.duty_cycle_pct !== undefined ? `${m.duty_cycle_pct.toFixed(1)}% / ${fmt(m.period_jitter_rms, xu)}` : '—'],
+  ];
+  return `<div class="wf-metrics-card"><div class="section-title"><h3>无损模拟量测结果 · <code>${escape(mRes.signal)}</code></h3>${chip(`100% 无损 (${mRes.sample_count} 点 · measurement_safe)`, 'green')}</div><div class="direct-report-grid">${cards.map(([k, v]) => `<div class="direct-dim-card"><span>${escape(k)}</span><strong>${escape(v)}</strong></div>`).join('')}</div></div>`;
+}
+
+function renderCompareOverlaySvg(cmp) {
+  const traces = cmp?.traces || [];
+  if (!traces.length) return '';
+  const W = 760, H = 240, padL = 66, padR = 18, padT = 18, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  for (const tr of traces) {
+    for (const x of tr.x) { if (x < xMin) xMin = x; if (x > xMax) xMax = x; }
+    for (const y of tr.y) { if (Number.isFinite(y)) { if (y < yMin) yMin = y; if (y > yMax) yMax = y; } }
+  }
+  if (!Number.isFinite(xMin) || xMax <= xMin) { xMin = 0; xMax = 1; }
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) { yMin = 0; yMax = 1; }
+  const yPad = (yMax - yMin) > 0 ? (yMax - yMin) * 0.08 : 0.1;
+  yMin -= yPad; yMax += yPad;
+  const sx = x => padL + ((x - xMin) / (xMax - xMin)) * plotW;
+  const sy = y => padT + (1 - (y - yMin) / (yMax - yMin)) * plotH;
+  const yTicks = [yMin, 0.5 * (yMin + yMax), yMax];
+  const xTicks = [xMin, xMin + 0.25 * (xMax - xMin), xMin + 0.5 * (xMax - xMin), xMin + 0.75 * (xMax - xMin), xMax];
+  const grid = yTicks.map(yv => `<line x1="${padL}" y1="${sy(yv).toFixed(1)}" x2="${W - padR}" y2="${sy(yv).toFixed(1)}" stroke="#e3e9e5" stroke-dasharray="3 3"></line><text x="${padL - 8}" y="${(sy(yv) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#5e7369">${escape(formatEng(yv))}</text>`).join('')
+    + xTicks.map(xv => `<text x="${sx(xv).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10" fill="#5e7369">${escape(formatEng(xv, 's'))}</text>`).join('');
+  const lines = traces.map((tr, idx) => {
+    const color = WF_COLORS[idx % WF_COLORS.length];
+    const step = Math.max(1, Math.floor(tr.x.length / 500));
+    const pts = [];
+    for (let i = 0; i < tr.x.length; i += step) pts.push(`${sx(tr.x[i]).toFixed(1)},${sy(tr.y[i]).toFixed(1)}`);
+    return `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"></polyline>`;
+  }).join('');
+  const legend = traces.map((tr, idx) => `<span class="wf-legend-item"><i style="background:${WF_COLORS[idx % WF_COLORS.length]}"></i>${escape(tr.label)}</span>`).join('');
+  const rows = traces.map((tr, idx) => `<tr><td><i class="wf-dot-inline" style="background:${WF_COLORS[idx % WF_COLORS.length]}"></i><strong>${escape(tr.label)}</strong></td><td>${escape(formatEng(tr.metrics?.min, 'V'))}</td><td>${escape(formatEng(tr.metrics?.max, 'V'))}</td><td>${escape(formatEng(tr.metrics?.final_value, 'V'))}</td><td>${escape(formatEng(tr.metrics?.rise_time, 's'))}</td><td>${escape(formatEng(tr.metrics?.settling_time, 's'))}</td><td>${tr.metrics?.overshoot_pct !== null && tr.metrics?.overshoot_pct !== undefined ? tr.metrics.overshoot_pct.toFixed(2) + '%' : '—'}</td></tr>`).join('');
+  return `<div class="wf-plot-card"><div class="wf-legend">${legend}</div><svg class="wf-svg" viewBox="0 0 ${W} ${H}"><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${grid}${lines}</svg><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>Corner / Run</th><th>Vmin</th><th>Vmax</th><th>稳态终值</th><th>上升时间</th><th>建立时间 (2%)</th><th>过冲</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
 function renderWaveformSvg(q, {interactive = false, height = 250} = {}) {
   if (!q || !q.signals) return '';
   const sigNames = Object.keys(q.signals);
@@ -873,8 +976,17 @@ function renderWaveformSvg(q, {interactive = false, height = 250} = {}) {
   const grid = yTicks.map(yv => `<line x1="${padL}" y1="${sy(yv).toFixed(1)}" x2="${W - padR}" y2="${sy(yv).toFixed(1)}" stroke="#e3e9e5" stroke-dasharray="3 3"></line><text x="${padL - 8}" y="${(sy(yv) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#5e7369">${escape(formatEng(yv))}</text>`).join('')
     + xTicks.map(xv => `<line x1="${sx(xv).toFixed(1)}" y1="${padT}" x2="${sx(xv).toFixed(1)}" y2="${H - padB}" stroke="#edf2ee"></line><text x="${sx(xv).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10" fill="#5e7369">${escape(formatEng(xv, unit))}</text>`).join('');
 
+  let cursorOverlay = '';
+  if (interactive) {
+    const drawCur = (cx, color, lbl) => {
+      if (cx === null || cx === undefined || !Number.isFinite(cx) || cx < xMin || cx > xMax) return '';
+      const px = sx(cx).toFixed(1);
+      return `<line x1="${px}" y1="${padT}" x2="${px}" y2="${H - padB}" stroke="${color}" stroke-width="1.6" stroke-dasharray="4 3"></line><rect x="${(Number(px) - 9).toFixed(1)}" y="${padT + 2}" width="18" height="15" rx="3" fill="${color}"></rect><text x="${px}" y="${padT + 13}" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">${lbl}</text>`;
+    };
+    cursorOverlay = drawCur(directState.wfCursorA, '#d97706', 'A') + drawCur(directState.wfCursorB, '#7c3aed', 'B');
+  }
   const legend = sigNames.map((name, idx) => `<span class="wf-legend-item"><i style="background:${WF_COLORS[idx % WF_COLORS.length]}"></i>${escape(name)}</span>`).join('');
-  return `<div class="wf-legend">${legend}</div><svg class="wf-svg ${interactive ? 'wf-zoomable' : ''}" viewBox="0 0 ${W} ${H}" ${interactive ? `data-wf-zoom-svg="1" data-xmin="${xMin}" data-xmax="${xMax}" data-padl="${padL}" data-padr="${padR}" data-w="${W}"` : ''}><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${grid}${shapes}${interactive ? '<rect class="wf-zoom-brush" x="0" y="' + padT + '" width="0" height="' + plotH + '" hidden></rect>' : ''}</svg>`;
+  return `<div class="wf-legend">${legend}</div><svg class="wf-svg ${interactive ? (directState.wfToolMode === 'cursor' ? 'wf-clickable' : 'wf-zoomable') : ''}" viewBox="0 0 ${W} ${H}" ${interactive ? `data-wf-zoom-svg="1" data-xmin="${xMin}" data-xmax="${xMax}" data-padl="${padL}" data-padr="${padR}" data-w="${W}"` : ''}><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${grid}${shapes}${cursorOverlay}${interactive ? '<rect class="wf-zoom-brush" x="0" y="' + padT + '" width="0" height="' + plotH + '" hidden></rect>' : ''}</svg>`;
 }
 
 function renderCycleTrendSvg(cData) {
@@ -988,16 +1100,22 @@ function directWaveformPanel(run) {
 
   body += `<div class="wf-signal-box"><strong>选择信号：</strong>${availSignals.map(s => `<label class="wf-sig-pill"><input type="checkbox" data-wf-signal="${escape(s.name)}" ${directState.wfSignals.includes(s.name) ? 'checked' : ''}> ${escape(s.name)}${s.unit ? ` (${escape(s.unit)})` : ''}</label>`).join('')}</div>`;
 
-  body += `<div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-query" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '查询中…' : '查询 / 刷新波形'}</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-in" ${directState.wfBusy || !q ? 'disabled' : ''}>放大 2×</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-out" ${directState.wfBusy || !q ? 'disabled' : ''}>缩小 2×</button><button type="button" class="button secondary small" data-action="direct-wf-pan-left" ${directState.wfBusy || !q ? 'disabled' : ''}>← 左移</button><button type="button" class="button secondary small" data-action="direct-wf-pan-right" ${directState.wfBusy || !q ? 'disabled' : ''}>右移 →</button><button type="button" class="button secondary small" data-action="direct-wf-reset" ${directState.wfBusy || !q ? 'disabled' : ''}>重置全范围</button></div>`;
+  body += `<div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-query" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '查询中…' : '查询 / 刷新波形'}</button><div class="wf-mode-switch"><button type="button" class="wf-tab ${directState.wfToolMode !== 'cursor' ? 'active' : ''}" data-action="direct-wf-mode" data-mode="zoom">🔍 拖拽缩放</button><button type="button" class="wf-tab ${directState.wfToolMode === 'cursor' ? 'active' : ''}" data-action="direct-wf-mode" data-mode="cursor">📏 双游标卡尺 A/B</button></div><button type="button" class="button secondary small" data-action="direct-wf-zoom-in" ${directState.wfBusy || !q ? 'disabled' : ''}>放大 2×</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-out" ${directState.wfBusy || !q ? 'disabled' : ''}>缩小 2×</button><button type="button" class="button secondary small" data-action="direct-wf-pan-left" ${directState.wfBusy || !q ? 'disabled' : ''}>← 左移</button><button type="button" class="button secondary small" data-action="direct-wf-pan-right" ${directState.wfBusy || !q ? 'disabled' : ''}>右移 →</button><button type="button" class="button secondary small" data-action="direct-wf-reset" ${directState.wfBusy || !q ? 'disabled' : ''}>重置全范围</button><button type="button" class="button primary small" data-action="direct-wf-measure" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>📐 一键无损量测</button><button type="button" class="button secondary small" data-action="direct-wf-export-csv" ${!q ? 'disabled' : ''}>↓ 导出 CSV</button><button type="button" class="button secondary small" data-action="direct-wf-export-svg" ${!q ? 'disabled' : ''}>↓ 导出 SVG</button></div>`;
 
   body += `<details class="host-form-details"><summary>精确窗口与数据集参数（支持直接拖拽图面缩放，无需手输）</summary><div class="direct-grid wf-controls"><label>波形数据集<select id="wf-dataset">${datasets.map(d => `<option value="${escape(d.dataset)}" ${d.dataset === ds.dataset ? 'selected' : ''}>${escape(d.dataset)} (${escape(d.format)} · ${d.sweep?.count ?? 0} pts)</option>`).join('')}</select></label><label>窗口起点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmin" value="${escape(directState.wfWindow.xMin)}" placeholder="${escape(String(ds.sweep?.min ?? ''))}"></label><label>窗口终点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmax" value="${escape(directState.wfWindow.xMax)}" placeholder="${escape(String(ds.sweep?.max ?? ''))}"></label><label>最大预览点数<input id="wf-maxpts" type="number" min="64" max="20000" value="${escape(directState.wfMaxPoints)}"></label></div></details>`;
 
   if (q) {
     const modeBanner = q.exact
-      ? `<div class="wf-mode-banner exact">${chip('100% 原始无损点 (exact_window)', 'green')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始采样点，已无损返回（<code>measurement_safe: true</code>，可直接用于精确量测）。继续横向拖拽可进一步放大。</span></div>`
-      : `<div class="wf-mode-banner preview">${chip('Min-Max 包络预览 (downsampled_preview)', 'amber')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始点，已使用 <strong>${q.downsampling?.buckets || 0}</strong> 桶流式 Min-Max 包络（完整保留所有毛刺尖峰，<code>measurement_safe: false</code>）。<strong>在下方图上横向拖拽框选</strong>或点「放大 2×」将自动切换为 100% 无损原始点。</span></div>`;
-    body += `<div class="wf-plot-card">${modeBanner}${renderWaveformSvg(q, {interactive: true})}</div>`;
+      ? `<div class="wf-mode-banner exact">${chip('100% 原始无损点 (exact_window)', 'green')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始采样点，已无损返回（<code>measurement_safe: true</code>，可直接用于精确量测）。${directState.wfToolMode === 'cursor' ? '当前处于游标模式：点击图面放置 A/B 卡尺。' : '继续横向拖拽可进一步放大。'}</span></div>`
+      : `<div class="wf-mode-banner preview">${chip('Min-Max 包络预览 (downsampled_preview)', 'amber')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始点，已使用 <strong>${q.downsampling?.buckets || 0}</strong> 桶流式 Min-Max 包络（完整保留所有毛刺尖峰，<code>measurement_safe: false</code>）。<strong>在下方图上横向拖拽框选</strong>或点「放大 2×」将自动切换为 100% 无损原始点；点击「📐 一键无损量测」将直接请求无损原始采样进行精确计算。</span></div>`;
+    body += `<div class="wf-plot-card">${modeBanner}${renderCursorReadoutBar(q)}${renderWaveformSvg(q, {interactive: true})}</div>`;
   }
+  if (directState.wfMeasure) {
+    body += renderAnalogMetricsCard(directState.wfMeasure);
+  }
+
+  // Multi-Corner / Multi-Run Overlay Comparison Sub-Panel
+  body += `<div class="wf-cycle-card"><div class="section-title"><h3>多 Corner / 多任务同图叠画对比（Multi-Corner Overlay）</h3><span class="chip">PVT OVERLAY</span></div><p class="subtle-note">将多个工艺角（例如慢角 <code>ss</code>、典型角 <code>tt</code>、快角 <code>ff</code>）的 <code>v(out)</code> 叠在同一张图上，直观对比上升时间、建立时间与过冲差异。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-wf-compare-corners" ${directState.wfBusy ? 'disabled' : ''}>${directState.wfBusy ? '加载对比中…' : '📊 一键叠画对比 tt / ss / ff 工艺角'}</button>${directState.wfCompare ? '<button type="button" class="button secondary small" data-action="direct-wf-clear-compare">收起对比图</button>' : ''}</div>${directState.wfCompare ? renderCompareOverlaySvg(directState.wfCompare) : ''}</div>`;
 
   // Cycle Slicer & Drill-Down Sub-Panel
   body += `<div class="wf-cycle-card"><div class="section-title"><h3>多周期切片分析（Cycle Slicer · 逐周期趋势 + 自动抓最差毛刺 + 单周期无损钻取）</h3><span class="chip">CYCLE SLICER</span></div><p class="subtle-note">面对数百至上千个周期的长瞬态仿真，自动逐周期统计极值/峰峰值/过冲，标出最差异常周期并支持点击任意周期看其 100% 无损内部波形。</p><div class="direct-grid"><label>时钟边沿信号（推荐）<select id="wf-clock"><option value="">（不使用时钟，改用固定周期 T）</option>${availSignals.map(s => `<option value="${escape(s.name)}" ${s.name === directState.wfClock ? 'selected' : ''}>${escape(s.name)}</option>`).join('')}</select></label><label>固定周期 T（无时钟时填写）<input id="wf-period" value="${escape(directState.wfPeriod)}" placeholder="例如 1e-8" ${directState.wfClock ? 'disabled' : ''}></label><label>最差周期判定指标<select id="wf-worst-metric"><option value="peak_to_peak" ${directState.wfWorstMetric === 'peak_to_peak' ? 'selected' : ''}>峰峰值最大 (peak_to_peak)</option><option value="max_value" ${directState.wfWorstMetric === 'max_value' ? 'selected' : ''}>周期峰值最高 (max_value)</option><option value="min_value" ${directState.wfWorstMetric === 'min_value' ? 'selected' : ''}>周期谷值最低 (min_value)</option><option value="overshoot" ${directState.wfWorstMetric === 'overshoot' ? 'selected' : ''}>相对稳态过冲最大 (overshoot)</option><option value="period_deviation" ${directState.wfWorstMetric === 'period_deviation' ? 'selected' : ''}>周期时长偏差最大 (period_deviation)</option></select></label><label>指标评估信号<select id="wf-worst-signal">${(directState.wfSignals.length ? directState.wfSignals : availSignals.map(s => s.name)).map(name => `<option value="${escape(name)}" ${name === directState.wfWorstSignal ? 'selected' : ''}>${escape(name)}</option>`).join('')}</select></label></div><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-cycles" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '分析中…' : '执行周期切片分析'}</button>${c ? `<div class="wf-jump-box"><input id="wf-jump-cycle" type="number" min="0" max="${Math.max(0, c.cycle_count - 1)}" value="${escape(directState.wfJumpCycle)}" placeholder="输入周期号 0~${Math.max(0, c.cycle_count - 1)}"><button type="button" class="button secondary small" data-action="direct-wf-jump-cycle" ${directState.wfBusy ? 'disabled' : ''}>钻取该周期</button></div>` : ''}</div>`;
@@ -1084,6 +1202,17 @@ async function handleDirectClick(event) {
     await refreshDirect();
     return;
   }
+  if (action === 'notify-preview') {
+    try {
+      directState.notifyPreview = await api('/api/direct/notifications/preview', {
+        method: 'POST',
+        body: {provider: directState.notifyProvider, event_type: directState.notifyEvent},
+      });
+      render();
+      toast('已生成脱敏通知卡片预览（不发送真实网络请求）。');
+    } catch (error) { toast(error.message); }
+    return;
+  }
   if (action === 'demo-wf') {
     if (directState.busy || directState.wfBusy) return;
     directState.activeTab = 'waveforms';
@@ -1122,6 +1251,107 @@ async function handleDirectClick(event) {
     return;
   }
   if (action === 'wf-query') { await runWaveformQuery(); return; }
+  if (action === 'wf-mode') {
+    directState.wfToolMode = button.dataset.mode === 'cursor' ? 'cursor' : 'zoom';
+    render();
+    return;
+  }
+  if (action === 'wf-clear-cursors') {
+    directState.wfCursorA = null;
+    directState.wfCursorB = null;
+    directState.wfCursorNext = 'A';
+    render();
+    return;
+  }
+  if (action === 'wf-measure') {
+    const runId = directState.selectedId;
+    const ds = currentWfDatasetMeta();
+    const sig = directState.wfSignals[0];
+    if (!runId || !ds || !sig || directState.wfBusy) return;
+    const body = {dataset: ds.dataset, signal: sig, tol_pct: 2.0};
+    if (directState.wfWindow.xMin !== '' && Number.isFinite(Number(directState.wfWindow.xMin))) body.x_min = Number(directState.wfWindow.xMin);
+    if (directState.wfWindow.xMax !== '' && Number.isFinite(Number(directState.wfWindow.xMax))) body.x_max = Number(directState.wfWindow.xMax);
+    directState.wfBusy = true; directState.wfError = null; render();
+    try {
+      directState.wfMeasure = await api(`/api/direct/runs/${encodeURIComponent(runId)}/waveforms/measure`, {method: 'POST', body});
+      toast(`已完成 ${sig} 无损模拟量测（共 ${directState.wfMeasure.sample_count} 点）。`);
+    } catch (error) { directState.wfError = error.message; toast(error.message); }
+    finally { directState.wfBusy = false; render(); }
+    return;
+  }
+  if (action === 'wf-compare-corners') {
+    if (directState.wfBusy) return;
+    directState.wfBusy = true; directState.wfError = null; render();
+    try {
+      const targets = [
+        {runId: 'demo-pvt-27-tt-1p2-27', label: 'TT · 1.20V · 27°C (典型角)'},
+        {runId: 'demo-pvt-27-ss-1p08-125', label: 'SS · 1.08V · 125°C (慢角)'},
+        {runId: 'demo-pvt-27-ff-1p32-m40', label: 'FF · 1.32V · -40°C (快角)'},
+      ];
+      // On local non-demo workspaces, compare up to 3 collected runs if available
+      const traces = [];
+      if (!isPublicDemo()) {
+        const localRuns = directState.runs.filter(r => r.collection_phase === 'complete').slice(0, 3);
+        for (const r of localRuns) {
+          try {
+            const idx = await api(`/api/direct/runs/${encodeURIComponent(r.run_id)}/waveforms?allow_remote=0`);
+            const ds = idx.datasets?.[0];
+            if (!ds) continue;
+            const sig = ds.signals?.find(s => !/clk|clock/i.test(s.name))?.name || ds.signals?.[0]?.name;
+            if (!sig) continue;
+            const qRes = await api(`/api/direct/runs/${encodeURIComponent(r.run_id)}/waveforms/query`, {method: 'POST', body: {dataset: ds.dataset, signals: [sig], max_points: 2000, mode: 'exact'}});
+            const mRes = await api(`/api/direct/runs/${encodeURIComponent(r.run_id)}/waveforms/measure`, {method: 'POST', body: {dataset: ds.dataset, signal: sig, tol_pct: 2.0}});
+            traces.push({label: `${r.run_id} (${sig})`, x: qRes.x || [], y: qRes.signals[sig].values || [], metrics: mRes.metrics});
+          } catch { /* skip unreadable run */ }
+        }
+      } else {
+        for (const t of targets) {
+          const qRes = await api(`/api/direct/runs/${encodeURIComponent(t.runId)}/waveforms/query`, {method: 'POST', body: {dataset: 'tran.tran.tran', signals: ['v(out)'], max_points: 2000, mode: 'exact'}});
+          const mRes = await api(`/api/direct/runs/${encodeURIComponent(t.runId)}/waveforms/measure`, {method: 'POST', body: {dataset: 'tran.tran.tran', signal: 'v(out)', tol_pct: 2.0}});
+          traces.push({label: t.label, x: qRes.x || [], y: qRes.signals['v(out)'].values || [], metrics: mRes.metrics});
+        }
+      }
+      if (!traces.length) throw new Error('暂无可对比的已收集波形；可先加载演示波形或收集多个仿真任务。');
+      directState.wfCompare = {traces};
+      toast(`已同图叠画 ${traces.length} 条波形对比。`);
+    } catch (error) { directState.wfError = error.message; toast(error.message); }
+    finally { directState.wfBusy = false; render(); }
+    return;
+  }
+  if (action === 'wf-clear-compare') {
+    directState.wfCompare = null;
+    render();
+    return;
+  }
+  if (action === 'wf-export-csv' || action === 'wf-export-svg') {
+    const q = directState.wfQuery;
+    if (!q) return;
+    if (action === 'wf-export-svg') {
+      const svgEl = document.querySelector('svg[data-wf-zoom-svg="1"]');
+      if (!svgEl) return;
+      const blob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n` + svgEl.outerHTML], {type: 'image/svg+xml;charset=utf-8'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `${directState.selectedId || 'waveform'}.svg`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast('已导出当前波形 SVG 矢量图。');
+      return;
+    }
+    const sigNames = Object.keys(q.signals || {});
+    const primaryXs = q.x || q.signals[sigNames[0]]?.x || [];
+    const lines = [['sweep_' + (q.sweep?.name || 'time'), ...sigNames].join(',')];
+    for (let i = 0; i < primaryXs.length; i++) {
+      lines.push([primaryXs[i], ...sigNames.map(s => {
+        const v = q.signals[s]?.values?.[i];
+        return (v && typeof v === 'object') ? (v.mag ?? v.real ?? '') : (v ?? '');
+      })].join(','));
+    }
+    const blob = new Blob([lines.join('\n') + '\n'], {type: 'text/csv;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${directState.selectedId || 'waveform'}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast(`已导出波形 CSV（${primaryXs.length} 行）。`);
+    return;
+  }
   if (action === 'wf-reset') { await runWaveformQuery({xMin: '', xMax: ''}); return; }
   if (action === 'wf-zoom-in' || action === 'wf-zoom-out' || action === 'wf-pan-left' || action === 'wf-pan-right') {
     const sw = directState.wfQuery?.sweep;
@@ -2262,6 +2492,20 @@ document.addEventListener('pointerdown', event => {
   if (!svg || directState.wfBusy) return;
   const padL = Number(svg.dataset.padl || 66), padR = Number(svg.dataset.padr || 18), W = Number(svg.dataset.w || 760);
   const x = Math.max(padL, Math.min(W - padR, svgClientToViewX(svg, event.clientX)));
+  if (directState.wfToolMode === 'cursor') {
+    const plotW = W - padL - padR;
+    const xMin = Number(svg.dataset.xmin), xMax = Number(svg.dataset.xmax);
+    const valX = xMin + ((x - padL) / Math.max(1, plotW)) * (xMax - xMin);
+    if (directState.wfCursorNext === 'A') {
+      directState.wfCursorA = valX;
+      directState.wfCursorNext = 'B';
+    } else {
+      directState.wfCursorB = valX;
+      directState.wfCursorNext = 'A';
+    }
+    render();
+    return;
+  }
   wfDrag = {svg, startX: x, curX: x, padL, padR, W};
   const brush = svg.querySelector('.wf-zoom-brush');
   if (brush) { brush.setAttribute('x', x); brush.setAttribute('width', '0'); brush.hidden = false; }
@@ -2401,7 +2645,8 @@ document.addEventListener('input', event => {
     'direct-wall': 'wall_seconds', 'direct-queue': 'queue', 'direct-project': 'project',
     'direct-job-group': 'job_group', 'direct-partition': 'partition', 'direct-account': 'account',
     'direct-qos': 'qos', 'direct-python': 'remote_python', 'direct-root': 'remote_root',
-    'direct-includes': 'include_dirs', 'direct-netlist': 'netlist_text', 'direct-lookup-key': 'lookup_key',
+    'direct-includes': 'include_dirs', 'direct-env-modules': 'env_modules', 'direct-env-scripts': 'env_scripts',
+    'direct-netlist': 'netlist_text', 'direct-lookup-key': 'lookup_key',
     'direct-rec-attempts': 'rec_max_attempts', 'direct-rec-maxmem': 'rec_max_memory_gib',
     'direct-rec-backoff': 'rec_license_backoff', 'direct-rec-elapsed': 'rec_max_elapsed_min',
   };
@@ -2460,6 +2705,8 @@ document.addEventListener('change', event => {
   if (event.target.id === 'direct-rec-oom') directDraft.rec_retry_oom = event.target.checked;
   if (event.target.id === 'direct-rec-relocate') directDraft.rec_allow_relocate = event.target.checked;
   if (event.target.id === 'direct-rec-outcome') { directState.recoveryOutcome = event.target.value; refreshDirect(); }
+  if (event.target.id === 'notify-provider') { directState.notifyProvider = event.target.value; }
+  if (event.target.id === 'notify-event') { directState.notifyEvent = event.target.value; }
   if (event.target.id === 'wf-dataset') {
     directState.wfDataset = event.target.value;
     syncWaveformSelection(true);
@@ -2799,6 +3046,9 @@ document.addEventListener('submit', async event => {
     }
     const includes = directDraft.include_dirs.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     if (includes.length) payload.include_dirs = includes;
+    const mods = directDraft.env_modules.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    const scs = directDraft.env_scripts.split(/[,\r\n]+/).map(s => s.trim()).filter(Boolean);
+    if (mods.length || scs.length) payload.remote_env = {modules: mods, setup_scripts: scs, shell: 'bash'};
     if (directDraft.backend === 'lsf') {
       payload.scheduler = {queue: directDraft.queue.trim(), exclusive: !!directDraft.exclusive};
       if (directDraft.project.trim()) payload.scheduler.project = directDraft.project.trim();

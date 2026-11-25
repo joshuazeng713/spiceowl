@@ -284,16 +284,49 @@
     return sb.wfData;
   }
 
+  function buildCornerWaveformSamples(runId) {
+    // Provide physically distinct corner responses when comparing PVT corners (tt / ss / ff)
+    if (!runId || runId === 'demo-psfbin-500c' || runId === 'demo-sandbox-rc') {
+      return buildDemoWaveformSamples();
+    }
+    const lower = String(runId).toLowerCase();
+    const isSS = lower.includes('-ss-') || lower.includes('_ss_') || lower.endsWith('-ss');
+    const isFF = lower.includes('-ff-') || lower.includes('_ff_') || lower.endsWith('-ff');
+    if (!isSS && !isFF && !lower.includes('-tt-')) return buildDemoWaveformSamples();
+    sb.cornerWfCache ??= {};
+    if (sb.cornerWfCache[runId]) return sb.cornerWfCache[runId];
+    const n = 2000, tEnd = 2e-6;
+    const x = new Float64Array(n), vOut = new Float64Array(n), vClk = new Float64Array(n), vVdd = new Float64Array(n);
+    const targetV = isSS ? 0.835 : isFF ? 0.945 : 0.900;
+    const tau = isSS ? 3.8e-7 : isFF ? 1.4e-7 : 2.3e-7;
+    const ringAmp = isFF ? 0.14 : isSS ? 0.01 : 0.045;
+    const ringFreq = isFF ? 2.4e6 : 1.8e6;
+    const vddNom = isSS ? 1.08 : isFF ? 1.32 : 1.20;
+    for (let i = 0; i < n; i++) {
+      const t = (i / (n - 1)) * tEnd;
+      const step = targetV * (1 - Math.exp(-t / tau));
+      const ring = ringAmp * Math.exp(-t / (tau * 1.4)) * Math.sin(2 * Math.PI * ringFreq * t);
+      const ripple = 0.006 * Math.sin(2 * Math.PI * 1e7 * t);
+      x[i] = t;
+      vOut[i] = Math.max(-0.05, step + ring + ripple);
+      vClk[i] = ((t % 1e-7) < 5e-8) ? vddNom : 0.0;
+      vVdd[i] = vddNom;
+    }
+    const res = {x, signals: {'v(out)': vOut, 'v(clk)': vClk, 'v(vdd)': vVdd}, count: n, min: x[0], max: x[n - 1], period: 1e-7};
+    sb.cornerWfCache[runId] = res;
+    return res;
+  }
+
   function sbWaveformIndex(runId) {
-    const d = buildDemoWaveformSamples();
+    const d = buildCornerWaveformSamples(runId);
     return {
       schema: 'spiceowl.waveform-index.v1',
       run_id: runId,
-      total_raw_bytes: 642048,
+      total_raw_bytes: d.count * 32,
       skipped: [],
       datasets: [{
         dataset: 'tran.tran.tran', name: 'tran.tran.tran', format: 'psfbin', windowed: true,
-        parser_backend: 'spiceowl.psf_binary.browser_demo', bytes: 642048, source: 'local_collected',
+        parser_backend: 'spiceowl.psf_binary.browser_demo', bytes: d.count * 32, source: 'local_collected',
         sweep: {name: 'time', unit: 's', count: d.count, min: d.min, max: d.max},
         signal_count: 3,
         signals: [
@@ -306,7 +339,7 @@
   }
 
   function sbQueryWaveform(runId, req) {
-    const d = buildDemoWaveformSamples();
+    const d = buildCornerWaveformSamples(runId);
     const sigs = (Array.isArray(req.signals) && req.signals.length ? req.signals : ['v(out)']).filter(s => own(d.signals, s));
     if (!sigs.length) fail('Select at least one valid signal.');
     const xMin = req.x_min !== undefined && req.x_min !== null ? Number(req.x_min) : d.min;
@@ -375,6 +408,101 @@
       downsampling: {algorithm: 'min_max_envelope', buckets, source_samples_in_window: wCount},
       sweep: {name: 'time', unit: 's', total_count: d.count, window_count: wCount, min: xMin, max: xMax, full_min: d.min, full_max: d.max},
       x: null, signals: outSigs, envelopes: outEnv,
+    };
+  }
+
+  function sbMeasureWaveform(runId, req) {
+    const sig = req.signal || 'v(out)';
+    const q = sbQueryWaveform(runId, {dataset: req.dataset || 'tran.tran.tran', signals: [sig], x_min: req.x_min, x_max: req.x_max, max_points: 20000, mode: 'exact'});
+    const xs = q.x || [], ys = q.signals?.[sig]?.values || [];
+    const n = xs.length;
+    if (n < 2) fail('Need at least 2 exact points for analog measurement.');
+    const tol = Math.max(0.01, Math.min(50, Number(req.tol_pct) || 2.0));
+    let vMin = Infinity, vMax = -Infinity;
+    for (let i = 0; i < n; i++) { if (ys[i] < vMin) vMin = ys[i]; if (ys[i] > vMax) vMax = ys[i]; }
+    const vPp = vMax - vMin, vInit = ys[0], vFinal = ys[n - 1], totalDt = Math.max(1e-18, xs[n - 1] - xs[0]);
+    let area = 0, sqArea = 0;
+    for (let i = 0; i < n - 1; i++) {
+      const dt = xs[i + 1] - xs[i];
+      if (dt <= 0) continue;
+      area += 0.5 * (ys[i] + ys[i + 1]) * dt;
+      sqArea += (ys[i] * ys[i] + ys[i] * ys[i + 1] + ys[i + 1] * ys[i + 1]) * (dt / 3);
+    }
+    const vMean = area / totalDt, vRms = Math.sqrt(Math.max(0, sqArea / totalDt));
+    const interp = (x0, y0, x1, y1, lvl) => y1 === y0 ? 0.5 * (x0 + x1) : x0 + Math.max(0, Math.min(1, (lvl - y0) / (y1 - y0))) * (x1 - x0);
+    const trans = (lo, hi, rising) => {
+      let tS = null;
+      const sL = rising ? lo : hi, eL = rising ? hi : lo;
+      for (let i = 0; i < n - 1; i++) {
+        const y0 = ys[i], y1 = ys[i + 1];
+        if (rising) {
+          if (y0 <= sL && y1 > sL) tS = interp(xs[i], y0, xs[i + 1], y1, sL);
+          if (tS !== null && y0 < eL && y1 >= eL) { const tE = interp(xs[i], y0, xs[i + 1], y1, eL); if (tE > tS) return tE - tS; }
+          else if (tS !== null && y1 < sL) tS = null;
+        } else {
+          if (y0 >= sL && y1 < sL) tS = interp(xs[i], y0, xs[i + 1], y1, sL);
+          if (tS !== null && y0 > eL && y1 <= eL) { const tE = interp(xs[i], y0, xs[i + 1], y1, eL); if (tE > tS) return tE - tS; }
+          else if (tS !== null && y1 > sL) tS = null;
+        }
+      }
+      return null;
+    };
+    let riseTime = null, fallTime = null, srPos = null, srNeg = null, settleTime = null, overshoot = null, undershoot = null;
+    let periodMean = null, freqHz = null, dutyPct = null, jitterRms = null;
+    if (vPp > 1e-12) {
+      const lo = vMin + 0.1 * vPp, hi = vMin + 0.9 * vPp;
+      riseTime = trans(lo, hi, true);
+      fallTime = trans(lo, hi, false);
+      if (riseTime) srPos = (hi - lo) / riseTime;
+      if (fallTime) srNeg = (hi - lo) / fallTime;
+      const tailN = Math.max(1, Math.min(16, Math.floor(n / 20)));
+      let tailSum = 0; for (let i = n - tailN; i < n; i++) tailSum += ys[i];
+      const steady = tailSum / tailN, delta = steady - vInit, band = (tol / 100) * Math.max(Math.abs(delta), vPp);
+      let lastOut = -1;
+      for (let i = 0; i < n; i++) if (Math.abs(ys[i] - steady) > band) lastOut = i;
+      if (lastOut < n - 1) settleTime = lastOut < 0 ? 0 : (xs[lastOut + 1] - xs[0]);
+      if (Math.abs(delta) >= 0.2 * vPp) {
+        if (delta > 0) {
+          overshoot = Math.max(0, (vMax - steady) / delta * 100);
+          undershoot = Math.max(0, (vInit - vMin) / delta * 100);
+        } else {
+          const mag = Math.abs(delta);
+          overshoot = Math.max(0, (steady - vMin) / mag * 100);
+          undershoot = Math.max(0, (vMax - vInit) / mag * 100);
+        }
+      }
+      const mid = 0.5 * (vMin + vMax), rising = [], falling = [];
+      for (let i = 0; i < n - 1; i++) {
+        if (ys[i] < mid && ys[i + 1] >= mid) rising.push(interp(xs[i], ys[i], xs[i + 1], ys[i + 1], mid));
+        else if (ys[i] > mid && ys[i + 1] <= mid) falling.push(interp(xs[i], ys[i], xs[i + 1], ys[i + 1], mid));
+      }
+      if (rising.length >= 2) {
+        const periods = [];
+        for (let i = 0; i < rising.length - 1; i++) if (rising[i + 1] > rising[i]) periods.push(rising[i + 1] - rising[i]);
+        if (periods.length) {
+          periodMean = periods.reduce((a, b) => a + b, 0) / periods.length;
+          freqHz = periodMean > 0 ? 1 / periodMean : null;
+          jitterRms = periods.length >= 2 ? Math.sqrt(periods.reduce((a, p) => a + (p - periodMean) ** 2, 0) / periods.length) : 0;
+          const widths = [];
+          let fi = 0;
+          for (let i = 0; i < rising.length - 1; i++) {
+            while (fi < falling.length && falling[fi] <= rising[i]) fi++;
+            if (fi < falling.length) { const w = falling[fi] - rising[i]; if (w > 0 && w < periodMean * 1.5) widths.push(w); }
+          }
+          if (widths.length && periodMean > 0) dutyPct = (widths.reduce((a, b) => a + b, 0) / widths.length) / periodMean * 100;
+        }
+      }
+    }
+    return {
+      schema: 'spiceowl.analog-metrics.v1', analysis: 'transient', run_id: runId, dataset: req.dataset || 'tran.tran.tran',
+      signal: sig, unit: 'V', x_unit: 's', exact: true, measurement_safe: true, sample_count: n,
+      window: {x_min: xs[0], x_max: xs[n - 1], span: totalDt},
+      metrics: {
+        min: vMin, max: vMax, peak_to_peak: vPp, mean: vMean, rms: vRms, initial_value: vInit, final_value: vFinal,
+        rise_time: riseTime, fall_time: fallTime, slew_rate_pos: srPos, slew_rate_neg: srNeg,
+        settling_time: settleTime, settling_tol_pct: tol, overshoot_pct: overshoot, undershoot_pct: undershoot,
+        period_mean: periodMean, frequency_hz: freqHz, duty_cycle_pct: dutyPct, period_jitter_rms: jitterRms,
+      },
     };
   }
 
@@ -677,6 +805,41 @@
       sbEnsureSeeded();
       return {run: sb.runs['demo-psfbin-500c'], waveforms: sbWaveformIndex('demo-psfbin-500c')};
     }
+    if (path === '/api/direct/notifications' && method === 'GET') {
+      return {channels: [], history: []};
+    }
+    if (path === '/api/direct/notifications/preview' && method === 'POST') {
+      const provider = ['feishu', 'slack', 'dingtalk', 'generic'].includes(body.provider) ? body.provider : 'feishu';
+      const eventType = body.event_type || 'recovery_succeeded';
+      const runId = body.run_id || 'demo-oom-recover-r2';
+      const titles = {
+        completed: `仿真完成 · ${runId}`,
+        failed: `仿真失败需关注 · ${runId}`,
+        spec_missed: `有效测量但指标未达标 · ${runId}`,
+        recovery_succeeded: `异常已自动恢复并完成 · ${runId}`,
+        recovery_exhausted: `自动恢复预算耗尽已停止 · ${runId}`,
+        watch_disconnected: `后台盯守通信中断（状态未知）· ${runId}`,
+      };
+      const titleText = titles[eventType] || titles.recovery_succeeded;
+      const ev = {
+        schema: 'spiceowl.notification.v1', event_id: 'ntf-demo-preview', event_type: eventType,
+        severity: eventType.includes('failed') || eventType.includes('exhausted') ? 'red' : eventType.includes('missed') || eventType.includes('disconnected') ? 'amber' : 'green',
+        title: titleText, run_id: runId, host_id: 'sim-node-a', backend: 'slurm', simulator: 'spectre',
+        attempt_number: eventType.includes('recovery') ? 2 : 1,
+        five_dim: {execution: 'completed', measurement: 'valid', performance: eventType === 'spec_missed' ? 'fail' : 'pass', soa: 'clean'},
+        detail: body.detail || '确认 OOM 后已自动将内存由 16 GiB 翻倍至 32 GiB 并顺利完成（网表 SHA-256 全程一致，无任何私密网表外发）。',
+        created_at: now(),
+      };
+      const md = `任务 ID: \`${ev.run_id}\` (第 #${ev.attempt_number} 次尝试)\n节点/后端: \`${ev.host_id}\` · \`${ev.backend}\` · \`${ev.simulator}\`\n四维状态: 执行=\`${ev.five_dim.execution}\` | 测量=\`${ev.five_dim.measurement}\` | 性能=\`${ev.five_dim.performance}\` | SOA=\`${ev.five_dim.soa}\`\n说明: ${ev.detail}`;
+      const payload = provider === 'feishu'
+        ? {msg_type: 'interactive', card: {header: {template: ev.severity === 'green' ? 'green' : ev.severity === 'amber' ? 'orange' : 'red', title: {tag: 'plain_text', content: `🦉 SpiceOwl · ${titleText}`}}, elements: [{tag: 'markdown', content: md}]}}
+        : provider === 'dingtalk'
+        ? {msgtype: 'markdown', markdown: {title: `SpiceOwl · ${titleText}`, text: `### 🦉 ${titleText}\n\n${md}`}}
+        : provider === 'slack'
+        ? {text: `SpiceOwl · ${titleText}`, blocks: [{type: 'header', text: {type: 'plain_text', text: `SpiceOwl · ${titleText}`}}, {type: 'section', text: {type: 'mrkdwn', text: md}}]}
+        : ev;
+      return {event: ev, provider, payload};
+    }
     if (path.startsWith('/api/direct/recovery-reports')) {
       sbEnsureSeeded();
       if (path === '/api/direct/recovery-reports' || path.startsWith('/api/direct/recovery-reports?')) {
@@ -708,10 +871,12 @@
       if (!sb.batches[batchMatch[1]]) fail('Demo batch not found.', 'not_found');
       return sb.batches[batchMatch[1]];
     }
-    const wfQueryMatch = path.match(/^\/api\/direct\/runs\/([A-Za-z0-9_-]+)\/waveforms\/(query|cycles)$/);
+    const wfQueryMatch = path.match(/^\/api\/direct\/runs\/([A-Za-z0-9_-]+)\/waveforms\/(query|cycles|measure)$/);
     if (wfQueryMatch && method === 'POST') {
       sbEnsureSeeded();
-      return wfQueryMatch[2] === 'query' ? sbQueryWaveform(wfQueryMatch[1], body) : sbAnalyzeCycles(wfQueryMatch[1], body);
+      if (wfQueryMatch[2] === 'query') return sbQueryWaveform(wfQueryMatch[1], body);
+      if (wfQueryMatch[2] === 'measure') return sbMeasureWaveform(wfQueryMatch[1], body);
+      return sbAnalyzeCycles(wfQueryMatch[1], body);
     }
     const wfIdxMatch = path.match(/^\/api\/direct\/runs\/([A-Za-z0-9_-]+)\/waveforms(?:\?.*)?$/);
     if (wfIdxMatch && method === 'GET') {

@@ -53,9 +53,11 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
         live_client = LiveSimulationClient(live_client_config)
     from spiceowl.direct import DirectExecutionManager, DirectRecoverySupervisor
     from spiceowl.batch import DirectBatchManager
+    from spiceowl.notifications import NotificationManager
     direct_manager = DirectExecutionManager(controller.store.directory, hosts=getattr(controller, "hosts", None))
     batch_manager = DirectBatchManager(controller.store.directory, direct_manager)
-    direct_supervisor = DirectRecoverySupervisor(direct_manager)
+    notification_manager = NotificationManager(controller.store.directory)
+    direct_supervisor = DirectRecoverySupervisor(direct_manager, notifier=notification_manager)
     direct_monitor = direct_supervisor.monitor
     direct_supervisor.resume()
     from spiceowl.codex_bridge import CodexBridge
@@ -277,6 +279,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     "output_format", "expected_version", "pin_version", "cpus", "memory_gib",
                     "wall_seconds", "license_queue_seconds", "enforce_rlimit_as", "scheduler",
                     "include_dirs", "remote_python", "remote_root", "source_commit", "recovery_policy",
+                    "remote_env",
                 }
                 if set(payload) - allowed or not {"run_key", "netlist_text"} <= set(payload):
                     raise DomainError("Direct prepare requires run_key, netlist_text, and supported direct parameters only.")
@@ -311,6 +314,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     include_dirs=payload.get("include_dirs"),
                     remote_python=payload.get("remote_python", "/usr/bin/python3"),
                     remote_root=payload.get("remote_root", ".spiceowl-runs"),
+                    remote_env=payload.get("remote_env"),
                     source_commit=payload.get("source_commit"),
                     recovery_policy=payload.get("recovery_policy"),
                 )
@@ -495,6 +499,46 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     {"run": run, "waveforms": direct_manager.waveform_index(run["run_id"], allow_remote=False)},
                     201,
                 )
+            if path == "/api/direct/notifications" and self.command == "GET":
+                return self.reply({
+                    "channels": notification_manager.list_channels(redact=True),
+                    "history": notification_manager.list_history(limit=30),
+                })
+            if path == "/api/direct/notifications/preview" and self.command == "POST":
+                from spiceowl.notifications import build_notification_event, format_provider_payload
+                req = self.body()
+                allowed = {"provider", "event_type", "run_id", "detail"}
+                if set(req) - allowed:
+                    raise DomainError("Notification preview accepts provider, event_type, run_id, and detail only.")
+                provider = req.get("provider", "feishu")
+                event_type = req.get("event_type", "recovery_succeeded")
+                ev = build_notification_event(
+                    event_type=event_type,
+                    run_id=req.get("run_id") or "demo-oom-recover-r2",
+                    host_id="sim-node-a",
+                    backend="slurm",
+                    simulator="spectre",
+                    attempt_number=2 if "recovery" in str(event_type) else 1,
+                    five_dim_summary={"execution": "completed", "measurement": "valid", "performance": "pass", "soa": "clean"},
+                    detail=req.get("detail") or "确认 OOM 后已自动将内存由 16 GiB 翻倍至 32 GiB 并顺利完成（网表 SHA-256 全程一致）。",
+                )
+                return self.reply({"event": ev, "provider": provider, "payload": format_provider_payload(provider, ev)})
+            if path == "/api/direct/notifications/channels" and self.command == "POST":
+                req = self.body()
+                allowed = {"label", "provider", "webhook_url", "events", "enabled"}
+                if set(req) - allowed or not {"label", "provider", "webhook_url"} <= set(req):
+                    raise DomainError("Notification channel requires label, provider, and webhook_url.")
+                ch = notification_manager.add_channel(
+                    label=req["label"],
+                    provider=req["provider"],
+                    webhook_url=req["webhook_url"],
+                    events=req.get("events"),
+                    enabled=req.get("enabled", True),
+                )
+                return self.reply({"channel": ch}, 201)
+            if path.startswith("/api/direct/notifications/channels/") and self.command == "DELETE":
+                ch_id = require_id(path.removeprefix("/api/direct/notifications/channels/"), "notification channel ID")
+                return self.reply(notification_manager.remove_channel(ch_id))
             if path == "/api/direct/recovery-reports" and self.command == "GET":
                 query = parse_qs(url.query, keep_blank_values=True)
                 if set(query) - {"q", "outcome"}:
@@ -601,6 +645,26 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                             context_cycles=req.get("context_cycles", 0),
                             overlay_cycles=req.get("overlay_cycles", 10),
                             max_points_per_cycle=req.get("max_points_per_cycle", 2000),
+                        ))
+                    if wf_op == "measure":
+                        allowed = {"dataset", "signal", "x_min", "x_max", "tol_pct"}
+                        if set(req) - allowed or not {"dataset", "signal"} <= set(req):
+                            raise DomainError("Waveform measure requires dataset and signal.")
+                        if not isinstance(req["dataset"], str) or not req["dataset"].strip():
+                            raise DomainError("dataset must be a non-empty string.")
+                        if not isinstance(req["signal"], str) or not req["signal"].strip():
+                            raise DomainError("signal must be a non-empty string.")
+                        for bound_name in ("x_min", "x_max", "tol_pct"):
+                            bval = req.get(bound_name)
+                            if bval is not None and (isinstance(bval, bool) or not isinstance(bval, (int, float))):
+                                raise DomainError(f"{bound_name} must be numeric or null.")
+                        return self.reply(direct_manager.waveform_measure(
+                            run_id,
+                            req["dataset"],
+                            req["signal"],
+                            x_min=float(req["x_min"]) if req.get("x_min") is not None else None,
+                            x_max=float(req["x_max"]) if req.get("x_max") is not None else None,
+                            tol_pct=float(req["tol_pct"]) if req.get("tol_pct") is not None else 2.0,
                         ))
                     raise DomainError("This endpoint does not exist.", "not_found")
                 if len(sub) == 2 and self.command == "POST":

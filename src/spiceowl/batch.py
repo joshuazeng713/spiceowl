@@ -25,6 +25,11 @@ import uuid
 from spiceowl._platform import file_lock
 from spiceowl.direct import DirectExecutionManager
 from spiceowl.domain.common import DomainError, utcnow
+from spiceowl.experiments.analog_metrics import (
+    SUPPORTED_TRANSIENT_METRICS,
+    extract_named_metric,
+    measure_transient_signal,
+)
 from spiceowl.integrations import psf_binary
 
 
@@ -119,8 +124,11 @@ def _validate_specs(specs: list[dict] | None) -> list[dict]:
             raise DomainError("Each spec requires a unique ASCII identifier name.", "invalid_batch_spec")
         seen.add(name)
         metric = item.get("metric", "max")
-        if metric not in ("max", "min", "peak_to_peak", "avg", "end", "value"):
-            raise DomainError("spec metric must be max, min, peak_to_peak, avg, end, or value.", "invalid_batch_spec")
+        if metric not in SUPPORTED_TRANSIENT_METRICS:
+            raise DomainError(
+                f"spec metric '{metric}' is unsupported; expected one of {sorted(SUPPORTED_TRANSIENT_METRICS)}.",
+                "invalid_batch_spec",
+            )
         signal = item.get("signal")
         if signal is not None and (not isinstance(signal, str) or not signal.strip()):
             raise DomainError("spec signal must be a non-empty string or null.", "invalid_batch_spec")
@@ -418,6 +426,8 @@ def _extract_metrics_from_local_waveforms(manager: DirectExecutionManager, run_i
             continue
         if not q.get("exact") or not q.get("measurement_safe"):
             continue
+        measured_cache: dict[str, dict] = {}
+        xs = q.get("x") or []
         for sp in specs:
             sig = sp.get("signal")
             if sig not in matching or sp["name"] in extracted:
@@ -437,6 +447,21 @@ def _extract_metrics_from_local_waveforms(manager: DirectExecutionManager, run_i
                 extracted[sp["name"]] = sum(reals) / len(reals)
             elif m in ("end", "value"):
                 extracted[sp["name"]] = reals[-1]
+            else:
+                if sig not in measured_cache and len(xs) == len(vals) and len(reals) == len(vals) and len(xs) >= 2:
+                    try:
+                        measured_cache[sig] = measure_transient_signal(
+                            xs,
+                            reals,
+                            signal_name=sig,
+                            exact=True,
+                            measurement_safe=True,
+                        )
+                    except DomainError:
+                        measured_cache[sig] = {}
+                val = extract_named_metric(measured_cache.get(sig, {}), m)
+                if val is not None:
+                    extracted[sp["name"]] = val
     return extracted
 
 

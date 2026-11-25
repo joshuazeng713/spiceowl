@@ -1668,6 +1668,54 @@ dialog .muted {
   color:#275343;
   line-height:1.55;
 }
+.wf-mode-switch {
+  display:inline-flex;
+  gap:4px;
+  padding:2px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:#f4f7f5;
+}
+.wf-cursor-bar {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  padding:8px 11px;
+  margin-bottom:8px;
+  border:1px solid #d5e2dc;
+  border-radius:6px;
+  background:#f7faf8;
+  font-size:12px;
+}
+.wf-cur-pill {
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:3px 8px;
+  border-radius:5px;
+  font-family:ui-monospace,monospace;
+  font-size:11px;
+}
+.wf-cur-pill.cur-a { background:#fef3c7; color:#92400e; border:1px solid #f59e0b; }
+.wf-cur-pill.cur-b { background:#ede9fe; color:#5b21b6; border:1px solid #8b5cf6; }
+.wf-cur-pill.cur-delta { background:#e6f4ee; color:#1c5b43; border:1px solid #96c7b2; }
+.wf-metrics-card {
+  margin-top:14px;
+  padding:14px 16px;
+  border:1px solid #c9ddd2;
+  border-radius:8px;
+  background:#f8fcf9;
+}
+.wf-metrics-card h3 { margin:0; font-size:14px; }
+.wf-dot-inline {
+  display:inline-block;
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  margin-right:6px;
+  vertical-align:middle;
+}
 .tut-divider {
   border:0;
   border-top:1px solid var(--line);

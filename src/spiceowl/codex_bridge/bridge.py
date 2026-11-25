@@ -128,7 +128,8 @@ class CodexBridge:
         self.data = {'schema': 'spiceowl.codex-journal.v1', 'state': 'disconnected',
             'connection_id': None, 'connection_profile': {}, 'model': model,
             'thread_id': None, 'turn_id': None, 'request_key': None, 'cursor': 0,
-            'requests': {}, 'calls': {}, 'approvals': {}, 'events': [], 'recovery_required': False}
+            'requests': {}, 'calls': {}, 'approvals': {}, 'events': [],
+            'recovery_required': False, 'recovery_history': []}
         if self.mode == 'standalone':
             self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             lock_path = self.directory / 'codex-bridge.lock'
@@ -185,6 +186,7 @@ class CodexBridge:
                            and 0 < event['id'] <= saved['cursor'] for event in saved['events']),
                    'Saved bridge journal exceeds its supported bounds.', 'codex_journal_invalid')
             self.data = saved
+            self.data.setdefault('recovery_history', [])
             self.data['events'] = self.data['events'][-MAX_EVENTS:]
             unfinished = self.data.get('state') in ACTIVE or self.data.get('recovery_required') is True
             unfinished |= any(r.get('state') in ACTIVE | {'pending', 'unknown'} for r in saved['requests'].values())
@@ -265,8 +267,143 @@ class CodexBridge:
                 'request_key': self.data['request_key'], 'cursor': self.data['cursor'],
                 'model': self.data['model'], 'connection_profile': copy.deepcopy(self.data['connection_profile']),
                 'recovery_required': self.data['recovery_required'],
+                'recovery_history_count': len(self.data.get('recovery_history') or ()),
                 'pending_approvals': [self._public_approval(row) for row in self.data['approvals'].values()
                                       if row['status'] != 'resolved']}
+
+    def recovery_report(self):
+        """Human read plane: inspect interrupted turn/tool state before explicit reconciliation."""
+        with self.lock:
+            interrupted_requests = [
+                {
+                    'request_key': key,
+                    'thread_id': row.get('thread_id'),
+                    'turn_id': row.get('turn_id'),
+                    'state': row.get('state'),
+                    'reason': row.get('reason'),
+                    'fingerprint': row.get('fingerprint'),
+                    'created_at': row.get('created_at'),
+                }
+                for key, row in self.data['requests'].items()
+                if row.get('state') in ACTIVE | {'pending', 'unknown'}
+            ]
+            unresolved_calls = [
+                {
+                    'call_key': key,
+                    'call_id': row.get('call_id'),
+                    'request_key': row.get('request_key'),
+                    'policy': row.get('policy'),
+                    'state': row.get('state'),
+                    'possible_side_effects': row.get('policy') == 'approval',
+                }
+                for key, row in self.data['calls'].items()
+                if row.get('state') in ('pending', 'executing', 'unknown')
+            ]
+            unresolved_approvals = [
+                self._public_approval(row)
+                for row in self.data['approvals'].values()
+                if row.get('status') in ('pending', 'resolving', 'responding', 'unknown')
+            ]
+            has_side_effects = any(c['possible_side_effects'] for c in unresolved_calls) or bool(unresolved_approvals)
+            return {
+                'schema': 'spiceowl.codex-recovery-snapshot.v1',
+                'mode': self.mode,
+                'state': self.data['state'],
+                'connected': bool(self.rpc and not self.rpc.closed),
+                'recovery_required': bool(self.data['recovery_required']),
+                'thread_id': self.data['thread_id'],
+                'turn_id': self.data['turn_id'],
+                'request_key': self.data['request_key'],
+                'has_possible_side_effects': has_side_effects,
+                'safe_to_retry_read_only': not has_side_effects,
+                'interrupted_requests': interrupted_requests,
+                'unresolved_calls': unresolved_calls,
+                'unresolved_approvals': unresolved_approvals,
+                'recovery_history': copy.deepcopy(self.data.get('recovery_history') or [])[-20:],
+                'guidance': (
+                    'Reconcile any remote simulation/job status via lookup/status first, then confirm side effects checked before unlocking.'
+                    if has_side_effects
+                    else 'No approval-gated side-effect tool call was in flight; you may archive this interrupted turn and unlock without replaying.'
+                ),
+            }
+
+    def reconcile_interrupted(self, *, resolution='acknowledge_and_archive', note='', confirmed_side_effects_checked=False):
+        """Human control plane: archive an interrupted turn and unlock the bridge without replaying."""
+        _check(self.mode == 'standalone', 'CircuitGit owns the embedded conversation; standalone recovery is disabled.', 'codex_embedded_mode')
+        _check(not self.closed, 'This bridge is closed.', 'codex_bridge_closed')
+        _check(resolution in ('acknowledge_and_archive', 'abort_and_reset_thread'),
+               'resolution must be acknowledge_and_archive or abort_and_reset_thread.')
+        _check(isinstance(note, str) and len(note) <= 1000, 'Recovery note must be at most 1000 characters.')
+        _check(type(confirmed_side_effects_checked) is bool, 'confirmed_side_effects_checked must be boolean.')
+        with self.operation_lock:
+            with self.lock:
+                _check(bool(self.data['recovery_required']), 'No interrupted turn requires recovery.', 'codex_no_recovery_needed')
+                snap = self.recovery_report()
+                if snap['has_possible_side_effects'] and not confirmed_side_effects_checked:
+                    raise BridgeError(
+                        'An approval-gated side-effect call or approval was interrupted. '
+                        'Reconcile remote status/lookup first and set confirmed_side_effects_checked=true.',
+                        'codex_side_effects_unconfirmed',
+                    )
+                now = utcnow()
+                archived_requests = []
+                for key, row in self.data['requests'].items():
+                    if row.get('state') in ACTIVE | {'pending', 'unknown'}:
+                        row.update(
+                            state='interrupted',
+                            reconciled_at=now,
+                            reconcile_resolution=resolution,
+                            reconcile_note=note,
+                            replayed=False,
+                        )
+                        archived_requests.append(key)
+                archived_calls = []
+                for key, row in self.data['calls'].items():
+                    if row.get('state') in ('pending', 'executing', 'unknown'):
+                        row.update(state='interrupted_reconciled', reconciled_at=now)
+                        archived_calls.append(row.get('call_id') or key)
+                archived_approvals = []
+                for aid, row in self.data['approvals'].items():
+                    if row.get('status') in ('pending', 'resolving', 'responding', 'unknown'):
+                        row.update(
+                            status='resolved',
+                            decision='interrupted_reconciled',
+                            can_approve=False,
+                            can_deny=False,
+                            reconciled_at=now,
+                        )
+                        archived_approvals.append(aid)
+
+                entry = {
+                    'recovery_id': 'rec-' + uuid4().hex[:16],
+                    'reconciled_at': now,
+                    'resolution': resolution,
+                    'note': note,
+                    'confirmed_side_effects_checked': confirmed_side_effects_checked,
+                    'has_possible_side_effects': snap['has_possible_side_effects'],
+                    'archived_requests': archived_requests,
+                    'archived_calls': archived_calls,
+                    'archived_approvals': archived_approvals,
+                    'automatic_replay': False,
+                }
+                history = list(self.data.get('recovery_history') or [])
+                history.append(entry)
+                self.data['recovery_history'] = history[-50:]
+                self.data['recovery_required'] = False
+                self.data['turn_id'] = None
+                self.data['request_key'] = None
+                if resolution == 'abort_and_reset_thread':
+                    self.data['thread_id'] = None
+                if self.rpc is not None and not self.rpc.closed:
+                    self.data['state'] = 'ready' if self.data['thread_id'] else 'connected'
+                else:
+                    self.data['state'] = 'disconnected'
+                self._event('bridge/recovery_resolved', entry)
+                return {
+                    'schema': 'spiceowl.codex-recovery-receipt.v1',
+                    'recovery': entry,
+                    'status': self.status(),
+                }
 
     def approval_details(self, approval_id):
         """Human read plane: exact bounded frozen parameters, never a model tool."""

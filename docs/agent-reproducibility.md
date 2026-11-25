@@ -209,8 +209,16 @@ same deterministic workflow baseline with the agent-assisted route. Measure:
 
 Require zero unauthorized dispatches, duplicate dispatches and unsupported
 scientific passes in this test set. Report failures and denominators alongside
-rates; even zero observed failures does not prove universal safety. This is an
-evaluation proposal, not an implemented benchmark runner or completed LLM eval.
+rates; even zero observed failures does not prove universal safety.
+
+SpiceOwl now ships this frozen 10-case benchmark harness in `src/spiceowl/agent_eval.py`
+(`spiceowl eval-agent --baseline compare --markdown`, `POST /api/agent/eval`) paired
+with the pure deterministic next-action orchestrator `src/spiceowl/orchestrator.py`
+(`spiceowl next-action`, `spiceowl_next_action` tool) and explicit human-reconciled
+interrupted-turn recovery in `CodexBridge` (`GET /api/codex/recovery`,
+`POST /api/codex/recover`). Real third-party LLM model evaluation still depends on
+supplying an explicit model callback or live runtime and does not substitute for
+site-specific PDK/simulator qualification.
 
 ## Making the next step explicit
 

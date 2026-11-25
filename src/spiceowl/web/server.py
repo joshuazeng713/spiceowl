@@ -176,6 +176,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             fields = {'connect': ({'model', 'profile'}, set()), 'thread': (set(), set()),
                 'message': ({'thread_id', 'text', 'request_key'}, {'thread_id', 'text', 'request_key'}),
                 'approval': ({'approval_id', 'decision'}, {'approval_id', 'decision'}),
+                'recover': ({'resolution', 'note', 'confirmed_side_effects_checked'}, set()),
                 'disconnect': (set(), set())}
             if action not in fields:
                 raise DomainError('Unknown Codex client operation.', 'not_found')
@@ -187,6 +188,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             if action == 'thread': return bridge.create_thread()
             if action == 'message': return bridge.send_message(**body)
             if action == 'approval': return bridge.decide(**body)
+            if action == 'recover': return bridge.reconcile_interrupted(**body)
             return bridge.disconnect()
 
         def dispatch(self):
@@ -220,9 +222,24 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 if url.query: raise DomainError('Codex client operations do not accept extra query arguments.')
                 if self.command == 'GET' and action == 'status':
                     return self.reply(controller.codex.status())
+                if self.command == 'GET' and action == 'recovery':
+                    return self.reply(controller.codex.recovery_report())
                 if self.command == 'POST':
                     return self.reply(self.codex_control(action, self.body()), 202)
                 raise DomainError('Unknown Codex client operation.', 'not_found')
+            if path == '/api/agent/next-action' and self.command == 'POST':
+                from spiceowl.orchestrator import evaluate_next_action
+                return self.reply(evaluate_next_action(self.body()))
+            if path == '/api/agent/eval' and self.command == 'POST':
+                from spiceowl.agent_eval import compare_baselines, run_agent_eval
+                req = self.body()
+                if set(req) - {'baseline', 'repeats'}:
+                    raise DomainError('Agent evaluation accepts optional baseline and repeats only.')
+                baseline = req.get('baseline', 'compare')
+                repeats = req.get('repeats', 1)
+                if baseline == 'compare':
+                    return self.reply(compare_baselines(repeats=repeats))
+                return self.reply(run_agent_eval(baseline=baseline, repeats=repeats))
             if path == "/api/live/runtime" and self.command == "GET":
                 if url.query:
                     raise DomainError("Live runtime reads do not accept browser configuration or query parameters.")

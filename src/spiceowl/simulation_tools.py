@@ -62,6 +62,8 @@ _PURE = [
                  'analysis_name': {'type': ['string', 'null']}}, ('text', 'analysis_kind'))),
     _definition('spiceowl_adctools', 'Compute a named deterministic metric from explicit arrays and backend parameters. Does not extract clock-phase samples or run arbitrary postprocessing code.',
         _object({'operation': {'type': 'string', 'enum': _OPS}, 'arguments': _JSON}, ('operation', 'arguments'))),
+    _definition('spiceowl_next_action', 'Evaluate an explicit experiment/run snapshot and return bounded missing fields, permitted next operations, and forbidden actions without network or filesystem I/O.',
+        _object({'state': _JSON}, ('state',))),
 ]
 
 # Only these host-bound operations can be attached. Their handlers retain the
@@ -239,4 +241,7 @@ class SimulationToolDispatcher:
                 # This pure algorithm's declared validation/dependency errors
                 # are correctable inputs, never uncertain remote execution.
                 raise DomainError(str(exc), exc.code) from None
+        if name == 'spiceowl_next_action':
+            from spiceowl.orchestrator import evaluate_next_action
+            return evaluate_next_action(args['state'])
         raise DomainError('Unknown engine tool.', 'unknown_tool')

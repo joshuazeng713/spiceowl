@@ -34,8 +34,8 @@ The explicit mode selects one conversation owner: standalone SpiceOwl starts its
 - [x] Existing legacy Q&A remains readable without automatic resumption.
 - [x] Pure engine tools, explicit host/LUT bindings and optional typed CircuitGit owner adapter.
 - [x] Public ten-stage walkthrough using authorized source copies and explicit evidence limits.
+- [x] Pure deterministic `next-action` orchestrator (`spiceowl.orchestrator`, `spiceowl_next_action` tool), explicit human-reconciled interrupted-turn recovery in `CodexBridge` (`recovery_report` / `reconcile_interrupted` without silent replay), and a frozen 10-case Agent end-to-end evaluation benchmark (`spiceowl.agent_eval`, `spiceowl eval-agent`, `#agents` scorecard) comparing deterministic vs naive baselines.
 - [ ] Qualify real authentication/inference and simulator behavior on each supported installation.
-- [ ] Evaluate weaker models end to end and implement generic next-action orchestration.
 
 Protocol/algorithm/browser tests use fake processes and synthetic results. They do not establish real inference or private circuit performance. Automatic unknown-turn recovery, solver restart and parameter repair remain unimplemented. Legacy P0.2/P0.3/ADR designs are historical context; the current dual-mode contract takes precedence.
 
@@ -80,8 +80,7 @@ The [runtime guide](standalone-runtime.md) records the supported CLI, private gr
   output/reference normalization and explicit loop/device measurement contracts.
 - [x] Streaming PSF Binary (`psfbin`) and PSFXL bundle ingestion with Min-Max envelope previews, automatic lossless zoom-in, and Cycle Slicer worst-case drill-down (`spiceowl.integrations.psf_binary`).
 - [ ] Broader proprietary PSFXL/SST2 sub-variants and multidimensional waveform ingestion.
-- [ ] Unified next-action driver for generic authored testbenches.
-- [ ] Measured completion rates across weaker LLMs and interrupted live runs.
+- [x] Unified deterministic `next-action` orchestrator (`spiceowl.orchestrator`) and frozen 10-case Agent E2E benchmark harness (`spiceowl.agent_eval`) with interrupted-turn recovery; site-specific live LLM qualification remains operator-owned.
 
 CircuitGit owns the paired review, tool routing and Runner integration. Supported
 syntax and local algorithm tests do not establish a real simulation result or

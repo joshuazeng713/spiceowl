@@ -18,7 +18,7 @@ let selectedQa = null, qaView = null;
 const codexPanelState = {loaded: false, loading: false, busy: false, status: null, error: null,
   stream: null, streamState: 'idle', cursor: 0, statusCursor: 0, threads: [], selectedThread: null,
   approvals: new Map(), profile: '', model: '', draft: '', pending: null, pendingLoaded: false,
-  historyTruncated: false};
+  historyTruncated: false, recoverySnapshot: null, recoveryConfirmed: false, evalReport: null, evalBusy: false};
 const CODEX_PENDING_KEY = 'spiceowl.codex-pending';
 const isStandaloneAgent = () => !isPublicDemo() && state.agent_channel?.mode === 'standalone';
 let poolImportPreview = null;
@@ -1621,7 +1621,21 @@ function renderCodexActivity() {
   $('#codex-approvals').innerHTML = [...codexPanelState.approvals.values()]
     .filter(item => item.thread_id === codexPanelState.selectedThread).map(codexApprovalCard).join('');
   const pending = codexPanelState.pending;
-  $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${status?.recovery_required ? `<p class="denial">The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p>` : ''}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+  const recSnap = codexPanelState.recoverySnapshot;
+  const recBox = status?.recovery_required
+    ? `<div class="denial"><p>The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情 (Inspect Recovery)</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并解除锁定 (Reconcile &amp; Unlock)</button>` : ''}</div>${recSnap ? `<p class="subtle-note">${escape(recSnap.guidance)}（受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}）</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已通过 status/lookup 核对远端任务状态，确认不会盲目重放副作用</label>` : ''}` : ''}</div>`
+    : '';
+  $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+  const evalOut = $('#codex-eval-output');
+  if (evalOut) {
+    const ev = codexPanelState.evalReport;
+    if (!ev) {
+      evalOut.innerHTML = '<p class="subtle-note">尚未运行评测。点击上方按钮将在本地执行 10 项冻结闭环测试（覆盖缺项拒猜、断线对账、防假通过、降采样拦截、中断回合恢复及 MC 保守良率），对比确定性编排器与弱模型基线。</p>';
+    } else {
+      const det = ev.deterministic, weak = ev.weak_naive;
+      evalOut.innerHTML = `<div class="direct-report-grid"><div class="direct-dim-card"><span>确定性编排器通过率</span><strong>${det.overall_pass_rate_pct}% (${det.passed_trials}/${det.total_trials})</strong></div><div class="direct-dim-card"><span>确定性安全违规（越权/重复/假通过）</span><strong>${det.safety_counters.unauthorized_dispatches} / ${det.safety_counters.duplicate_dispatches} / ${det.safety_counters.false_scientific_passes}</strong></div><div class="direct-dim-card"><span>弱模型对照基线通过率</span><strong>${weak.overall_pass_rate_pct}% (${weak.passed_trials}/${weak.total_trials})</strong></div><div class="direct-dim-card"><span>弱模型安全违规（越权/重复/假通过）</span><strong>${weak.safety_counters.unauthorized_dispatches} / ${weak.safety_counters.duplicate_dispatches} / ${weak.safety_counters.false_scientific_passes}</strong></div></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>用例</th><th>类别</th><th>确定性编排器</th><th>弱模型基线（暴露缺陷）</th></tr></thead><tbody>${det.results.map((r, i) => `<tr><td><code>${escape(r.case_id)}</code></td><td>${escape(r.category)}</td><td>${chip(r.passed ? 'PASS' : 'FAIL', r.passed ? 'green' : 'red')}</td><td>${chip(weak.results[i]?.passed ? 'PASS' : 'FAIL', weak.results[i]?.passed ? 'green' : 'amber')} <small>${escape((weak.results[i]?.violations || []).join(', ') || '—')}</small></td></tr>`).join('')}</tbody></table></div>`;
+    }
+  }
   $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
   $('#codex-send').disabled = !codexCanSend() || !codexPanelState.draft.trim();
   $('#codex-message').disabled = !codexCanSend();
@@ -1634,7 +1648,7 @@ function renderCodexActivity() {
 
 function standaloneAgentPanel() {
   const status = codexPanelState.status;
-  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div><div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p class="subtle-note">Tool calls follow the backend’s permissions. Review each approval card before deciding.</p><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></form></section></div>`;
+  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div><div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p class="subtle-note">Tool calls follow the backend’s permissions. Review each approval card before deciding.</p><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></form></section></div><details class="panel native-history"><summary>Agent 端到端闭环评测与确定性 Next-Action 基准（10 项冻结测试）</summary><div class="panel-body"><div class="direct-actions"><button type="button" class="button primary small" data-action="codex-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '评测运行中…' : '运行 10 项 Agent 闭环安全评测'}</button></div><div id="codex-eval-output" style="margin-top:10px"></div></div></details>`;
 }
 
 function nativeChat() {
@@ -2008,6 +2022,10 @@ document.addEventListener('change', event => {
     codexPanelState.selectedThread = event.target.value;
     renderCodexActivity();
   }
+  if (event.target.id === 'codex-rec-confirm') {
+    codexPanelState.recoveryConfirmed = event.target.checked;
+    renderCodexActivity();
+  }
   if (event.target.matches('[data-host-select]')) {
     if (!poolScanning) {
       selectedHostIds ??= new Set();
@@ -2086,12 +2104,38 @@ document.addEventListener('click', async event => {
     } catch (error) { codexPanelState.error = error.message; }
     renderCodexActivity(); return;
   }
+  if (action === 'codex-inspect-recovery') {
+    try {
+      codexPanelState.recoverySnapshot = await api('/api/codex/recovery');
+      codexPanelState.recoveryConfirmed = false;
+    } catch (error) { codexPanelState.error = error.message; }
+    renderCodexActivity(); return;
+  }
+  if (action === 'codex-run-eval') {
+    if (codexPanelState.evalBusy) return;
+    codexPanelState.evalBusy = true; codexPanelState.error = null; renderCodexActivity();
+    try {
+      codexPanelState.evalReport = await api('/api/agent/eval', {method: 'POST', body: {baseline: 'compare', repeats: 1}});
+      toast('已完成 10 项 Agent 闭环安全评测。');
+    } catch (error) { codexPanelState.error = error.message; toast(error.message); }
+    finally { codexPanelState.evalBusy = false; renderCodexActivity(); }
+    return;
+  }
   if (codexPanelState.busy || button.disabled) return;
   codexPanelState.busy = true;
   codexPanelState.error = null;
   let approval = null;
   try {
-    if (action === 'codex-thread') {
+    if (action === 'codex-reconcile') {
+      await api('/api/codex/recover', {method: 'POST', body: {
+        resolution: 'acknowledge_and_archive',
+        note: 'Reconciled interrupted turn from local console.',
+        confirmed_side_effects_checked: !!codexPanelState.recoveryConfirmed,
+      }});
+      codexPanelState.recoverySnapshot = null;
+      codexPanelState.recoveryConfirmed = false;
+      toast('中断回合已归档（未重放任何操作）并解除锁定。');
+    } else if (action === 'codex-thread') {
       const status = codexPanelState.status;
       if (!status?.connected || status.recovery_required || codexActiveTurn() || codexPanelState.pending) return;
       renderCodexActivity();

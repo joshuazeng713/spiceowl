@@ -34,6 +34,12 @@ def parser():
     serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
     serve.add_argument("--enable-direct-exec", action="store_true", help="Expose standalone SSH Direct / LSF / Slurm execution tools to the local Codex window (still requires human tool approval).")
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
+    na_cmd = commands.add_parser("next-action", help="Evaluate an experiment/run snapshot JSON with the deterministic next-action orchestrator.")
+    na_cmd.add_argument("--state-json", required=True, help="JSON file describing experiment/dependencies/plan/run/measurement state.")
+    ev_cmd = commands.add_parser("eval-agent", help="Run the frozen 10-case Agent end-to-end evaluation benchmark.")
+    ev_cmd.add_argument("--baseline", choices=("deterministic", "weak_naive", "compare"), default="compare")
+    ev_cmd.add_argument("--repeats", type=int, default=1)
+    ev_cmd.add_argument("--markdown", action="store_true", help="Print the human-readable Markdown scorecard.")
     direct = commands.add_parser("direct", help="Run simulations directly over SSH, LSF, or Slurm without a CircuitGit gateway.")
     direct_actions = direct.add_subparsers(dest="action", required=True)
     d_prep = direct_actions.add_parser("prepare", help="Freeze netlist, support files, and host/scheduler plan locally without launching.")
@@ -322,6 +328,26 @@ def output(value):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "next-action":
+            from spiceowl.orchestrator import evaluate_next_action
+            state = json.loads(Path(args.state_json).expanduser().read_text(encoding="utf-8"))
+            output(evaluate_next_action(state))
+            return 0
+        if args.command == "eval-agent":
+            from spiceowl.agent_eval import compare_baselines, render_eval_markdown, run_agent_eval
+            if args.baseline == "compare":
+                res = compare_baselines(repeats=args.repeats)
+                if args.markdown:
+                    print(res["markdown"])
+                else:
+                    output(res)
+                return 0 if res["deterministic"]["strict_qualification_passed"] else 2
+            res = run_agent_eval(baseline=args.baseline, repeats=args.repeats)
+            if args.markdown:
+                print(render_eval_markdown(res))
+            else:
+                output(res)
+            return 0 if res["strict_qualification_passed"] else 2
         if args.command == "direct":
             from spiceowl.direct import DirectExecutionManager
             manager = DirectExecutionManager(args.data_dir)

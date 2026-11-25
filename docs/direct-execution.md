@@ -107,10 +107,30 @@ Direct runs support opt-in bounded recovery (`spiceowl.recovery.bounded`) for co
 - **Auto-resume watches on restart**: When `spiceowl serve` restarts, persisted non-terminal watches whose policy enables `auto_resume_watch` resume automatically.
 - **License retry with backoff**: Confirmed license checkout/queue failures spawn a linked child attempt (`<root_run_id>-r1`, `-r2`, …) with identical frozen inputs within `max_recovery_attempts`, `license_backoff_seconds`, and `max_elapsed_seconds`.
 - **Confirmed OOM scale-up & relocation**: Run-bound scheduler OOM evidence (such as Slurm `OUT_OF_MEMORY`) or explicit Spectre OOM errors scale requested memory by `oom_memory_multiplier` up to `max_memory_bytes`, and can relocate to a larger-memory eligible host in `HostRegistry` when `allow_host_relocation` is enabled. Unconfirmed `SIGKILL`, syntax/model/convergence errors, user cancellations, and completed runs (even with SOA or specification failures) are never retried.
-- **Searchable recovery reports**: Every evaluated or recovered lineage writes both a structured JSON report and a human-readable Markdown report under `<data_dir>/direct_runs/recovery_reports/<root_run_id>.{json,md}` plus a searchable index. Search and download reports in the `#direct` console (**4. 有界恢复报告中心**) or via `spiceowl direct recovery-reports` / `spiceowl direct recovery-report <run_id> --markdown`.
+- **Searchable recovery reports**: Every evaluated or recovered lineage writes both a structured JSON report and a human-readable Markdown report under `<data_dir>/direct_runs/recovery_reports/<root_run_id>.{json,md}` plus a searchable index. Search and download reports in the `#direct` console (**5. 有界恢复报告中心**) or via `spiceowl direct recovery-reports` / `spiceowl direct recovery-report <run_id> --markdown`.
+
+## Binary waveform streaming (PSF Binary / PSFXL), envelope downsampling & Cycle Slicer
+
+Large analog/mixed-signal simulations often generate multi-GB binary waveform files across hundreds or thousands of cycles. SpiceOwl avoids full raw-file downloads by combining **compute-near-data** remote inspection with a strict separation between visual previews and scientific measurements (`spiceowl.integrations.psf_binary`):
+
+- **Unified streaming reader**: Supports Cadence PSF Binary (`psfbin`, both point-interleaved and windowed block-interleaved VALUE frames, scalar real and complex AC), PSFXL metadata + `.dat` bundles (`psfxl`), and PSF ASCII (`psfascii`) using pure Python stdlib with `seek()` random access — 100% compatible with macOS, Linux, and Windows.
+- **Zero full download for oversized raw files**: `collect()` writes a lightweight `waveform_index.json` (datasets, formats, sizes, signal names, sweep bounds). Oversized `results.raw/` files stay on the remote Linux server and are queried in-place over verified SSH (`source: "remote_in_place"`).
+- **Min-Max Envelope Downsampling vs Automatic Exact Window**:
+  - Wide-range visual queries (`mode="auto"`) stream through selected signals and emit **Min-Max envelope buckets** (`representation: "downsampled_preview"`, `exact: false`, `measurement_safe: false`) so narrow spikes, glitches, and overshoot are never aliased away.
+  - Zooming in (`window_count <= max_points`) automatically switches to **100% lossless raw samples** (`representation: "exact_window"`, `exact: true`, `measurement_safe: true`).
+  - Scientific measurement helpers (`mode="exact"` and `extract_signal_for_adctools()`) refuse silent downsampling and return only lossless full-precision samples.
+- **Multi-thousand-cycle inspection (Cycle Slicer)**: Slices up to 4,096 cycles via clock-signal edges (sub-sample linear interpolation) or a fixed period `T`, returning compact per-cycle metrics (`min`, `max`, `peak_to_peak`, `avg`, `end`, `duration`), automatic **worst-case cycle** detection (`peak_to_peak`, `max_value`, `min_value`, `overshoot`, `period_deviation`), 100% lossless intra-cycle waveforms for `first` / `steady_last` / `worst_case` / user-selected `cycle_index`, and an aligned phase overlay (eye view).
+- **Offline interactive demo & CLI**: Click **加载 500 周期 PSF Binary 演示波形（含隐藏毛刺）** in the `#direct` console (**4. 二进制大波形查看器与周期切片**) or run:
+
+```bash
+spiceowl direct demo-waveform
+spiceowl direct waveforms demo-psfbin-500c
+spiceowl direct waveform-query demo-psfbin-500c --dataset tran.tran.tran --signals "v(out)" "v(clk)" --max-points 600
+spiceowl direct waveform-cycles demo-psfbin-500c --dataset tran.tran.tran --signals "v(out)" "v(clk)" --clock "v(clk)" --worst-signal "v(out)"
+```
 
 ## Current boundaries
 
-- Offline unit tests verify plan freezing, scheduler command builders/parsers, atomic launch-claim fencing, verified cancellation, `RuntimeMonitor` supervision, bounded M4 recovery policies, watch resume, recovery reports, and five-dimensional reporting using synthetic fixtures.
-- Site-specific LSF/Slurm cluster configurations (custom wrapper flags, Kerberos/module init scripts, and shared filesystem permissions) still require authorized live qualification on the target site.
+- Offline unit tests verify plan freezing, scheduler command builders/parsers, atomic launch-claim fencing, verified cancellation, `RuntimeMonitor` supervision, bounded M4 recovery policies, watch resume, recovery reports, binary PSF/PSFXL streaming, Min-Max envelope preservation, Cycle Slicer drill-down, remote in-place waveform framing, and five-dimensional reporting using synthetic fixtures.
+- Site-specific LSF/Slurm cluster configurations (custom wrapper flags, Kerberos/module init scripts, and shared filesystem permissions) and proprietary PSFXL sub-variants still require authorized live qualification on the target site.
 - Native solver checkpoint continuation and automated numerical-parameter tuning remain unimplemented.

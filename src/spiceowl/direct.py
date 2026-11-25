@@ -35,6 +35,7 @@ from spiceowl._platform import file_lock
 from spiceowl.adapters.executors import direct as transport
 from spiceowl.domain.common import DomainError, new_id, require_id, utcnow
 from spiceowl.hosts import HostRegistry, profile_from_record
+from spiceowl.integrations import psf_binary
 from spiceowl.integrations.spectre_report import build_spectre_report
 from spiceowl.monitoring.remote import RuntimeMonitor
 from spiceowl.recovery.bounded import (
@@ -596,6 +597,30 @@ class DirectExecutionManager:
             report_path = self.path(run_id) / "report.json"
             _atomic_write(report_path, report_obj)
             record["report_path"] = str(report_path)
+
+            # Build lightweight waveform index locally (and query remote in-place if large raw files were skipped)
+            wf_index = psf_binary.index_waveform_directory(destination / "results.raw")
+            for ds in wf_index["datasets"]:
+                ds["source"] = "local_collected"
+            skipped_raw = [s for s in record["collection"]["skipped_files"] if str(s.get("name", "")).startswith("results.raw/")]
+            if skipped_raw:
+                try:
+                    remote_idx = transport.waveform_index(plan)
+                    local_names = {ds["dataset"] for ds in wf_index["datasets"]}
+                    for ds in remote_idx.get("datasets", []):
+                        if ds.get("dataset") not in local_names:
+                            ds["source"] = "remote_in_place"
+                            wf_index["datasets"].append(ds)
+                    wf_index["total_raw_bytes"] = max(
+                        wf_index.get("total_raw_bytes", 0),
+                        int(remote_idx.get("total_raw_bytes", 0)),
+                    )
+                except DomainError:
+                    pass
+            wf_index_path = self.path(run_id) / "waveform_index.json"
+            _atomic_write(wf_index_path, wf_index)
+            record["waveform_index_path"] = str(wf_index_path)
+
             record["updated_at"] = utcnow()
             _atomic_write(self.path(run_id) / "run.json", record)
         self._refresh_recovery_report_if_tracked(record.get("root_run_id") or run_id)
@@ -963,6 +988,235 @@ class DirectExecutionManager:
             except ValueError:
                 pass
         return {"resumed": resumed, "skipped": skipped}
+
+    # --- Binary Waveform Indexing, Envelope Downsampling, Exact Slicing & Cycle Analysis ---
+
+    def _local_dataset_path(self, run_id: str, dataset: str) -> Path | None:
+        rel = transport._validate_dataset_rel(dataset)
+        raw_root = (self.path(run_id) / "collected" / "results.raw").resolve()
+        if not raw_root.is_dir():
+            return None
+        candidate = (raw_root / rel).resolve()
+        try:
+            candidate.relative_to(raw_root)
+        except ValueError:
+            raise DomainError("Dataset path escapes collected results.raw.", "invalid_waveform_query") from None
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate
+        return None
+
+    def waveform_index(self, run_id: str, *, refresh_remote: bool = False, allow_remote: bool = True) -> dict:
+        """Return lightweight waveform index (datasets, formats, sizes, signals, sweep bounds).
+
+        Reads local collected files first; falls back to read-only remote
+        in-place indexing when large raw files were skipped during collect()
+        and ``allow_remote=True``.
+        """
+        run_id = _validate_run_id(run_id)
+        record = self.read(run_id)
+        local_raw = self.path(run_id) / "collected" / "results.raw"
+        idx = psf_binary.index_waveform_directory(local_raw)
+        for ds in idx["datasets"]:
+            ds["source"] = "local_collected"
+
+        cached_path = self.path(run_id) / "waveform_index.json"
+        if not refresh_remote and cached_path.is_file() and not cached_path.is_symlink():
+            cached = _read_json(cached_path)
+            local_names = {ds["dataset"] for ds in idx["datasets"]}
+            for ds in cached.get("datasets", []):
+                if ds.get("dataset") not in local_names:
+                    idx["datasets"].append(ds)
+            idx["total_raw_bytes"] = max(idx.get("total_raw_bytes", 0), int(cached.get("total_raw_bytes", 0)))
+
+        has_plan = (self.path(run_id) / "plan.json").is_file()
+        skipped_raw = [
+            s for s in (record.get("collection") or {}).get("skipped_files", [])
+            if str(s.get("name", "")).startswith("results.raw/")
+        ]
+        if allow_remote and has_plan and (refresh_remote or (skipped_raw and not any(d.get("source") == "remote_in_place" for d in idx["datasets"]))):
+            plan = self._load_plan(run_id)
+            remote_idx = transport.waveform_index(plan)
+            local_names = {ds["dataset"] for ds in idx["datasets"]}
+            for ds in remote_idx.get("datasets", []):
+                if ds.get("dataset") not in local_names:
+                    ds["source"] = "remote_in_place"
+                    idx["datasets"].append(ds)
+            idx["total_raw_bytes"] = max(idx.get("total_raw_bytes", 0), int(remote_idx.get("total_raw_bytes", 0)))
+            _atomic_write(cached_path, idx)
+
+        idx["run_id"] = run_id
+        return idx
+
+    def waveform_query(
+        self,
+        run_id: str,
+        dataset: str,
+        signals: list[str],
+        *,
+        x_min: float | None = None,
+        x_max: float | None = None,
+        max_points: int = 2000,
+        mode: str = "auto",
+        allow_remote: bool = True,
+    ) -> dict:
+        """Query a waveform window (Min-Max envelope preview or automatic exact_window)."""
+        run_id = _validate_run_id(run_id)
+        self.read(run_id)
+        local_file = self._local_dataset_path(run_id, dataset)
+        if local_file is not None:
+            result = psf_binary.query_waveform(
+                local_file, signals, x_min=x_min, x_max=x_max, max_points=max_points, mode=mode,
+            )
+            result["source"] = "local_collected"
+            result["dataset"] = dataset
+            result["run_id"] = run_id
+            return result
+        if not allow_remote:
+            raise DomainError(
+                "Requested dataset is not locally collected; enable remote in-place query to read it on the host.",
+                "waveform_remote_required",
+            )
+        plan = self._load_plan(run_id)
+        result = transport.waveform_query(
+            plan, dataset, signals, x_min=x_min, x_max=x_max, max_points=max_points, mode=mode,
+        )
+        result["dataset"] = dataset
+        result["run_id"] = run_id
+        return result
+
+    def waveform_cycles(
+        self,
+        run_id: str,
+        dataset: str,
+        signals: list[str],
+        *,
+        period: float | None = None,
+        clock_signal: str | None = None,
+        threshold: float | None = None,
+        edge: str = "rising",
+        t_start: float | None = None,
+        t_end: float | None = None,
+        worst_metric: str = "peak_to_peak",
+        worst_signal: str | None = None,
+        cycle_index: int | None = None,
+        context_cycles: int = 0,
+        overlay_cycles: int = 10,
+        max_points_per_cycle: int = 2000,
+        allow_remote: bool = True,
+    ) -> dict:
+        """Run Cycle Slicer, per-cycle trend metrics, worst-case detection, and cycle overlay."""
+        run_id = _validate_run_id(run_id)
+        self.read(run_id)
+        local_file = self._local_dataset_path(run_id, dataset)
+        if local_file is not None:
+            result = psf_binary.analyze_cycles(
+                local_file, signals,
+                period=period, clock_signal=clock_signal, threshold=threshold, edge=edge,
+                t_start=t_start, t_end=t_end, worst_metric=worst_metric, worst_signal=worst_signal,
+                cycle_index=cycle_index, context_cycles=context_cycles,
+                overlay_cycles=overlay_cycles, max_points_per_cycle=max_points_per_cycle,
+            )
+            result["source"] = "local_collected"
+            result["dataset"] = dataset
+            result["run_id"] = run_id
+            return result
+        if not allow_remote:
+            raise DomainError(
+                "Requested dataset is not locally collected; enable remote in-place query to analyze cycles on the host.",
+                "waveform_remote_required",
+            )
+        plan = self._load_plan(run_id)
+        result = transport.waveform_cycles(
+            plan, dataset, signals,
+            period=period, clock_signal=clock_signal, threshold=threshold, edge=edge,
+            t_start=t_start, t_end=t_end, worst_metric=worst_metric, worst_signal=worst_signal,
+            cycle_index=cycle_index, context_cycles=context_cycles,
+            overlay_cycles=overlay_cycles, max_points_per_cycle=max_points_per_cycle,
+        )
+        result["dataset"] = dataset
+        result["run_id"] = run_id
+        return result
+
+    def create_demo_waveform_run(
+        self,
+        run_id: str = "demo-psfbin-500c",
+        *,
+        cycles: int = 500,
+        samples_per_cycle: int = 40,
+        period_s: float = 1e-8,
+        glitch_cycle: int = 317,
+    ) -> dict:
+        """Create an idempotent synthetic multi-cycle PSF Binary direct run for interactive inspection."""
+        run_id = _validate_run_id(run_id)
+        run_dir = self.path(run_id)
+        if (run_dir / "run.json").is_file() and (run_dir / "collected" / "results.raw" / "tran.tran.tran").is_file():
+            return self.read(run_id)
+        run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        raw_dir = run_dir / "collected" / "results.raw"
+        raw_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        psf_path = psf_binary.generate_demo_multicycle_psf(
+            raw_dir / "tran.tran.tran",
+            cycles=cycles,
+            samples_per_cycle=samples_per_cycle,
+            period_s=period_s,
+            glitch_cycle=glitch_cycle,
+            windowed=True,
+        )
+        wf_index = psf_binary.index_waveform_directory(raw_dir)
+        for ds in wf_index["datasets"]:
+            ds["source"] = "local_collected"
+        wf_index_path = run_dir / "waveform_index.json"
+        _atomic_write(wf_index_path, wf_index)
+
+        now = utcnow()
+        psf_size = psf_path.stat().st_size
+        record = {
+            "schema": "spiceowl.direct-run.v1",
+            "run_id": run_id,
+            "run_key": run_id,
+            "submission_key": run_id,
+            "origin_submission_key": run_id,
+            "root_run_id": run_id,
+            "parent_run_id": None,
+            "attempt_number": 1,
+            "child_run_ids": [],
+            "recovery_trigger": None,
+            "recovery_policy": validate_recovery_policy(None),
+            "synthetic": True,
+            "backend": "ssh_direct",
+            "simulator": "spectre",
+            "output_format": "psfbin",
+            "host_id": "synthetic-demo-host",
+            "expected_host": "synthetic-demo-node",
+            "expected_user": "demo",
+            "state": "simulator_complete_pending_measurements",
+            "remote_state": "simulator_complete_pending_measurements",
+            "status_transport": "connected",
+            "simulator_exit_code": 0,
+            "raw_exit_code": 0,
+            "dispatch_claimed": True,
+            "collection_phase": "complete",
+            "collection": {
+                "collected_at": now,
+                "directory": str(run_dir / "collected"),
+                "file_count": 1,
+                "files": [{"name": "results.raw/tran.tran.tran", "bytes": psf_size, "sha256": wf_index["datasets"][0]["fingerprint"]}],
+                "skipped_files": [],
+                "collection_complete": True,
+                "total_bytes": psf_size,
+                "raw_present": True,
+                "input_and_manifest_verified": True,
+            },
+            "waveform_index_path": str(wf_index_path),
+            "created_at": now,
+            "updated_at": now,
+            "observed_at": now,
+            "limits": {"cpu_count": 4, "memory_bytes": 4 * 2**30, "wall_seconds": 600},
+            "manifest_sha256": wf_index["datasets"][0]["fingerprint"],
+            "note": f"Synthetic {cycles}-cycle windowed PSF Binary demo with hidden glitch at cycle #{glitch_cycle}.",
+        }
+        _atomic_write(run_dir / "run.json", record)
+        return deepcopy(record)
 
 
 class DirectRecoverySupervisor:

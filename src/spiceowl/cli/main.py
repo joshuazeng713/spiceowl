@@ -101,6 +101,37 @@ def parser():
     d_rec_get = direct_actions.add_parser("recovery-report", help="Read one persisted recovery report by root or child run ID.")
     d_rec_get.add_argument("run_id")
     d_rec_get.add_argument("--markdown", action="store_true", help="Print the human-readable Markdown report.")
+    d_demo_wf = direct_actions.add_parser("demo-waveform", help="Create a synthetic multi-cycle PSF Binary demo run with a hidden glitch for offline inspection.")
+    d_demo_wf.add_argument("--run-id", default="demo-psfbin-500c")
+    d_demo_wf.add_argument("--cycles", type=int, default=500)
+    d_demo_wf.add_argument("--glitch-cycle", type=int, default=317)
+    d_wf = direct_actions.add_parser("waveforms", help="List indexed waveform datasets (PSF Binary / PSFXL / ASCII) for a direct run.")
+    d_wf.add_argument("run_id")
+    d_wf.add_argument("--refresh-remote", action="store_true", help="Actively re-index results.raw in place on the remote host.")
+    d_wfq = direct_actions.add_parser("waveform-query", help="Query a waveform window (Min-Max envelope preview or automatic exact_window).")
+    d_wfq.add_argument("run_id")
+    d_wfq.add_argument("--dataset", required=True, help="Dataset relative path inside results.raw (e.g. tran.tran.tran).")
+    d_wfq.add_argument("--signals", nargs="+", required=True, help="One or more signal names to extract.")
+    d_wfq.add_argument("--x-min", type=float)
+    d_wfq.add_argument("--x-max", type=float)
+    d_wfq.add_argument("--max-points", type=int, default=2000)
+    d_wfq.add_argument("--exact", action="store_true", help="Require 100% lossless exact samples (refuses downsampling).")
+    d_wfc = direct_actions.add_parser("waveform-cycles", help="Run Cycle Slicer, per-cycle trend metrics, worst-case detection, and cycle overlay.")
+    d_wfc.add_argument("run_id")
+    d_wfc.add_argument("--dataset", required=True)
+    d_wfc.add_argument("--signals", nargs="+", required=True)
+    d_wfc.add_argument("--period", type=float, help="Fixed cycle period in sweep units.")
+    d_wfc.add_argument("--clock", help="Clock signal name for edge-based cycle slicing.")
+    d_wfc.add_argument("--threshold", type=float, help="Optional clock crossing threshold (defaults to midpoint).")
+    d_wfc.add_argument("--edge", choices=("rising", "falling"), default="rising")
+    d_wfc.add_argument("--t-start", type=float)
+    d_wfc.add_argument("--t-end", type=float)
+    d_wfc.add_argument("--worst-metric", choices=("peak_to_peak", "max_value", "min_value", "overshoot", "period_deviation"), default="peak_to_peak")
+    d_wfc.add_argument("--worst-signal", help="Signal scored for worst-case cycle detection (defaults to first signal).")
+    d_wfc.add_argument("--cycle-index", type=int, help="Optional 0-based cycle index to drill down into.")
+    d_wfc.add_argument("--context-cycles", type=int, default=0)
+    d_wfc.add_argument("--overlay-cycles", type=int, default=10)
+    d_wfc.add_argument("--max-points-per-cycle", type=int, default=2000)
     live = commands.add_parser("live", help="Use the configured real CircuitGit Runner with an explicitly bound project.")
     live.add_argument("--client-config", required=True, help="Private spiceowl.live-client.v1 JSON file.")
     live_actions = live.add_subparsers(dest="action", required=True)
@@ -344,6 +375,29 @@ def main(argv=None):
                     print(res["markdown"])
                 else:
                     output(res)
+            elif args.action == "demo-waveform":
+                run = manager.create_demo_waveform_run(
+                    run_id=args.run_id, cycles=args.cycles, glitch_cycle=args.glitch_cycle,
+                )
+                output({"run": run, "waveforms": manager.waveform_index(run["run_id"], allow_remote=False)})
+            elif args.action == "waveforms":
+                output(manager.waveform_index(args.run_id, refresh_remote=args.refresh_remote))
+            elif args.action == "waveform-query":
+                output(manager.waveform_query(
+                    args.run_id, args.dataset, args.signals,
+                    x_min=args.x_min, x_max=args.x_max,
+                    max_points=args.max_points, mode="exact" if args.exact else "auto",
+                ))
+            elif args.action == "waveform-cycles":
+                output(manager.waveform_cycles(
+                    args.run_id, args.dataset, args.signals,
+                    period=args.period, clock_signal=args.clock,
+                    threshold=args.threshold, edge=args.edge,
+                    t_start=args.t_start, t_end=args.t_end,
+                    worst_metric=args.worst_metric, worst_signal=args.worst_signal,
+                    cycle_index=args.cycle_index, context_cycles=args.context_cycles,
+                    overlay_cycles=args.overlay_cycles, max_points_per_cycle=args.max_points_per_cycle,
+                ))
             elif args.action == "watch":
                 monitor = manager.monitor(interval_seconds=args.interval, max_backoff_seconds=max(args.interval, 300.0))
                 monitor.watch(args.run_id, allow_collect=args.allow_collect)

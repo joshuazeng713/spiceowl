@@ -46,6 +46,7 @@ Protocol/algorithm/browser tests use fake processes and synthetic results. They 
 - [x] Durable `DirectExecutionManager` implementing `RunnerProtocol` for `RuntimeMonitor` supervision, atomic once-only `launch-claim` fencing, verified-identity cancellation, bounded verified artifact collection, and five-dimensional `build_spectre_report` output.
 - [x] Standalone CLI (`spiceowl direct prepare|stage|launch|status|cancel|collect|report|watch|runs|inspect|lookup`) and opt-in standalone Agent tools (`spiceowl serve --enable-direct-exec`), without altering embedded CircuitGit mode.
 - [x] Web console `#direct` workflow (`/api/direct/*`), one-click host-placement handoff from `#hosts`, opt-in M4 bounded recovery (watch auto-resume on restart, license backoff retry, confirmed OOM memory scaling & host relocation), and searchable JSON + Markdown recovery reports.
+- [x] Streaming binary waveform reader (`psfbin`, `psfxl`, `psfascii`), compute-near-data remote in-place queries, Min-Max envelope downsampling with automatic `exact_window` zoom-in, lossless `adctools` extraction, and multi-thousand-cycle Cycle Slicer + worst-case drill-down in `#direct`, CLI, and `spiceowl_direct_read`.
 - [ ] Authorized live qualification on target Linux, LSF, and Slurm sites.
 
 See [direct execution](direct-execution.md). Offline tests verify transport framing, scheduler parsers, atomic launch claims, verified cancellation, and monitoring using synthetic fixtures; real cluster qualification remains site-specific.
@@ -76,7 +77,8 @@ The [runtime guide](standalone-runtime.md) records the supported CLI, private gr
 - [x] Synthetic analytic checks and paired full-resolution saved-CSV adapter tests.
 - [x] Bounded native PSF ASCII AC, DC sweep and operating-point parsing, complex
   output/reference normalization and explicit loop/device measurement contracts.
-- [ ] Broader binary and multidimensional waveform ingestion.
+- [x] Streaming PSF Binary (`psfbin`) and PSFXL bundle ingestion with Min-Max envelope previews, automatic lossless zoom-in, and Cycle Slicer worst-case drill-down (`spiceowl.integrations.psf_binary`).
+- [ ] Broader proprietary PSFXL/SST2 sub-variants and multidimensional waveform ingestion.
 - [ ] Unified next-action driver for generic authored testbenches.
 - [ ] Measured completion rates across weaker LLMs and interrupted live runs.
 

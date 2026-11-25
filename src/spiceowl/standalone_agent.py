@@ -96,6 +96,30 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 return direct_manager.lookup_submission(params['key'])
             if op == 'report':
                 return direct_manager.report(params['run_id'])
+            if op == 'waveform_index':
+                return direct_manager.waveform_index(params['run_id'], allow_remote=False)
+            if op == 'waveform_query':
+                return direct_manager.waveform_query(
+                    params['run_id'], params['dataset'], params['signals'],
+                    x_min=params.get('x_min'), x_max=params.get('x_max'),
+                    max_points=params.get('max_points', 2000),
+                    mode=params.get('mode', 'auto'),
+                    allow_remote=False,
+                )
+            if op == 'waveform_cycles':
+                return direct_manager.waveform_cycles(
+                    params['run_id'], params['dataset'], params['signals'],
+                    period=params.get('period'), clock_signal=params.get('clock_signal'),
+                    threshold=params.get('threshold'), edge=params.get('edge', 'rising'),
+                    t_start=params.get('t_start'), t_end=params.get('t_end'),
+                    worst_metric=params.get('worst_metric', 'peak_to_peak'),
+                    worst_signal=params.get('worst_signal'),
+                    cycle_index=params.get('cycle_index'),
+                    context_cycles=params.get('context_cycles', 0),
+                    overlay_cycles=params.get('overlay_cycles', 10),
+                    max_points_per_cycle=params.get('max_points_per_cycle', 2000),
+                    allow_remote=False,
+                )
             raise DomainError('Unknown direct read operation.', 'invalid_tool_arguments')
 
         def direct_control(args, *, context):

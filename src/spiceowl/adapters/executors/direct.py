@@ -1612,3 +1612,218 @@ def collect(plan, *, max_collection_bytes=MAX_COLLECTION_BYTES):
     if type(max_collection_bytes) is not int or not 65536 <= max_collection_bytes <= MAX_COLLECTION_BYTES:
         raise DomainError("max_collection_bytes must be between 64 KiB and 32 MiB.", "invalid_direct_plan")
     return _request(plan, "collect", {"max_collection_bytes": max_collection_bytes})
+
+
+_DATASET_REL = re.compile(r"(?:[A-Za-z0-9_+-][A-Za-z0-9_.+-]{0,127}/){0,3}[A-Za-z0-9_+-][A-Za-z0-9_.+-]{0,127}\Z")
+
+_REMOTE_WAVEFORM_DRIVER = r'''
+import base64, json, os, pwd, socket, stat, sys
+
+def _fail(code, msg):
+    return {"ok": False, "error": code, "message": msg}
+
+def _run():
+    req = json.loads(sys.stdin.read())
+    nonce = req["nonce"]
+    manifest = req["manifest"]
+    expected = manifest["profile"]
+    actual_host = socket.gethostname()
+    actual_user = pwd.getpwuid(os.getuid()).pw_name
+    if actual_host != expected["expected_host"] or actual_user != expected["expected_user"]:
+        out = _fail("identity_mismatch", "Remote host or user does not match frozen plan.")
+    else:
+        home = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
+        rroot = manifest["remote_root"]
+        root = rroot if rroot.startswith("/") else os.path.join(home, rroot)
+        run_dir = os.path.join(root, manifest["directory_name"])
+        raw_dir = os.path.join(run_dir, "results.raw")
+        if not os.path.isdir(raw_dir) or os.path.islink(raw_dir):
+            out = _fail("raw_dir_missing", "Remote results.raw directory was not found.")
+        else:
+            mod_ns = {"__name__": "spiceowl_remote_psf"}
+            psf_src = base64.b64decode(req["psf_module_b64"].encode("ascii")).decode("utf-8")
+            exec(compile(psf_src, "<psf_binary>", "exec"), mod_ns)
+            op = req["operation"]
+            try:
+                if op == "waveform_index":
+                    data = mod_ns["index_waveform_directory"](raw_dir)
+                else:
+                    rel = req["dataset"]
+                    target = os.path.realpath(os.path.join(raw_dir, rel))
+                    real_raw = os.path.realpath(raw_dir)
+                    if not (target.startswith(real_raw + os.sep) and os.path.isfile(target)):
+                        raise mod_ns["DomainError"]("Requested dataset is outside results.raw.", "dataset_not_found")
+                    if op == "waveform_query":
+                        data = mod_ns["query_waveform"](
+                            target, req["signals"],
+                            x_min=req.get("x_min"), x_max=req.get("x_max"),
+                            max_points=req.get("max_points", 2000), mode=req.get("mode", "auto"),
+                        )
+                    elif op == "waveform_cycles":
+                        data = mod_ns["analyze_cycles"](
+                            target, req["signals"],
+                            period=req.get("period"), clock_signal=req.get("clock_signal"),
+                            threshold=req.get("threshold"), edge=req.get("edge", "rising"),
+                            t_start=req.get("t_start"), t_end=req.get("t_end"),
+                            worst_metric=req.get("worst_metric", "peak_to_peak"),
+                            worst_signal=req.get("worst_signal"),
+                            cycle_index=req.get("cycle_index"),
+                            context_cycles=req.get("context_cycles", 0),
+                            overlay_cycles=req.get("overlay_cycles", 10),
+                            max_points_per_cycle=req.get("max_points_per_cycle", 2000),
+                        )
+                    else:
+                        raise mod_ns["DomainError"]("Unsupported waveform operation.", "unsupported_operation")
+                data["manifest_sha256"] = req["manifest_sha256"]
+                data["source"] = "remote_in_place"
+                out = {"ok": True, "data": data}
+            except Exception as exc:
+                code = getattr(exc, "code", "remote_waveform_failed")
+                out = _fail(code, str(exc)[:300])
+    print("__SPICEOWL_DIRECT_%s_BEGIN__" % nonce)
+    print(json.dumps(out, sort_keys=True, separators=(",", ":"), ensure_ascii=True))
+    print("__SPICEOWL_DIRECT_%s_END__" % nonce)
+
+if __name__ == "__main__":
+    _run()
+'''
+
+
+def _validate_dataset_rel(dataset):
+    if not isinstance(dataset, str) or _DATASET_REL.fullmatch(dataset) is None or ".." in dataset.split("/"):
+        raise DomainError("Dataset path must be a safe relative path inside results.raw.", "invalid_waveform_query")
+    return dataset
+
+
+def _waveform_exchange(plan, operation, payload=None):
+    """Run a bounded read-only in-place waveform operation on the remote Linux host."""
+    manifest = _validate(plan)
+    from pathlib import Path as _Path
+    psf_path = _Path(__file__).resolve().parents[2] / "integrations" / "psf_binary.py"
+    psf_b64 = base64.b64encode(psf_path.read_bytes()).decode("ascii")
+    nonce = secrets.token_hex(16)
+    request = {
+        "operation": operation,
+        "nonce": nonce,
+        "manifest": manifest,
+        "manifest_sha256": plan["manifest_sha256"],
+        "psf_module_b64": psf_b64,
+    }
+    if payload:
+        request.update(payload)
+    driver_b64 = base64.b64encode(_REMOTE_WAVEFORM_DRIVER.encode("utf-8")).decode("ascii")
+    payload_bytes = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    # Pass the ~70 KiB request payload over stdin (not CLI argv) so Windows
+    # CreateProcess's 32 KiB command-line limit is never exceeded.
+    command = (
+        "exec %s -c 'import base64;exec(compile(base64.b64decode(\"%s\"),\"<waveform>\",\"exec\"))'"
+        % (manifest["remote_python"], driver_b64)
+    )
+    argv = _ssh_argv(manifest["profile"]["ssh_target"], command, ssh_hostname=manifest["profile"].get("ssh_hostname"))
+    process = None
+    feeder = None
+    stdout = bytearray()
+    stderr = _StderrHints()
+    deadline = time.monotonic() + SSH_TIMEOUT_SECONDS
+    try:
+        process = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            close_fds=True, env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+            **popen_isolation_kwargs(),
+        )
+        import threading as _threading
+
+        def _feed_stdin():
+            try:
+                if process.stdin is not None:
+                    process.stdin.write(payload_bytes)
+                    process.stdin.flush()
+            except OSError:
+                pass
+            finally:
+                try:
+                    if process.stdin is not None:
+                        process.stdin.close()
+                except OSError:
+                    pass
+
+        feeder = _threading.Thread(target=_feed_stdin, daemon=True)
+        feeder.start()
+        code = communicate_bounded(
+            process, deadline=deadline, max_output_bytes=MAX_REPLY_BYTES,
+            on_stdout=stdout.extend, on_stderr=stderr.feed, chunk_size=65536,
+        )
+        if code != 0:
+            category = stderr.category() if code == 255 else None
+            raise DomainError(_SSH_ERROR_MESSAGES.get(category, "Remote waveform query did not complete."), category or "direct_transport_failed")
+        begin = ("__SPICEOWL_DIRECT_%s_BEGIN__\n" % nonce).encode("ascii")
+        end = ("\n__SPICEOWL_DIRECT_%s_END__" % nonce).encode("ascii")
+        if stdout.count(begin) != 1 or stdout.count(end) != 1:
+            raise DomainError("Remote waveform reply has invalid framing.", "direct_reply_invalid")
+        reply = json.loads(bytes(stdout).split(begin, 1)[1].split(end, 1)[0].decode("ascii"))
+        if not isinstance(reply, dict) or not reply.get("ok"):
+            err_code = reply.get("error", "remote_waveform_failed") if isinstance(reply, dict) else "direct_reply_invalid"
+            err_msg = reply.get("message", "Remote waveform query failed.") if isinstance(reply, dict) else "Invalid reply."
+            raise DomainError(err_msg, err_code)
+        data = reply.get("data")
+        if not isinstance(data, dict) or data.get("manifest_sha256") != plan["manifest_sha256"]:
+            raise DomainError("Remote waveform reply failed manifest binding check.", "receipt_mismatch")
+        return data
+    except DomainError:
+        raise
+    except BoundedIOError as error:
+        if error.kind == "output_limit":
+            raise DomainError("Remote waveform reply exceeded size budget.", "direct_reply_limit") from None
+        raise DomainError("Remote waveform query timed out.", "direct_transport_timeout") from None
+    except (OSError, ValueError, UnicodeError):
+        raise DomainError("Remote waveform query was unavailable or malformed.", "direct_transport_failed") from None
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                terminate_process_tree(process, force=True, grace_timeout=1.0)
+            if feeder is not None:
+                feeder.join(timeout=1.0)
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
+            process.stdout.close()
+            process.stderr.close()
+
+
+def waveform_index(plan):
+    """Build a lightweight waveform index in-place on the remote host without downloading raw files."""
+    return _waveform_exchange(plan, "waveform_index")
+
+
+def waveform_query(plan, dataset, signals, *, x_min=None, x_max=None, max_points=2000, mode="auto"):
+    """Run bounded in-place envelope downsampling or exact slicing on the remote host."""
+    return _waveform_exchange(plan, "waveform_query", {
+        "dataset": _validate_dataset_rel(dataset),
+        "signals": list(signals),
+        "x_min": x_min,
+        "x_max": x_max,
+        "max_points": max_points,
+        "mode": mode,
+    })
+
+
+def waveform_cycles(plan, dataset, signals, *, period=None, clock_signal=None, threshold=None,
+                    edge="rising", t_start=None, t_end=None, worst_metric="peak_to_peak",
+                    worst_signal=None, cycle_index=None, context_cycles=0,
+                    overlay_cycles=10, max_points_per_cycle=2000):
+    """Run streaming cycle-by-cycle metrics, worst-case detection, and exact cycle slicing remotely."""
+    return _waveform_exchange(plan, "waveform_cycles", {
+        "dataset": _validate_dataset_rel(dataset),
+        "signals": list(signals),
+        "period": period,
+        "clock_signal": clock_signal,
+        "threshold": threshold,
+        "edge": edge,
+        "t_start": t_start,
+        "t_end": t_end,
+        "worst_metric": worst_metric,
+        "worst_signal": worst_signal,
+        "cycle_index": cycle_index,
+        "context_cycles": context_cycles,
+        "overlay_cycles": overlay_cycles,
+        "max_points_per_cycle": max_points_per_cycle,
+    })

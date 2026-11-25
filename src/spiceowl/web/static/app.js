@@ -31,6 +31,11 @@ let directState = {
   selectedId: null, detail: null, report: null, lookup: null, error: null,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
   recoveryQuery: '', recoveryOutcome: '',
+  wfIndex: null, wfDataset: '', wfSignals: [], wfQuery: null,
+  wfWindow: {xMin: '', xMax: ''}, wfMaxPoints: 1200,
+  wfCycles: null, wfCycleTab: 'worst_case', wfClock: '', wfPeriod: '',
+  wfWorstMetric: 'peak_to_peak', wfWorstSignal: '', wfSelectedCycle: null,
+  wfJumpCycle: '', wfBusy: false, wfError: null,
 };
 let directDraft = {
   run_key: '', target_mode: 'host', host_id: '', backend: 'ssh_direct', simulator: 'spectre',
@@ -99,13 +104,18 @@ async function refreshDirect() {
     if (!directState.selectedId || !directState.runs.some(r => r.run_id === directState.selectedId)) {
       directState.selectedId = directState.runs[0]?.run_id || null;
     }
+    const prevRunId = directState.detail?.run_id || null;
     if (directState.selectedId) {
       const detail = await api(`/api/direct/runs/${encodeURIComponent(directState.selectedId)}`);
       directState.detail = detail.run;
       directState.report = detail.report || null;
+      directState.wfIndex = detail.waveforms || null;
+      syncWaveformSelection(prevRunId !== directState.selectedId);
     } else {
       directState.detail = null;
       directState.report = null;
+      directState.wfIndex = null;
+      syncWaveformSelection(true);
     }
     const qParams = new URLSearchParams();
     if (directState.recoveryQuery.trim()) qParams.set('q', directState.recoveryQuery.trim());
@@ -171,7 +181,7 @@ function directRecoveryReportsPanel() {
     detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
   }
 
-  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>4. 有界恢复报告中心（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界恢复评估或自动重提的任务谱系都会自动持久化 JSON + Markdown 报告，方便事后审计与检索。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
+  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>5. 有界恢复报告中心（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界恢复评估或自动重提的任务谱系都会自动持久化 JSON + Markdown 报告，方便事后审计与检索。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
 }
 
 function directRunChip(run) {
@@ -237,8 +247,372 @@ function directPage() {
     html += `<section class="panel direct-panel"><div class="section-title"><h2>3. 任务控制 · ${escape(run.run_id)}</h2>${directRunChip(run)}</div><p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试（根任务：<code>${escape(run.root_run_id || run.run_id)}</code>${run.parent_run_id ? ` · 恢复自 <code>${escape(run.parent_run_id)}</code>` : ''}）· 有界恢复：<strong>${recPolicy.enabled ? `已启用（最多 ${recPolicy.max_recovery_attempts} 次 / 上限 ${((recPolicy.max_memory_bytes || 0) / 2**30).toFixed(0)} GiB）` : '未启用'}</strong><br>后端：<strong>${escape(run.backend)}</strong> · 主机：<strong>${escape(run.host_id)}</strong> · 仿真器：<strong>${escape(run.simulator)}</strong>${run.expected_version ? ` (${escape(run.expected_version)})` : ''}${run.scheduler?.job_id ? ` · 调度 Job ID：<code>${escape(run.scheduler.job_id)}</code>` : ''}<br>冻结摘要：<code>${escape(run.manifest_sha256.slice(0, 16))}…</code> · 最近观察：${escape(run.observed_at ? new Date(run.observed_at).toLocaleString() : '尚未联网')}</p>${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「查询状态」与远端对账。</p>' : ''}${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}<div class="direct-check-row"><label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label><label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label></div><div class="direct-actions"><button type="button" class="button secondary" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>1. 上传输入 (Stage)</button><button type="button" class="button primary" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>2. 启动仿真 (Launch)</button><button type="button" class="button secondary" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>查询状态 (Status)</button><button type="button" class="button secondary" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button><button type="button" class="button secondary" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button><button type="button" class="button secondary" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button><button type="button" class="button primary" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>3. 收集结果与报告 (Collect)</button><button type="button" class="button secondary" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button><button type="button" class="button primary" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button></div>${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${run.collection.skipped_files.length} 个超大原始文件已跳过并保留日志`}</p>` : ''}${directReportSection(directState.report)}</section>`;
   }
   html += '</div></div>';
+  html += directWaveformPanel(run);
   html += directRecoveryReportsPanel();
   return html;
+}
+
+const WF_COLORS = ['#1f6f54', '#2563eb', '#c2410c', '#7c3aed', '#0891b2', '#be123c', '#a16207', '#4f46e5'];
+
+function formatEng(val, unit = '') {
+  if (val === null || val === undefined || !Number.isFinite(Number(val))) return '—';
+  const n = Number(val);
+  if (n === 0) return `0${unit ? ' ' + unit : ''}`;
+  const abs = Math.abs(n);
+  const prefixes = [
+    [1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''],
+    [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n'], [1e-12, 'p'], [1e-15, 'f'],
+  ];
+  for (const [scale, p] of prefixes) {
+    if (abs >= scale) {
+      const scaled = n / scale;
+      const digits = Math.abs(scaled) >= 100 ? 1 : Math.abs(scaled) >= 10 ? 2 : 3;
+      return `${scaled.toFixed(digits)} ${p}${unit}`.trim();
+    }
+  }
+  return `${n.toExponential(2)}${unit ? ' ' + unit : ''}`;
+}
+
+function currentWfDatasetMeta() {
+  const list = directState.wfIndex?.datasets || [];
+  return list.find(d => d.dataset === directState.wfDataset) || list[0] || null;
+}
+
+function syncWaveformSelection(resetData = false) {
+  if (resetData) {
+    directState.wfQuery = null;
+    directState.wfCycles = null;
+    directState.wfWindow = {xMin: '', xMax: ''};
+    directState.wfSelectedCycle = null;
+    directState.wfJumpCycle = '';
+    directState.wfError = null;
+    directState.wfClock = '';
+    directState.wfPeriod = '';
+    directState.wfWorstSignal = '';
+  }
+  const datasets = directState.wfIndex?.datasets || [];
+  if (!datasets.length) {
+    directState.wfDataset = '';
+    directState.wfSignals = [];
+    return;
+  }
+  if (!datasets.some(d => d.dataset === directState.wfDataset)) {
+    directState.wfDataset = datasets[0].dataset;
+  }
+  const ds = currentWfDatasetMeta();
+  const avail = (ds?.signals || []).map(s => s.name);
+  directState.wfSignals = directState.wfSignals.filter(s => avail.includes(s));
+  if (!directState.wfSignals.length && avail.length) {
+    directState.wfSignals = avail.slice(0, Math.min(2, avail.length));
+  }
+  if (!directState.wfClock || !avail.includes(directState.wfClock)) {
+    const clk = avail.find(name => /clk|clock/i.test(name));
+    directState.wfClock = clk || '';
+  }
+  if (!directState.wfWorstSignal || !directState.wfSignals.includes(directState.wfWorstSignal)) {
+    const nonClk = directState.wfSignals.find(name => name !== directState.wfClock);
+    directState.wfWorstSignal = nonClk || directState.wfSignals[0] || '';
+  }
+}
+
+async function runWaveformQuery(overrideWindow = null) {
+  const runId = directState.selectedId;
+  const ds = currentWfDatasetMeta();
+  if (!runId || !ds || !directState.wfSignals.length || directState.wfBusy) return;
+  const win = overrideWindow || directState.wfWindow;
+  const body = {
+    dataset: ds.dataset,
+    signals: directState.wfSignals,
+    max_points: Number(directState.wfMaxPoints) || 1200,
+    mode: 'auto',
+  };
+  if (win.xMin !== '' && win.xMin !== null && win.xMin !== undefined && Number.isFinite(Number(win.xMin))) {
+    body.x_min = Number(win.xMin);
+  }
+  if (win.xMax !== '' && win.xMax !== null && win.xMax !== undefined && Number.isFinite(Number(win.xMax))) {
+    body.x_max = Number(win.xMax);
+  }
+  directState.wfBusy = true;
+  directState.wfError = null;
+  render();
+  try {
+    directState.wfQuery = await api(`/api/direct/runs/${encodeURIComponent(runId)}/waveforms/query`, {method: 'POST', body});
+    directState.wfWindow = {
+      xMin: body.x_min !== undefined ? String(body.x_min) : '',
+      xMax: body.x_max !== undefined ? String(body.x_max) : '',
+    };
+  } catch (error) {
+    directState.wfError = error.message;
+    toast(error.message);
+  } finally {
+    directState.wfBusy = false;
+    render();
+  }
+}
+
+async function runWaveformCycles(explicitCycleIndex = null) {
+  const runId = directState.selectedId;
+  const ds = currentWfDatasetMeta();
+  if (!runId || !ds || !directState.wfSignals.length || directState.wfBusy) return;
+  const body = {
+    dataset: ds.dataset,
+    signals: directState.wfSignals,
+    worst_metric: directState.wfWorstMetric || 'peak_to_peak',
+    worst_signal: directState.wfWorstSignal || directState.wfSignals[0],
+    overlay_cycles: 10,
+  };
+  if (directState.wfClock) {
+    body.clock_signal = directState.wfClock;
+    body.edge = 'rising';
+  } else if (directState.wfPeriod !== '' && Number.isFinite(Number(directState.wfPeriod)) && Number(directState.wfPeriod) > 0) {
+    body.period = Number(directState.wfPeriod);
+  } else {
+    directState.wfError = '请选择一个时钟信号，或输入正数固定周期（例如 1e-8）。';
+    render();
+    return;
+  }
+  const idx = explicitCycleIndex !== null ? explicitCycleIndex : directState.wfSelectedCycle;
+  if (Number.isInteger(idx) && idx >= 0) {
+    body.cycle_index = idx;
+  }
+  directState.wfBusy = true;
+  directState.wfError = null;
+  render();
+  try {
+    directState.wfCycles = await api(`/api/direct/runs/${encodeURIComponent(runId)}/waveforms/cycles`, {method: 'POST', body});
+    if (explicitCycleIndex !== null) {
+      directState.wfSelectedCycle = explicitCycleIndex;
+      directState.wfJumpCycle = String(explicitCycleIndex);
+      directState.wfCycleTab = 'selected';
+    } else if (!directState.wfCycles.key_cycles?.[directState.wfCycleTab]) {
+      directState.wfCycleTab = 'worst_case';
+    }
+  } catch (error) {
+    directState.wfError = error.message;
+    toast(error.message);
+  } finally {
+    directState.wfBusy = false;
+    render();
+  }
+}
+
+function renderWaveformSvg(q, {interactive = false, height = 250} = {}) {
+  if (!q || !q.signals) return '';
+  const sigNames = Object.keys(q.signals);
+  if (!sigNames.length) return '';
+  const W = 760, H = height, padL = 66, padR = 18, padT = 18, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xMin = Number(q.sweep?.min ?? 0);
+  const xMax = Number(q.sweep?.max ?? 1);
+  const xSpan = xMax > xMin ? (xMax - xMin) : 1;
+  let yMin = Infinity, yMax = -Infinity;
+  const toNum = v => (v && typeof v === 'object' ? Number(v.mag ?? v.real ?? 0) : Number(v));
+  for (const name of sigNames) {
+    const s = q.signals[name];
+    if (Number.isFinite(s.min)) yMin = Math.min(yMin, s.min);
+    if (Number.isFinite(s.max)) yMax = Math.max(yMax, s.max);
+    for (const v of (s.values || [])) {
+      const nv = toNum(v);
+      if (Number.isFinite(nv)) { yMin = Math.min(yMin, nv); yMax = Math.max(yMax, nv); }
+    }
+  }
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) { yMin = 0; yMax = 1; }
+  const yPad = (yMax - yMin) > 0 ? (yMax - yMin) * 0.08 : 0.1;
+  yMin -= yPad; yMax += yPad;
+  const ySpan = yMax - yMin;
+  const sx = x => padL + ((x - xMin) / xSpan) * plotW;
+  const sy = y => padT + (1 - (y - yMin) / ySpan) * plotH;
+
+  let shapes = '';
+  sigNames.forEach((name, idx) => {
+    const color = WF_COLORS[idx % WF_COLORS.length];
+    const s = q.signals[name];
+    if (!q.exact && q.envelopes?.[name]?.length) {
+      const envs = q.envelopes[name];
+      const upper = envs.map(b => `${sx(0.5 * (b.t0 + b.t1)).toFixed(1)},${sy(b.max).toFixed(1)}`);
+      const lower = [...envs].reverse().map(b => `${sx(0.5 * (b.t0 + b.t1)).toFixed(1)},${sy(b.min).toFixed(1)}`);
+      shapes += `<polygon points="${upper.concat(lower).join(' ')}" fill="${color}" fill-opacity="0.20" stroke="none"></polygon>`;
+      const xs = s.x || [], ys = s.values || [];
+      if (xs.length) {
+        const pts = xs.map((x, i) => `${sx(x).toFixed(1)},${sy(toNum(ys[i])).toFixed(1)}`).join(' ');
+        shapes += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.35" stroke-linejoin="round"></polyline>`;
+      }
+    } else {
+      const xs = q.x || s.x || [], ys = s.values || [];
+      if (xs.length) {
+        const pts = xs.map((x, i) => `${sx(x).toFixed(1)},${sy(toNum(ys[i])).toFixed(1)}`).join(' ');
+        shapes += `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.7" stroke-linejoin="round"></polyline>`;
+        if (xs.length <= 160) {
+          shapes += xs.map((x, i) => `<circle cx="${sx(x).toFixed(1)}" cy="${sy(toNum(ys[i])).toFixed(1)}" r="2.2" fill="${color}"></circle>`).join('');
+        }
+      }
+    }
+  });
+
+  const unit = q.sweep?.unit || '';
+  const yTicks = [yMin, 0.5 * (yMin + yMax), yMax];
+  const xTicks = [xMin, xMin + 0.25 * xSpan, xMin + 0.5 * xSpan, xMin + 0.75 * xSpan, xMax];
+  const grid = yTicks.map(yv => `<line x1="${padL}" y1="${sy(yv).toFixed(1)}" x2="${W - padR}" y2="${sy(yv).toFixed(1)}" stroke="#e3e9e5" stroke-dasharray="3 3"></line><text x="${padL - 8}" y="${(sy(yv) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#5e7369">${escape(formatEng(yv))}</text>`).join('')
+    + xTicks.map(xv => `<line x1="${sx(xv).toFixed(1)}" y1="${padT}" x2="${sx(xv).toFixed(1)}" y2="${H - padB}" stroke="#edf2ee"></line><text x="${sx(xv).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10" fill="#5e7369">${escape(formatEng(xv, unit))}</text>`).join('');
+
+  const legend = sigNames.map((name, idx) => `<span class="wf-legend-item"><i style="background:${WF_COLORS[idx % WF_COLORS.length]}"></i>${escape(name)}</span>`).join('');
+  return `<div class="wf-legend">${legend}</div><svg class="wf-svg ${interactive ? 'wf-zoomable' : ''}" viewBox="0 0 ${W} ${H}" ${interactive ? `data-wf-zoom-svg="1" data-xmin="${xMin}" data-xmax="${xMax}" data-padl="${padL}" data-padr="${padR}" data-w="${W}"` : ''}><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${grid}${shapes}${interactive ? '<rect class="wf-zoom-brush" x="0" y="' + padT + '" width="0" height="' + plotH + '" hidden></rect>' : ''}</svg>`;
+}
+
+function renderCycleTrendSvg(cData) {
+  const rows = cData?.cycle_metrics || [];
+  if (!rows.length) return '';
+  const W = 760, H = 165, padL = 66, padR = 18, padT = 18, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const sig = cData.worst_signal;
+  const metric = cData.worst_metric;
+  const vals = rows.map(r => {
+    if (metric === 'period_deviation') return r.duration;
+    const m = r.signals?.[sig] || {};
+    if (metric === 'max_value' || metric === 'overshoot') return m.max;
+    if (metric === 'min_value') return m.min;
+    return m.peak_to_peak;
+  });
+  const finite = vals.filter(v => Number.isFinite(v));
+  if (!finite.length) return '';
+  let yMin = Math.min(...finite), yMax = Math.max(...finite);
+  const yPad = (yMax - yMin) > 0 ? (yMax - yMin) * 0.12 : 0.05;
+  yMin -= yPad; yMax += yPad;
+  const n = rows.length;
+  const sx = i => padL + (n > 1 ? (i / (n - 1)) * plotW : plotW * 0.5);
+  const sy = y => padT + (1 - (y - yMin) / (yMax - yMin)) * plotH;
+
+  // For >600 cycles, decimate polyline points cleanly while preserving exact worst & selected markers
+  const step = Math.max(1, Math.floor(n / 400));
+  const polyPts = [];
+  for (let i = 0; i < n; i += step) {
+    if (Number.isFinite(vals[i])) polyPts.push(`${sx(i).toFixed(1)},${sy(vals[i]).toFixed(1)}`);
+  }
+  const wi = cData.worst_cycle_index;
+  if (Number.isFinite(vals[wi])) {
+    // Ensure worst point is visibly spiked on the curve too
+    const insertIdx = Math.min(polyPts.length, Math.floor(wi / step) + 1);
+    polyPts.splice(insertIdx, 0, `${sx(wi).toFixed(1)},${sy(vals[wi]).toFixed(1)}`);
+  }
+  const si = directState.wfSelectedCycle;
+  const metricLabel = {
+    peak_to_peak: `${sig} 峰峰值 Vpp`,
+    max_value: `${sig} 周期最大值`,
+    min_value: `${sig} 周期最小值`,
+    overshoot: `${sig} 过冲峰值`,
+    period_deviation: '周期时长 ΔT',
+  }[metric] || metric;
+  const yTicks = [yMin, 0.5 * (yMin + yMax), yMax];
+  const grid = yTicks.map(yv => `<line x1="${padL}" y1="${sy(yv).toFixed(1)}" x2="${W - padR}" y2="${sy(yv).toFixed(1)}" stroke="#e3e9e5" stroke-dasharray="3 3"></line><text x="${padL - 8}" y="${(sy(yv) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#5e7369">${escape(formatEng(yv))}</text>`).join('');
+  const xMarks = [0, Math.floor((n - 1) * 0.25), Math.floor((n - 1) * 0.5), Math.floor((n - 1) * 0.75), n - 1]
+    .map(i => `<text x="${sx(i).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#5e7369">#${i}</text>`).join('');
+  const worstDot = Number.isFinite(vals[wi])
+    ? `<circle cx="${sx(wi).toFixed(1)}" cy="${sy(vals[wi]).toFixed(1)}" r="6" fill="#dc2626" fill-opacity="0.22" stroke="#dc2626" stroke-width="2"></circle><text x="${Math.min(W - padR - 46, Math.max(padL + 46, sx(wi))).toFixed(1)}" y="${Math.max(padT + 12, sy(vals[wi]) - 9).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="#b91c1c">Worst #${wi}</text>`
+    : '';
+  const selDot = (Number.isInteger(si) && si >= 0 && si < n && Number.isFinite(vals[si]))
+    ? `<circle cx="${sx(si).toFixed(1)}" cy="${sy(vals[si]).toFixed(1)}" r="5" fill="#2563eb" fill-opacity="0.25" stroke="#2563eb" stroke-width="2"></circle>`
+    : '';
+
+  return `<p class="subtle-note"><strong>逐周期趋势图（${escape(metricLabel)} · 共 ${n} 个周期）</strong>：点击图中任意周期位置，立即无损钻取该周期内部波形。</p><svg class="wf-svg wf-clickable" viewBox="0 0 ${W} ${H}" data-wf-trend-svg="1" data-count="${n}" data-padl="${padL}" data-padr="${padR}" data-w="${W}"><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${grid}${xMarks}<polyline points="${polyPts.join(' ')}" fill="none" stroke="#1f6f54" stroke-width="1.5"></polyline>${worstDot}${selDot}</svg>`;
+}
+
+function renderOverlaySvg(cData) {
+  const traces = cData?.overlay?.cycles || [];
+  if (!traces.length) return '<p class="subtle-note">无多周期叠画数据。</p>';
+  const W = 760, H = 230, padL = 66, padR = 18, padT = 18, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  let xMax = 0, yMin = Infinity, yMax = -Infinity;
+  for (const tr of traces) {
+    for (const t of tr.tau) if (t > xMax) xMax = t;
+    for (const v of tr.values) if (Number.isFinite(v)) { yMin = Math.min(yMin, v); yMax = Math.max(yMax, v); }
+  }
+  if (xMax <= 0) xMax = 1;
+  const yPad = (yMax - yMin) > 0 ? (yMax - yMin) * 0.08 : 0.1;
+  yMin -= yPad; yMax += yPad;
+  const sx = x => padL + (x / xMax) * plotW;
+  const sy = y => padT + (1 - (y - yMin) / (yMax - yMin)) * plotH;
+  const normal = traces.filter(t => !t.is_worst).map(tr => `<polyline points="${tr.tau.map((x, i) => `${sx(x).toFixed(1)},${sy(tr.values[i]).toFixed(1)}`).join(' ')}" fill="none" stroke="#1f6f54" stroke-opacity="0.35" stroke-width="1.4"></polyline>`).join('');
+  const worst = traces.filter(t => t.is_worst).map(tr => `<polyline points="${tr.tau.map((x, i) => `${sx(x).toFixed(1)},${sy(tr.values[i]).toFixed(1)}`).join(' ')}" fill="none" stroke="#dc2626" stroke-width="2.2"></polyline>`).join('');
+  const unit = cData.sweep_unit || 's';
+  const yTicks = [yMin, 0.5 * (yMin + yMax), yMax];
+  const xTicks = [0, 0.25 * xMax, 0.5 * xMax, 0.75 * xMax, xMax];
+  const grid = yTicks.map(yv => `<line x1="${padL}" y1="${sy(yv).toFixed(1)}" x2="${W - padR}" y2="${sy(yv).toFixed(1)}" stroke="#e3e9e5" stroke-dasharray="3 3"></line><text x="${padL - 8}" y="${(sy(yv) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#5e7369">${escape(formatEng(yv))}</text>`).join('')
+    + xTicks.map(xv => `<text x="${sx(xv).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10" fill="#5e7369">+${escape(formatEng(xv, unit))}</text>`).join('');
+  return `<div class="wf-legend"><span class="wf-legend-item"><i style="background:#1f6f54"></i>稳态周期叠画 (${traces.filter(t => !t.is_worst).length} 周期)</span><span class="wf-legend-item"><i style="background:#dc2626"></i>最差异常周期 (#${cData.worst_cycle_index})</span></div><svg class="wf-svg" viewBox="0 0 ${W} ${H}"><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${grid}${normal}${worst}</svg>`;
+}
+
+function directWaveformPanel(run) {
+  const datasets = directState.wfIndex?.datasets || [];
+  const ds = currentWfDatasetMeta();
+  const hasSkippedRaw = (run?.collection?.skipped_files || []).some(f => String(f.name || '').startsWith('results.raw/'));
+  const q = directState.wfQuery;
+  const c = directState.wfCycles;
+
+  let body = `<div class="wf-toolbar-top"><p class="subtle-note">大文件原生保留在远端服务器，仅按需读取选定信号与时间窗口；全局概览采用 <strong>Min-Max 包络降采样</strong>（绝不漏掉毛刺/过冲），放大或单周期切片自动切换为 <strong>100% 原始无损采样点</strong>。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-demo-wf" ${directState.busy || directState.wfBusy ? 'disabled' : ''}>加载 500 周期 PSF Binary 演示波形（含隐藏毛刺）</button>${run ? `<button type="button" class="button secondary small" data-action="direct-wf-refresh-remote" data-id="${escape(run.run_id)}" ${directState.wfBusy ? 'disabled' : ''}>${hasSkippedRaw ? '扫描远端未下载的大波形' : '刷新波形索引'}</button>` : ''}</div></div>`;
+
+  if (directState.wfError) {
+    body += `<p class="error-text" role="alert">${escape(directState.wfError)}</p>`;
+  }
+
+  if (!run || !datasets.length) {
+    body += `<p class="subtle-note">${run ? '当前运行记录还没有已索引的 PSF Binary / PSFXL / ASCII 波形。可点击上方「加载 500 周期 PSF Binary 演示波形」立即离线体验，或在仿真收集完成后点击「刷新波形索引」。' : '点击上方按钮可一键生成 500 周期（20,000 点）PSF Binary 演示波形，直接体验包络缩放与周期钻取。'}</p>`;
+    return `<section class="panel direct-panel direct-wf-panel"><div class="section-title"><h2>4. 二进制大波形查看器与周期切片（PSF Binary / PSFXL / ASCII）</h2><span class="chip">COMPUTE-NEAR-DATA</span></div>${body}</section>`;
+  }
+
+  const formatChip = chip(String(ds.format || 'unknown').toUpperCase(), ds.format === 'psfbin' || ds.format === 'psfxl' ? 'blue' : '');
+  const srcChip = chip(ds.source === 'remote_in_place' ? '远端原位查询（零全量下载）' : '本地已收集', ds.source === 'remote_in_place' ? 'amber' : 'green');
+  const sizeKb = (Number(ds.bytes || 0) / 1024).toFixed(1);
+  const availSignals = ds.signals || [];
+
+  body += `<div class="wf-meta-bar">${formatChip}${srcChip}<span class="subtle-note">数据文件：<code>${escape(ds.dataset)}</code> · 大小 ${sizeKb} KiB · 总采样点 <strong>${escape(ds.sweep?.count ?? 0)}</strong> · 扫描范围 ${escape(formatEng(ds.sweep?.min, ds.sweep?.unit || ''))} ~ ${escape(formatEng(ds.sweep?.max, ds.sweep?.unit || ''))}</span></div>`;
+
+  body += `<div class="direct-grid wf-controls"><label>波形数据集<select id="wf-dataset">${datasets.map(d => `<option value="${escape(d.dataset)}" ${d.dataset === ds.dataset ? 'selected' : ''}>${escape(d.dataset)} (${escape(d.format)} · ${d.sweep?.count ?? 0} pts)</option>`).join('')}</select></label><label>窗口起点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmin" value="${escape(directState.wfWindow.xMin)}" placeholder="${escape(String(ds.sweep?.min ?? ''))}"></label><label>窗口终点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmax" value="${escape(directState.wfWindow.xMax)}" placeholder="${escape(String(ds.sweep?.max ?? ''))}"></label><label>最大预览点数<input id="wf-maxpts" type="number" min="64" max="20000" value="${escape(directState.wfMaxPoints)}"></label></div>`;
+
+  body += `<div class="wf-signal-box"><strong>选择信号：</strong>${availSignals.map(s => `<label class="wf-sig-pill"><input type="checkbox" data-wf-signal="${escape(s.name)}" ${directState.wfSignals.includes(s.name) ? 'checked' : ''}> ${escape(s.name)}${s.unit ? ` (${escape(s.unit)})` : ''}</label>`).join('')}</div>`;
+
+  body += `<div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-query" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '查询中…' : '查询 / 绘制波形'}</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-in" ${directState.wfBusy || !q ? 'disabled' : ''}>放大 2×</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-out" ${directState.wfBusy || !q ? 'disabled' : ''}>缩小 2×</button><button type="button" class="button secondary small" data-action="direct-wf-pan-left" ${directState.wfBusy || !q ? 'disabled' : ''}>← 左移</button><button type="button" class="button secondary small" data-action="direct-wf-pan-right" ${directState.wfBusy || !q ? 'disabled' : ''}>右移 →</button><button type="button" class="button secondary small" data-action="direct-wf-reset" ${directState.wfBusy || !q ? 'disabled' : ''}>重置全范围</button></div>`;
+
+  if (q) {
+    const modeBanner = q.exact
+      ? `<div class="wf-mode-banner exact">${chip('100% 原始无损点 (exact_window)', 'green')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始采样点，已无损返回（<code>measurement_safe: true</code>，可直接用于精确量测 / adctools）。在图上拖拽框选可继续放大。</span></div>`
+      : `<div class="wf-mode-banner preview">${chip('Min-Max 包络预览 (downsampled_preview)', 'amber')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始点，已使用 <strong>${q.downsampling?.buckets || 0}</strong> 桶流式 Min-Max 包络降采样（完整保留所有尖峰毛刺与过冲，<code>measurement_safe: false</code>）。<strong>在下方图上横向拖拽框选</strong>或点击「放大 2×」将自动切换为 100% 无损原始采样。</span></div>`;
+    body += `<div class="wf-plot-card">${modeBanner}${renderWaveformSvg(q, {interactive: true})}</div>`;
+  }
+
+  // Cycle Slicer & Drill-Down Sub-Panel
+  body += `<div class="wf-cycle-card"><div class="section-title"><h3>多周期切片分析（Cycle Slicer · 逐周期趋势 + 最差异常定位 + 单周期无损钻取）</h3><span class="chip">CYCLE SLICER</span></div><p class="subtle-note">面对数百至上千个周期的长瞬态仿真，逐周期扫描极值/峰峰值/过冲指标，自动抓出最差异常周期并支持点击任意周期查看其 100% 无损周期内波形。</p><div class="direct-grid"><label>时钟边沿信号（推荐）<select id="wf-clock"><option value="">（不使用时钟，改用固定周期 T）</option>${availSignals.map(s => `<option value="${escape(s.name)}" ${s.name === directState.wfClock ? 'selected' : ''}>${escape(s.name)}</option>`).join('')}</select></label><label>固定周期 T（无时钟时填写）<input id="wf-period" value="${escape(directState.wfPeriod)}" placeholder="例如 1e-8" ${directState.wfClock ? 'disabled' : ''}></label><label>最差周期判定指标<select id="wf-worst-metric"><option value="peak_to_peak" ${directState.wfWorstMetric === 'peak_to_peak' ? 'selected' : ''}>峰峰值最大 (peak_to_peak)</option><option value="max_value" ${directState.wfWorstMetric === 'max_value' ? 'selected' : ''}>周期峰值最高 (max_value)</option><option value="min_value" ${directState.wfWorstMetric === 'min_value' ? 'selected' : ''}>周期谷值最低 (min_value)</option><option value="overshoot" ${directState.wfWorstMetric === 'overshoot' ? 'selected' : ''}>相对稳态过冲最大 (overshoot)</option><option value="period_deviation" ${directState.wfWorstMetric === 'period_deviation' ? 'selected' : ''}>周期时长偏差最大 (period_deviation)</option></select></label><label>指标评估信号<select id="wf-worst-signal">${(directState.wfSignals.length ? directState.wfSignals : availSignals.map(s => s.name)).map(name => `<option value="${escape(name)}" ${name === directState.wfWorstSignal ? 'selected' : ''}>${escape(name)}</option>`).join('')}</select></label></div><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-cycles" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '分析中…' : '执行周期切片分析'}</button>${c ? `<div class="wf-jump-box"><input id="wf-jump-cycle" type="number" min="0" max="${Math.max(0, c.cycle_count - 1)}" value="${escape(directState.wfJumpCycle)}" placeholder="输入周期号 0~${Math.max(0, c.cycle_count - 1)}"><button type="button" class="button secondary small" data-action="direct-wf-jump-cycle" ${directState.wfBusy ? 'disabled' : ''}>钻取该周期</button></div>` : ''}</div>`;
+
+  if (c) {
+    const det = c.detection?.basis === 'clock_signal'
+      ? `时钟 <code>${escape(c.detection.clock_signal)}</code> ${escape(c.detection.edge)} 边沿 (阈值 ${escape(formatEng(c.detection.threshold, 'V'))})`
+      : `固定周期 ${escape(formatEng(c.detection?.period, c.sweep_unit || 's'))}`;
+    body += `<div class="wf-cycle-summary">${chip(`共 ${c.cycle_count} 个周期`, 'blue')}${chip(`最差异常周期：#${c.worst_cycle_index}`, 'amber')}<span class="subtle-note">切片依据：${det} · 评估信号：<code>${escape(c.worst_signal)}</code></span></div>`;
+    body += renderCycleTrendSvg(c);
+
+    const tabs = [
+      ['worst_case', `最差异常周期 (#${c.worst_cycle_index})`],
+      ['first', '起始周期 (#0)'],
+      ['steady_last', `稳态末周期 (#${Math.max(0, c.cycle_count - 1)})`],
+      ['overlay', '多周期叠画 (Eye Overlay)'],
+    ];
+    if (c.key_cycles?.selected) {
+      tabs.push(['selected', `已钻取周期 (#${c.key_cycles.selected.cycle_index})`]);
+    }
+    body += `<div class="wf-tabs">${tabs.map(([k, label]) => `<button type="button" class="wf-tab ${directState.wfCycleTab === k ? 'active' : ''}" data-action="direct-wf-tab" data-tab="${k}">${escape(label)}</button>`).join('')}</div>`;
+
+    if (directState.wfCycleTab === 'overlay') {
+      body += `<div class="wf-plot-card">${renderOverlaySvg(c)}</div>`;
+    } else {
+      const kc = c.key_cycles?.[directState.wfCycleTab] || c.key_cycles?.worst_case;
+      if (kc?.waveform) {
+        const m = kc.metrics?.signals?.[c.worst_signal] || {};
+        body += `<div class="wf-plot-card"><div class="wf-mode-banner exact">${chip(kc.exact ? '单周期 100% 无损波形 (exact_cycle)' : '周期预览', kc.exact ? 'green' : 'amber')}<span>周期 <strong>#${kc.cycle_index}</strong> · 时间 [${escape(formatEng(kc.t_start, c.sweep_unit || 's'))}, ${escape(formatEng(kc.t_end, c.sweep_unit || 's'))}] · 原始点数 ${kc.waveform.sweep?.window_count ?? 0} · <code>${escape(c.worst_signal)}</code> Vmin=${escape(formatEng(m.min, 'V'))} / Vmax=${escape(formatEng(m.max, 'V'))} / Vpp=${escape(formatEng(m.peak_to_peak, 'V'))}</span></div>${renderWaveformSvg(kc.waveform, {interactive: false, height: 225})}</div>`;
+      }
+    }
+  }
+  body += '</div>';
+
+  return `<section class="panel direct-panel direct-wf-panel"><div class="section-title"><h2>4. 二进制大波形查看器与周期切片（PSF Binary / PSFXL / ASCII）</h2><span class="chip">COMPUTE-NEAR-DATA</span></div>${body}</section>`;
 }
 
 async function handleDirectClick(event) {
@@ -269,6 +643,78 @@ async function handleDirectClick(event) {
   }
   if (action === 'rec-search') {
     await refreshDirect();
+    return;
+  }
+  if (action === 'demo-wf') {
+    if (directState.busy || directState.wfBusy) return;
+    directState.wfBusy = true; directState.wfError = null; render();
+    try {
+      const res = await api('/api/direct/demo-waveform', {method: 'POST', body: {}});
+      directState.selectedId = res.run.run_id;
+      directState.wfIndex = res.waveforms;
+      directState.wfBusy = false;
+      await refreshDirect();
+      syncWaveformSelection(true);
+      await runWaveformQuery();
+      await runWaveformCycles();
+      toast('已生成 500 周期 PSF Binary 演示波形并自动定位周期 #317 的隐藏毛刺！');
+    } catch (error) {
+      directState.wfBusy = false;
+      directState.wfError = error.message;
+      toast(error.message);
+      render();
+    }
+    return;
+  }
+  if (action === 'wf-refresh-remote') {
+    if (!id || directState.wfBusy) return;
+    directState.wfBusy = true; directState.wfError = null; render();
+    try {
+      directState.wfIndex = await api(`/api/direct/runs/${encodeURIComponent(id)}/waveforms?refresh_remote=1`);
+      syncWaveformSelection(false);
+      toast(`已刷新波形索引：发现 ${(directState.wfIndex.datasets || []).length} 个波形数据集。`);
+    } catch (error) {
+      directState.wfError = error.message;
+      toast(error.message);
+    } finally {
+      directState.wfBusy = false; render();
+    }
+    return;
+  }
+  if (action === 'wf-query') { await runWaveformQuery(); return; }
+  if (action === 'wf-reset') { await runWaveformQuery({xMin: '', xMax: ''}); return; }
+  if (action === 'wf-zoom-in' || action === 'wf-zoom-out' || action === 'wf-pan-left' || action === 'wf-pan-right') {
+    const sw = directState.wfQuery?.sweep;
+    if (!sw || sw.min === null || sw.max === null) return;
+    const fMin = Number(sw.full_min ?? sw.min), fMax = Number(sw.full_max ?? sw.max);
+    let cMin = Number(sw.min), cMax = Number(sw.max);
+    const span = Math.max(1e-18, cMax - cMin);
+    if (action === 'wf-zoom-in') {
+      const mid = 0.5 * (cMin + cMax);
+      cMin = mid - span * 0.25; cMax = mid + span * 0.25;
+    } else if (action === 'wf-zoom-out') {
+      const mid = 0.5 * (cMin + cMax);
+      cMin = Math.max(fMin, mid - span); cMax = Math.min(fMax, mid + span);
+    } else if (action === 'wf-pan-left') {
+      const shift = Math.min(span * 0.35, cMin - fMin);
+      cMin -= shift; cMax -= shift;
+    } else {
+      const shift = Math.min(span * 0.35, fMax - cMax);
+      cMin += shift; cMax += shift;
+    }
+    await runWaveformQuery({xMin: String(cMin), xMax: String(cMax)});
+    return;
+  }
+  if (action === 'wf-cycles') { await runWaveformCycles(); return; }
+  if (action === 'wf-jump-cycle') {
+    const n = Number(directState.wfJumpCycle);
+    if (!Number.isInteger(n) || n < 0) { toast('请输入有效的非负整数周期编号。'); return; }
+    await runWaveformCycles(n);
+    return;
+  }
+  if (action === 'wf-tab') {
+    directState.wfCycleTab = button.dataset.tab || 'worst_case';
+    render();
     return;
   }
   if (action === 'rec-download') {
@@ -1181,6 +1627,59 @@ document.addEventListener('click', async event => {
 document.addEventListener('click', handleLiveClick);
 document.addEventListener('click', handleDirectClick);
 
+// Interactive waveform drag-to-zoom & trend click-to-drill-down
+let wfDrag = null;
+function svgClientToViewX(svg, clientX) {
+  const rect = svg.getBoundingClientRect();
+  const W = Number(svg.dataset.w || 760);
+  if (!rect.width) return 0;
+  return ((clientX - rect.left) / rect.width) * W;
+}
+document.addEventListener('pointerdown', event => {
+  const svg = event.target.closest('svg[data-wf-zoom-svg="1"]');
+  if (!svg || directState.wfBusy) return;
+  const padL = Number(svg.dataset.padl || 66), padR = Number(svg.dataset.padr || 18), W = Number(svg.dataset.w || 760);
+  const x = Math.max(padL, Math.min(W - padR, svgClientToViewX(svg, event.clientX)));
+  wfDrag = {svg, startX: x, curX: x, padL, padR, W};
+  const brush = svg.querySelector('.wf-zoom-brush');
+  if (brush) { brush.setAttribute('x', x); brush.setAttribute('width', '0'); brush.hidden = false; }
+});
+document.addEventListener('pointermove', event => {
+  if (!wfDrag) return;
+  const x = Math.max(wfDrag.padL, Math.min(wfDrag.W - wfDrag.padR, svgClientToViewX(wfDrag.svg, event.clientX)));
+  wfDrag.curX = x;
+  const brush = wfDrag.svg.querySelector('.wf-zoom-brush');
+  if (brush) {
+    brush.setAttribute('x', Math.min(wfDrag.startX, x).toFixed(1));
+    brush.setAttribute('width', Math.abs(x - wfDrag.startX).toFixed(1));
+  }
+});
+document.addEventListener('pointerup', async () => {
+  if (!wfDrag) return;
+  const d = wfDrag; wfDrag = null;
+  const brush = d.svg.querySelector('.wf-zoom-brush');
+  if (brush) brush.hidden = true;
+  if (Math.abs(d.curX - d.startX) < 12) return;
+  const plotW = d.W - d.padL - d.padR;
+  const xMin = Number(d.svg.dataset.xmin), xMax = Number(d.svg.dataset.xmax);
+  const f0 = (Math.min(d.startX, d.curX) - d.padL) / plotW;
+  const f1 = (Math.max(d.startX, d.curX) - d.padL) / plotW;
+  const newMin = xMin + f0 * (xMax - xMin);
+  const newMax = xMin + f1 * (xMax - xMin);
+  if (newMax > newMin) await runWaveformQuery({xMin: String(newMin), xMax: String(newMax)});
+});
+document.addEventListener('click', async event => {
+  const svg = event.target.closest('svg[data-wf-trend-svg="1"]');
+  if (!svg || directState.wfBusy) return;
+  const count = Number(svg.dataset.count || 0);
+  if (count <= 0) return;
+  const padL = Number(svg.dataset.padl || 66), padR = Number(svg.dataset.padr || 18), W = Number(svg.dataset.w || 760);
+  const x = Math.max(padL, Math.min(W - padR, svgClientToViewX(svg, event.clientX)));
+  const frac = (x - padL) / Math.max(1, W - padL - padR);
+  const idx = Math.max(0, Math.min(count - 1, Math.round(frac * Math.max(0, count - 1))));
+  await runWaveformCycles(idx);
+});
+
 $('#connection-form').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1286,6 +1785,11 @@ document.addEventListener('input', event => {
   };
   if (directInputs[event.target.id]) directDraft[directInputs[event.target.id]] = event.target.value;
   if (event.target.id === 'direct-rec-query') directState.recoveryQuery = event.target.value;
+  if (event.target.id === 'wf-xmin') directState.wfWindow.xMin = event.target.value;
+  if (event.target.id === 'wf-xmax') directState.wfWindow.xMax = event.target.value;
+  if (event.target.id === 'wf-maxpts') directState.wfMaxPoints = Number(event.target.value) || 1200;
+  if (event.target.id === 'wf-period') directState.wfPeriod = event.target.value;
+  if (event.target.id === 'wf-jump-cycle') directState.wfJumpCycle = event.target.value;
   if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
   if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
@@ -1316,6 +1820,24 @@ document.addEventListener('change', event => {
   if (event.target.id === 'direct-rec-oom') directDraft.rec_retry_oom = event.target.checked;
   if (event.target.id === 'direct-rec-relocate') directDraft.rec_allow_relocate = event.target.checked;
   if (event.target.id === 'direct-rec-outcome') { directState.recoveryOutcome = event.target.value; refreshDirect(); }
+  if (event.target.id === 'wf-dataset') {
+    directState.wfDataset = event.target.value;
+    syncWaveformSelection(true);
+    render();
+  }
+  if (event.target.matches('[data-wf-signal]')) {
+    const name = event.target.dataset.wfSignal;
+    if (event.target.checked) {
+      if (!directState.wfSignals.includes(name)) directState.wfSignals = [...directState.wfSignals, name];
+    } else {
+      directState.wfSignals = directState.wfSignals.filter(s => s !== name);
+    }
+    syncWaveformSelection(false);
+    render();
+  }
+  if (event.target.id === 'wf-clock') { directState.wfClock = event.target.value; render(); }
+  if (event.target.id === 'wf-worst-metric') directState.wfWorstMetric = event.target.value;
+  if (event.target.id === 'wf-worst-signal') directState.wfWorstSignal = event.target.value;
   if (event.target.id === 'direct-netlist-file' && event.target.files?.[0]) {
     const reader = new FileReader();
     reader.onload = () => {

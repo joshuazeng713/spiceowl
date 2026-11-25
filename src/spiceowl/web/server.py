@@ -296,6 +296,25 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     recovery_policy=payload.get("recovery_policy"),
                 )
                 return self.reply({"run": run}, 201)
+            if path == "/api/direct/demo-waveform" and self.command == "POST":
+                req = self.body()
+                allowed = {"run_id", "cycles", "glitch_cycle"}
+                if set(req) - allowed:
+                    raise DomainError("Demo waveform accepts optional run_id, cycles, and glitch_cycle only.")
+                run_id = req.get("run_id", "demo-psfbin-500c")
+                cycles = req.get("cycles", 500)
+                glitch_cycle = req.get("glitch_cycle", 317)
+                if type(cycles) is not int or not 10 <= cycles <= 5000:
+                    raise DomainError("cycles must be an integer between 10 and 5000.")
+                if type(glitch_cycle) is not int or not 0 <= glitch_cycle < cycles:
+                    raise DomainError("glitch_cycle must be an integer within [0, cycles - 1].")
+                run = direct_manager.create_demo_waveform_run(
+                    run_id=run_id, cycles=cycles, glitch_cycle=glitch_cycle,
+                )
+                return self.reply(
+                    {"run": run, "waveforms": direct_manager.waveform_index(run["run_id"], allow_remote=False)},
+                    201,
+                )
             if path == "/api/direct/recovery-reports" and self.command == "GET":
                 query = parse_qs(url.query, keep_blank_values=True)
                 if set(query) - {"q", "outcome"}:
@@ -313,7 +332,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 return self.reply(direct_manager.lookup_submission(query["key"][0]))
             if path.startswith("/api/direct/runs/"):
                 sub = path.removeprefix("/api/direct/runs/").split("/")
-                if len(sub) not in (1, 2):
+                if len(sub) not in (1, 2, 3):
                     raise DomainError("This endpoint does not exist.", "not_found")
                 run_id = require_id(sub[0], "direct run ID")
                 if len(sub) == 1 and self.command == "GET":
@@ -322,7 +341,88 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         rep = direct_manager.report(run_id)
                     except DomainError:
                         rep = None
-                    return self.reply({"run": run, "report": rep, "monitor": direct_monitor.snapshot(run_id)})
+                    try:
+                        wf = direct_manager.waveform_index(run_id, allow_remote=False)
+                    except DomainError:
+                        wf = None
+                    return self.reply({"run": run, "report": rep, "waveforms": wf, "monitor": direct_monitor.snapshot(run_id)})
+                if len(sub) == 2 and sub[1] == "waveforms" and self.command == "GET":
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    if set(query) - {"refresh_remote", "allow_remote"}:
+                        raise DomainError("Waveform index accepts only refresh_remote and allow_remote.")
+                    refresh_remote = query.get("refresh_remote", ["0"])[0] in ("1", "true", "yes")
+                    allow_remote = query.get("allow_remote", ["1"])[0] not in ("0", "false", "no")
+                    return self.reply(direct_manager.waveform_index(
+                        run_id, refresh_remote=refresh_remote, allow_remote=allow_remote,
+                    ))
+                if len(sub) == 3 and sub[1] == "waveforms" and self.command == "POST":
+                    req = self.body()
+                    wf_op = sub[2]
+                    if wf_op == "query":
+                        allowed = {"dataset", "signals", "x_min", "x_max", "max_points", "mode"}
+                        if set(req) - allowed or not {"dataset", "signals"} <= set(req):
+                            raise DomainError("Waveform query requires dataset and signals.")
+                        if not isinstance(req["dataset"], str) or not req["dataset"].strip():
+                            raise DomainError("dataset must be a non-empty string.")
+                        for bound_name in ("x_min", "x_max"):
+                            bval = req.get(bound_name)
+                            if bval is not None and (isinstance(bval, bool) or not isinstance(bval, (int, float))):
+                                raise DomainError(f"{bound_name} must be numeric or null.")
+                        max_pts = req.get("max_points", 2000)
+                        if type(max_pts) is not int or not 16 <= max_pts <= 20000:
+                            raise DomainError("max_points must be an integer between 16 and 20000.")
+                        mode = req.get("mode", "auto")
+                        if mode not in ("auto", "exact"):
+                            raise DomainError("mode must be 'auto' or 'exact'.")
+                        return self.reply(direct_manager.waveform_query(
+                            run_id,
+                            req["dataset"],
+                            req["signals"],
+                            x_min=float(req["x_min"]) if req.get("x_min") is not None else None,
+                            x_max=float(req["x_max"]) if req.get("x_max") is not None else None,
+                            max_points=max_pts,
+                            mode=mode,
+                        ))
+                    if wf_op == "cycles":
+                        allowed = {
+                            "dataset", "signals", "period", "clock_signal", "threshold", "edge",
+                            "t_start", "t_end", "worst_metric", "worst_signal", "cycle_index",
+                            "context_cycles", "overlay_cycles", "max_points_per_cycle",
+                        }
+                        if set(req) - allowed or not {"dataset", "signals"} <= set(req):
+                            raise DomainError("Cycle analysis requires dataset and signals.")
+                        if not isinstance(req["dataset"], str) or not req["dataset"].strip():
+                            raise DomainError("dataset must be a non-empty string.")
+                        for num_field in ("period", "threshold", "t_start", "t_end"):
+                            val = req.get(num_field)
+                            if val is not None and (isinstance(val, bool) or not isinstance(val, (int, float))):
+                                raise DomainError(f"{num_field} must be numeric or null.")
+                        for int_field in ("cycle_index", "context_cycles", "overlay_cycles", "max_points_per_cycle"):
+                            val = req.get(int_field)
+                            if val is not None and type(val) is not int:
+                                raise DomainError(f"{int_field} must be an integer or null.")
+                        for str_field in ("clock_signal", "worst_signal"):
+                            val = req.get(str_field)
+                            if val is not None and (not isinstance(val, str) or not val.strip()):
+                                raise DomainError(f"{str_field} must be a non-empty string or null.")
+                        return self.reply(direct_manager.waveform_cycles(
+                            run_id,
+                            req["dataset"],
+                            req["signals"],
+                            period=float(req["period"]) if req.get("period") is not None else None,
+                            clock_signal=req.get("clock_signal"),
+                            threshold=float(req["threshold"]) if req.get("threshold") is not None else None,
+                            edge=req.get("edge", "rising"),
+                            t_start=float(req["t_start"]) if req.get("t_start") is not None else None,
+                            t_end=float(req["t_end"]) if req.get("t_end") is not None else None,
+                            worst_metric=req.get("worst_metric", "peak_to_peak"),
+                            worst_signal=req.get("worst_signal"),
+                            cycle_index=req.get("cycle_index"),
+                            context_cycles=req.get("context_cycles", 0),
+                            overlay_cycles=req.get("overlay_cycles", 10),
+                            max_points_per_cycle=req.get("max_points_per_cycle", 2000),
+                        ))
+                    raise DomainError("This endpoint does not exist.", "not_found")
                 if len(sub) == 2 and self.command == "POST":
                     op = sub[1]
                     req = self.body()

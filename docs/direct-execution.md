@@ -107,7 +107,7 @@ Direct runs support opt-in bounded recovery (`spiceowl.recovery.bounded`) for co
 - **Auto-resume watches on restart**: When `spiceowl serve` restarts, persisted non-terminal watches whose policy enables `auto_resume_watch` resume automatically.
 - **License retry with backoff**: Confirmed license checkout/queue failures spawn a linked child attempt (`<root_run_id>-r1`, `-r2`, …) with identical frozen inputs within `max_recovery_attempts`, `license_backoff_seconds`, and `max_elapsed_seconds`.
 - **Confirmed OOM scale-up & relocation**: Run-bound scheduler OOM evidence (such as Slurm `OUT_OF_MEMORY`) or explicit Spectre OOM errors scale requested memory by `oom_memory_multiplier` up to `max_memory_bytes`, and can relocate to a larger-memory eligible host in `HostRegistry` when `allow_host_relocation` is enabled. Unconfirmed `SIGKILL`, syntax/model/convergence errors, user cancellations, and completed runs (even with SOA or specification failures) are never retried.
-- **Searchable recovery reports**: Every evaluated or recovered lineage writes both a structured JSON report and a human-readable Markdown report under `<data_dir>/direct_runs/recovery_reports/<root_run_id>.{json,md}` plus a searchable index. Search and download reports in the `#direct` console (**5. 有界恢复报告中心**) or via `spiceowl direct recovery-reports` / `spiceowl direct recovery-report <run_id> --markdown`.
+- **Searchable recovery reports**: Every evaluated or recovered lineage writes both a structured JSON report and a human-readable Markdown report under `<data_dir>/direct_runs/recovery_reports/<root_run_id>.{json,md}` plus a searchable index. Search and download reports in the `#direct` console (**6. 有界恢复报告中心**) or via `spiceowl direct recovery-reports` / `spiceowl direct recovery-report <run_id> --markdown`.
 
 ## Binary waveform streaming (PSF Binary / PSFXL), envelope downsampling & Cycle Slicer
 
@@ -129,8 +129,25 @@ spiceowl direct waveform-query demo-psfbin-500c --dataset tran.tran.tran --signa
 spiceowl direct waveform-cycles demo-psfbin-500c --dataset tran.tran.tran --signals "v(out)" "v(clk)" --clock "v(clk)" --worst-signal "v(out)"
 ```
 
+## PVT / Corner / Monte Carlo batch experiment management
+
+SpiceOwl's batch manager (`spiceowl.batch.DirectBatchManager`, `#direct` Section **5. PVT / Corner / Monte Carlo 批量实验管理**, and `spiceowl direct batch-*`) orchestrates multi-corner and Monte Carlo suites on top of `DirectExecutionManager`:
+
+- **Deterministic matrix expansion & seed preservation**: Expands `pvt` (`process_corners × voltages × temperatures`), `monte_carlo` (explicit deterministic `mc_seed` per sample), or hybrid `pvt_mc` matrices (bounded up to 256 cases per batch). Each case freezes an independent `DirectExecutionManager` child run with its own SHA-256 netlist manifest.
+- **Bounded concurrency dispatch**: `dispatch_next` stages and launches pending cases strictly up to `max_concurrency` (`1–32`); `refresh` polls active runs, collects terminal artifacts, extracts lossless metrics (`mode="exact"`), and optionally refills newly freed slots; `cancel` cancels active runs via verified cancellation and blocks remaining queued cases.
+- **Conservative yield & distribution statistics**: Computes `mean`, `std`, `min`, `P5`, `P50`, `P95`, `max`, and `Cpk` across valid measurements while keeping execution-failed and missing samples explicitly in the yield denominator and preserving every failed/missing `mc_seed` and corner identity in JSON, Markdown, and CSV exports.
+- **Offline interactive demos & CLI**:
+
+```bash
+spiceowl direct batch-demo --kind pvt
+spiceowl direct batch-demo --kind monte_carlo
+spiceowl direct batches
+spiceowl direct batch-report demo-mc-40 --markdown
+spiceowl direct batch-report demo-mc-40 --csv
+```
+
 ## Current boundaries
 
-- Offline unit tests verify plan freezing, scheduler command builders/parsers, atomic launch-claim fencing, verified cancellation, `RuntimeMonitor` supervision, bounded M4 recovery policies, watch resume, recovery reports, binary PSF/PSFXL streaming, Min-Max envelope preservation, Cycle Slicer drill-down, remote in-place waveform framing, and five-dimensional reporting using synthetic fixtures.
+- Offline unit tests verify plan freezing, scheduler command builders/parsers, atomic launch-claim fencing, verified cancellation, `RuntimeMonitor` supervision, bounded M4 recovery policies, watch resume, recovery reports, binary PSF/PSFXL streaming, Min-Max envelope preservation, Cycle Slicer drill-down, remote in-place waveform framing, PVT/Monte Carlo batch concurrency & conservative yield statistics, and five-dimensional reporting using synthetic fixtures.
 - Site-specific LSF/Slurm cluster configurations (custom wrapper flags, Kerberos/module init scripts, and shared filesystem permissions) and proprietary PSFXL sub-variants still require authorized live qualification on the target site.
 - Native solver checkpoint continuation and automated numerical-parameter tuning remain unimplemented.

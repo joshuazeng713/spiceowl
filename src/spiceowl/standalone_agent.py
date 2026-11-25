@@ -84,6 +84,9 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         'spiceowl_recommend_hosts': lambda args, **_: controller.hosts.recommend(args['requirements'], args['host_ids']),
     }
     if direct_manager is not None:
+        from spiceowl.batch import DirectBatchManager
+        batch_manager = DirectBatchManager(direct_manager.data_dir, direct_manager)
+
         def direct_read(args, **_):
             op, params = args['operation'], args['arguments']
             if op == 'list':
@@ -120,6 +123,14 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     max_points_per_cycle=params.get('max_points_per_cycle', 2000),
                     allow_remote=False,
                 )
+            if op == 'batch_list':
+                if params:
+                    raise DomainError('batch_list takes empty arguments.', 'invalid_tool_arguments')
+                return {'batches': batch_manager.list()}
+            if op == 'batch_inspect':
+                return batch_manager.build_summary(params['batch_id'])
+            if op == 'batch_report':
+                return batch_manager.report(params['batch_id'])
             raise DomainError('Unknown direct read operation.', 'invalid_tool_arguments')
 
         def direct_control(args, *, context):
@@ -140,6 +151,22 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 return direct_manager.cancel(params['run_id'], action_key=action_key)
             if op == 'collect':
                 return direct_manager.collect(params['run_id'])
+            if op == 'batch_prepare':
+                return batch_manager.prepare(**params)
+            if op == 'batch_dispatch':
+                return batch_manager.dispatch_next(
+                    params['batch_id'], limit=params.get('limit'),
+                    recheck_resources=params.get('recheck_resources'),
+                )
+            if op == 'batch_refresh':
+                return batch_manager.refresh(
+                    params['batch_id'],
+                    auto_collect=params.get('auto_collect', True),
+                    dispatch_more=params.get('dispatch_more', False),
+                    recheck_resources=params.get('recheck_resources'),
+                )
+            if op == 'batch_cancel':
+                return batch_manager.cancel(params['batch_id'])
             raise DomainError('Unknown direct control operation.', 'invalid_tool_arguments')
 
         handlers['spiceowl_direct_read'] = direct_read

@@ -47,6 +47,7 @@ Protocol/algorithm/browser tests use fake processes and synthetic results. They 
 - [x] Standalone CLI (`spiceowl direct prepare|stage|launch|status|cancel|collect|report|watch|runs|inspect|lookup`) and opt-in standalone Agent tools (`spiceowl serve --enable-direct-exec`), without altering embedded CircuitGit mode.
 - [x] Web console `#direct` workflow (`/api/direct/*`), one-click host-placement handoff from `#hosts`, opt-in M4 bounded recovery (watch auto-resume on restart, license backoff retry, confirmed OOM memory scaling & host relocation), and searchable JSON + Markdown recovery reports.
 - [x] Streaming binary waveform reader (`psfbin`, `psfxl`, `psfascii`), compute-near-data remote in-place queries, Min-Max envelope downsampling with automatic `exact_window` zoom-in, lossless `adctools` extraction, and multi-thousand-cycle Cycle Slicer + worst-case drill-down in `#direct`, CLI, and `spiceowl_direct_read`.
+- [x] PVT / Corner / Monte Carlo batch experiment management (`spiceowl.batch.DirectBatchManager`) with bounded concurrency dispatching, explicit seed/sample identity preservation, conservative yield & Cpk statistics, SVG histogram & corner matrix UI in `#direct`, CLI (`spiceowl direct batch-*`), and Markdown/CSV exports.
 - [ ] Authorized live qualification on target Linux, LSF, and Slurm sites.
 
 See [direct execution](direct-execution.md). Offline tests verify transport framing, scheduler parsers, atomic launch claims, verified cancellation, and monitoring using synthetic fixtures; real cluster qualification remains site-specific.

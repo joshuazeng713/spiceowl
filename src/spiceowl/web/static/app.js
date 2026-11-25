@@ -36,6 +36,14 @@ let directState = {
   wfCycles: null, wfCycleTab: 'worst_case', wfClock: '', wfPeriod: '',
   wfWorstMetric: 'peak_to_peak', wfWorstSignal: '', wfSelectedCycle: null,
   wfJumpCycle: '', wfBusy: false, wfError: null,
+  batches: [], selectedBatchId: null, batchDetail: null, batchMetric: '',
+  batchBusy: false, batchError: null,
+};
+let batchDraft = {
+  batch_id: '', title: '', kind: 'pvt', corners: 'tt, ss, ff',
+  voltages: '1.08, 1.20, 1.32', temps: '-40, 27, 125', voltage_param: 'vdd',
+  mc_samples: 20, mc_base_seed: 1001, mc_variation: 'mismatch', max_concurrency: 4,
+  spec_name: '', spec_signal: 'v(out)', spec_metric: 'max', spec_min: '', spec_max: '', spec_unit: 'V',
 };
 let directDraft = {
   run_key: '', target_mode: 'host', host_id: '', backend: 'ssh_direct', simulator: 'spectre',
@@ -133,6 +141,21 @@ async function refreshDirect() {
     } else {
       directState.recoveryDetail = null;
     }
+    const bList = await api('/api/direct/batches');
+    directState.batches = Array.isArray(bList.batches) ? bList.batches : [];
+    if (directState.selectedBatchId && !directState.batches.some(b => b.batch_id === directState.selectedBatchId)) {
+      directState.selectedBatchId = directState.batches[0]?.batch_id || null;
+    } else if (!directState.selectedBatchId && directState.batches.length) {
+      directState.selectedBatchId = directState.batches[0].batch_id;
+    }
+    if (directState.selectedBatchId) {
+      directState.batchDetail = await api(`/api/direct/batches/${encodeURIComponent(directState.selectedBatchId)}`);
+      const mKeys = Object.keys(directState.batchDetail?.summary?.metric_stats || {});
+      if (!mKeys.includes(directState.batchMetric)) directState.batchMetric = mKeys[0] || '';
+    } else {
+      directState.batchDetail = null;
+      directState.batchMetric = '';
+    }
   } catch (error) {
     directState.error = error.message;
   } finally {
@@ -181,7 +204,7 @@ function directRecoveryReportsPanel() {
     detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
   }
 
-  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>5. 有界恢复报告中心（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界恢复评估或自动重提的任务谱系都会自动持久化 JSON + Markdown 报告，方便事后审计与检索。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
+  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>6. 有界恢复报告中心（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界恢复评估或自动重提的任务谱系都会自动持久化 JSON + Markdown 报告，方便事后审计与检索。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
 }
 
 function directRunChip(run) {
@@ -248,8 +271,136 @@ function directPage() {
   }
   html += '</div></div>';
   html += directWaveformPanel(run);
+  html += directBatchPanel(hostsList);
   html += directRecoveryReportsPanel();
   return html;
+}
+
+function batchOutcomeChip(outcome) {
+  const map = {
+    passed: ['通过 Pass', 'green'],
+    failed_spec: ['指标未达标 (有效测量)', 'amber'],
+    execution_failed: ['执行失败', 'red'],
+    missing: ['缺失 / 未收集', 'red'],
+    active: ['运行中', 'blue'],
+    pending: ['待派发', ''],
+    cancelled: ['已取消', ''],
+  };
+  const [label, color] = map[outcome] || [title(outcome), ''];
+  return chip(label, color);
+}
+
+function renderBatchHistogramSvg(summary, metricName) {
+  if (!summary || !metricName) return '';
+  const st = summary.metric_stats?.[metricName];
+  const vals = (summary.cases || [])
+    .filter(c => ['passed', 'failed_spec'].includes(c.outcome) && Number.isFinite(Number(c.metrics?.[metricName])))
+    .map(c => Number(c.metrics[metricName]));
+  if (vals.length < 2 || !st) return '';
+  const W = 760, H = 185, padL = 52, padR = 18, padT = 22, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  let xMin = Math.min(...vals), xMax = Math.max(...vals);
+  if (st.spec_min !== null && st.spec_min !== undefined) xMin = Math.min(xMin, st.spec_min);
+  if (st.spec_max !== null && st.spec_max !== undefined) xMax = Math.max(xMax, st.spec_max);
+  const pad = xMax > xMin ? (xMax - xMin) * 0.08 : 1;
+  xMin -= pad; xMax += pad;
+  const bins = Math.min(18, Math.max(6, Math.round(Math.sqrt(vals.length) * 2)));
+  const counts = new Array(bins).fill(0);
+  const failBins = new Array(bins).fill(false);
+  for (const v of vals) {
+    let b = Math.floor(((v - xMin) / (xMax - xMin)) * bins);
+    b = Math.max(0, Math.min(bins - 1, b));
+    counts[b]++;
+    if ((st.spec_min !== null && v < st.spec_min) || (st.spec_max !== null && v > st.spec_max)) failBins[b] = true;
+  }
+  const maxC = Math.max(1, ...counts);
+  const sx = x => padL + ((x - xMin) / (xMax - xMin)) * plotW;
+  const bw = plotW / bins;
+  const bars = counts.map((cnt, i) => {
+    const bh = (cnt / maxC) * plotH;
+    const x = padL + i * bw + 1.5;
+    const y = padT + plotH - bh;
+    const fill = failBins[i] ? '#d97706' : '#1f6f54';
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(2, bw - 3).toFixed(1)}" height="${bh.toFixed(1)}" rx="2" fill="${fill}" fill-opacity="0.78"></rect>`;
+  }).join('');
+
+  let guides = '';
+  if (st.mean !== null && st.mean !== undefined) {
+    const mx = sx(st.mean);
+    guides += `<line x1="${mx.toFixed(1)}" y1="${padT}" x2="${mx.toFixed(1)}" y2="${padT + plotH}" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3"></line><text x="${mx.toFixed(1)}" y="${padT - 6}" text-anchor="middle" font-size="10" fill="#2563eb">μ=${st.mean.toFixed(3)}</text>`;
+  }
+  if (st.spec_min !== null && st.spec_min !== undefined) {
+    const lx = sx(st.spec_min);
+    guides += `<line x1="${lx.toFixed(1)}" y1="${padT}" x2="${lx.toFixed(1)}" y2="${padT + plotH}" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 3"></line><text x="${lx.toFixed(1)}" y="${padT + 12}" text-anchor="start" dx="3" font-size="10" font-weight="700" fill="#dc2626">LSL ${st.spec_min}</text>`;
+  }
+  if (st.spec_max !== null && st.spec_max !== undefined) {
+    const ux = sx(st.spec_max);
+    guides += `<line x1="${ux.toFixed(1)}" y1="${padT}" x2="${ux.toFixed(1)}" y2="${padT + plotH}" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 3"></line><text x="${ux.toFixed(1)}" y="${padT + 12}" text-anchor="end" dx="-3" font-size="10" font-weight="700" fill="#dc2626">USL ${st.spec_max}</text>`;
+  }
+  const xTicks = [xMin, 0.5 * (xMin + xMax), xMax].map(v => `<text x="${sx(v).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#5e7369">${v.toFixed(3)} ${escape(st.unit || '')}</text>`).join('');
+  return `<div class="wf-plot-card"><p class="subtle-note"><strong>分布直方图 · <code>${escape(metricName)}</code></strong>（有效样本 ${st.count}，缺失/执行失败 ${st.missing_or_failed_count}；琥珀色柱表示落入规格外的有效样本）</p><svg class="wf-svg" viewBox="0 0 ${W} ${H}"><rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="#ffffff" stroke="#d8e2dc"></rect>${bars}${guides}${xTicks}<text x="${padL - 8}" y="${padT + 10}" text-anchor="end" font-size="10" fill="#5e7369">${maxC}</text><text x="${padL - 8}" y="${padT + plotH}" text-anchor="end" font-size="10" fill="#5e7369">0</text></svg></div>`;
+}
+
+function directBatchPanel(hostsList) {
+  const rows = directState.batches || [];
+  const detail = directState.batchDetail;
+  const summary = detail?.summary || null;
+  const batch = detail?.batch || null;
+
+  let html = `<div class="wf-toolbar-top"><p class="subtle-note">统一管理 <strong>PVT Corner 矩阵</strong> 与 <strong>Monte Carlo 失配采样</strong>：按并发上限有序派发、每个样本独立保留 SHA-256 与随机种子（<code>mc_seed</code>），保守良率统计绝不静默丢弃失败或缺失样本。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-batch-demo" data-kind="pvt" ${directState.batchBusy ? 'disabled' : ''}>加载 27-Corner PVT 演示矩阵</button><button type="button" class="button secondary small" data-action="direct-batch-demo" data-kind="monte_carlo" ${directState.batchBusy ? 'disabled' : ''}>加载 40 样本 Monte Carlo 演示</button></div></div>`;
+  if (directState.batchError) html += `<p class="error-text" role="alert">${escape(directState.batchError)}</p>`;
+
+  html += `<details class="host-form-details"><summary>新建批量实验（PVT Corner / Monte Carlo · 复用上方主机、后端与网表模板）</summary><form id="direct-batch-form"><div class="direct-grid"><label>批量标识 (Batch ID)<input id="batch-id" value="${escape(batchDraft.batch_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="opamp-pvt-001"></label><label>批量类型<select id="batch-kind"><option value="pvt" ${batchDraft.kind === 'pvt' ? 'selected' : ''}>PVT Corner 矩阵</option><option value="monte_carlo" ${batchDraft.kind === 'monte_carlo' ? 'selected' : ''}>Monte Carlo 采样</option><option value="pvt_mc" ${batchDraft.kind === 'pvt_mc' ? 'selected' : ''}>混合 PVT × Monte Carlo</option></select></label><label>最大并发数 (1–32)<input id="batch-max-conc" type="number" min="1" max="32" value="${escape(batchDraft.max_concurrency)}" required></label><label>工艺角（逗号分隔）<input id="batch-corners" value="${escape(batchDraft.corners)}" placeholder="tt, ss, ff"></label><label>电源电压 V（逗号分隔）<input id="batch-voltages" value="${escape(batchDraft.voltages)}" placeholder="1.08, 1.20, 1.32"></label><label>温度 °C（逗号分隔）<input id="batch-temps" value="${escape(batchDraft.temps)}" placeholder="-40, 27, 125"></label><label>MC 样本数 (1–256)<input id="batch-mc-samples" type="number" min="1" max="256" value="${escape(batchDraft.mc_samples)}" ${batchDraft.kind === 'pvt' ? 'disabled' : ''}></label><label>MC 起始随机种子<input id="batch-mc-seed" type="number" min="0" value="${escape(batchDraft.mc_base_seed)}" ${batchDraft.kind === 'pvt' ? 'disabled' : ''}></label><label>可选验收指标名（留空不设）<input id="batch-spec-name" value="${escape(batchDraft.spec_name)}" placeholder="vout_settle"></label><label>验收信号名<input id="batch-spec-signal" value="${escape(batchDraft.spec_signal)}" placeholder="v(out)"></label><label>指标下限 min<input id="batch-spec-min" value="${escape(batchDraft.spec_min)}" placeholder="0.85"></label><label>指标上限 max<input id="batch-spec-max" value="${escape(batchDraft.spec_max)}" placeholder="0.95"></label></div><div class="direct-actions"><button type="submit" class="button primary small" ${directState.batchBusy || !hostsList.length ? 'disabled' : ''}>冻结并展开批量计划 (Prepare Batch)</button></div></form></details>`;
+
+  const listHtml = rows.map(b => `<button type="button" class="direct-run-row ${b.batch_id === summary?.batch_id ? 'selected' : ''}" data-action="direct-batch-select" data-id="${escape(b.batch_id)}"><div><strong>${escape(b.title || b.batch_id)}</strong><small><code>${escape(b.batch_id)}</code> · ${escape(String(b.kind || '').toUpperCase())} · 并发上限 ${b.max_concurrency} · 通过 ${b.passed_cases}/${b.total_cases} · 指标未达标 ${b.spec_failed_cases} · 执行失败/缺失 ${b.exec_failed_cases + b.missing_cases}</small></div>${chip(title(b.status), b.status === 'completed_all_passed' ? 'green' : b.status === 'running' ? 'blue' : b.exec_failed_cases > 0 || b.missing_cases > 0 ? 'red' : 'amber')}</button>`).join('')
+    || '<p class="subtle-note">当前还没有批量实验。点击上方演示按钮可立即体验 27-Corner PVT 矩阵或 40 样本 Monte Carlo 良率统计。</p>';
+
+  html += `<div class="direct-run-list" style="margin-top:10px">${listHtml}</div>`;
+
+  if (summary && batch) {
+    const c = summary.counts, y = summary.yield;
+    const metricKeys = Object.keys(summary.metric_stats || {});
+    const activeMetric = metricKeys.includes(directState.batchMetric) ? directState.batchMetric : (metricKeys[0] || '');
+    const canDispatch = !batch.synthetic && c.pending > 0 && !directState.batchBusy;
+    const canRefresh = !batch.synthetic && (c.active > 0 || c.missing_or_uncollected > 0) && !directState.batchBusy;
+    const canCancel = !batch.synthetic && (c.active > 0 || c.pending > 0) && !directState.batchBusy;
+
+    html += `<div class="direct-rec-card"><div class="section-title"><h3>批量详情 · ${escape(summary.title)}</h3>${chip(`保守良率 ${y.conservative_yield_pct}% (${y.passed_samples}/${y.total_samples})`, y.execution_failed_samples > 0 || y.missing_or_uncollected_samples > 0 ? 'red' : y.spec_failed_samples > 0 ? 'amber' : 'green')}</div>`;
+    html += `<div class="direct-report-grid"><div class="direct-dim-card"><span>总样本 / 覆盖率</span><strong>${c.total} · ${y.measured_coverage_pct}%</strong></div><div class="direct-dim-card"><span>规格通过 (Pass)</span><strong>${c.passed}</strong></div><div class="direct-dim-card"><span>有效测量未达标</span><strong>${c.failed_spec}</strong></div><div class="direct-dim-card"><span>执行失败 / 缺失</span><strong>${c.execution_failed} / ${c.missing_or_uncollected}</strong></div><div class="direct-dim-card"><span>并发控制 (活跃 / 上限)</span><strong>${c.active} / ${summary.max_concurrency}</strong></div></div>`;
+    html += `<p class="subtle-note">${escape(y.note)}</p>`;
+
+    html += `<div class="direct-actions"><button type="button" class="button primary small" data-action="direct-batch-dispatch" data-id="${escape(summary.batch_id)}" ${canDispatch ? '' : 'disabled'}>按并发上限派发下一批 (Dispatch)</button><button type="button" class="button secondary small" data-action="direct-batch-refresh" data-id="${escape(summary.batch_id)}" ${canRefresh ? '' : 'disabled'}>刷新状态并收集 (Refresh)</button><button type="button" class="button secondary small" data-action="direct-batch-cancel" data-id="${escape(summary.batch_id)}" ${canCancel ? '' : 'disabled'}>取消未完成任务 (Cancel)</button><button type="button" class="button secondary small" data-action="direct-batch-download-md" data-id="${escape(summary.batch_id)}">下载 Markdown 报告 (.md)</button><button type="button" class="button secondary small" data-action="direct-batch-download-csv" data-id="${escape(summary.batch_id)}">导出 CSV 数据 (.csv)</button>${metricKeys.length > 1 ? `<select id="batch-metric-select" class="batch-metric-picker">${metricKeys.map(m => `<option value="${escape(m)}" ${m === activeMetric ? 'selected' : ''}>展示指标：${escape(m)}</option>`).join('')}</select>` : ''}</div>`;
+
+    if (metricKeys.length) {
+      const statRows = metricKeys.map(m => {
+        const st = summary.metric_stats[m];
+        const fmt = v => (typeof v === 'number' && Number.isFinite(v)) ? v.toFixed(3) : '—';
+        const wc = summary.worst_corners?.[m];
+        return `<tr><td><code>${escape(m)}</code> ${escape(st.unit || '')}</td><td>[${st.spec_min ?? '—'}, ${st.spec_max ?? '—'}]</td><td>${st.count} / ${st.missing_or_failed_count}</td><td>${fmt(st.mean)}</td><td>${fmt(st.std)}</td><td>${fmt(st.min)} / ${fmt(st.p50)} / ${fmt(st.max)}</td><td><strong>${fmt(st.cpk)}</strong></td><td>${wc ? `<small>${escape(wc.min_case.label)} → ${escape(wc.max_case.label)}</small>` : '—'}</td></tr>`;
+      }).join('');
+      html += `<div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>指标</th><th>规格区间</th><th>有效 / 缺失</th><th>均值 μ</th><th>标准差 σ</th><th>Min / P50 / Max</th><th>Cpk</th><th>极值 Corner 范围</th></tr></thead><tbody>${statRows}</tbody></table></div>`;
+    }
+
+    if (activeMetric) {
+      html += renderBatchHistogramSvg(summary, activeMetric);
+    }
+
+    // Visual PVT Grid / Sample Cards (click any card to inspect child run & waveform!)
+    html += `<p class="subtle-note" style="margin-top:12px"><strong>全部样本 / Corner 矩阵（点击任意卡片立即在上方「任务控制」与「波形查看器」中打开该样本）：</strong></p><div class="batch-case-grid">${(summary.cases || []).map(cs => {
+      const mVal = activeMetric && Number.isFinite(Number(cs.metrics?.[activeMetric]))
+        ? `${Number(cs.metrics[activeMetric]).toFixed(3)} ${escape(summary.metric_stats?.[activeMetric]?.unit || '')}`
+        : (cs.failure_reason ? escape(cs.failure_reason.slice(0, 36)) : escape(cs.run_state));
+      const cls = `batch-cell outcome-${escape(cs.outcome)}`;
+      return `<button type="button" class="${cls}" data-action="direct-select" data-id="${escape(cs.run_id)}" title="${escape(cs.label + ' · ' + (cs.failure_reason || cs.outcome))}"><strong>${escape(cs.mc_seed !== null && cs.mc_seed !== undefined ? `#${cs.sample_index + 1} · s${cs.mc_seed}` : `${cs.process_corner} · ${cs.voltage}V · ${cs.temperature}°C`)}</strong><span>${mVal}</span></button>`;
+    }).join('')}</div>`;
+
+    if ((summary.missing_or_failed_samples || []).length) {
+      html += `<h4>显式保留的失败 / 规格未达标 / 缺失样本（共 ${summary.missing_or_failed_samples.length} 条 · 种子与身份不丢弃）</h4><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>Case ID</th><th>Corner / V / T</th><th>MC Seed</th><th>归类</th><th>原因</th><th>操作</th></tr></thead><tbody>${summary.missing_or_failed_samples.map(item => `<tr><td><code>${escape(item.case_id)}</code></td><td>${escape(item.process_corner)} / ${item.voltage}V / ${item.temperature}°C</td><td>${item.mc_seed ?? '—'}</td><td>${batchOutcomeChip(item.outcome)}</td><td>${escape(item.reason || '—')}</td><td><button type="button" class="button secondary small" data-action="direct-select" data-id="${escape(item.run_id)}">查看详情</button></td></tr>`).join('')}</tbody></table></div>`;
+    }
+    html += '</div>';
+  }
+
+  return `<section class="panel direct-panel direct-batch-panel"><div class="section-title"><h2>5. PVT / Corner / Monte Carlo 批量实验管理（并发调度 + 良率统计）</h2><span class="section-note">共 ${rows.length} 个批次</span></div>${html}</section>`;
 }
 
 const WF_COLORS = ['#1f6f54', '#2563eb', '#c2410c', '#7c3aed', '#0891b2', '#be123c', '#a16207', '#4f46e5'];
@@ -715,6 +866,58 @@ async function handleDirectClick(event) {
   if (action === 'wf-tab') {
     directState.wfCycleTab = button.dataset.tab || 'worst_case';
     render();
+    return;
+  }
+  if (action === 'batch-demo') {
+    if (directState.batchBusy) return;
+    const kind = button.dataset.kind || 'pvt';
+    directState.batchBusy = true; directState.batchError = null; render();
+    try {
+      const res = await api('/api/direct/batches/demo', {method: 'POST', body: {kind}});
+      directState.selectedBatchId = res.batch.batch_id;
+      toast(kind === 'pvt' ? '已加载 27-Corner PVT 演示矩阵（含 1 个慢角规格未达标与 1 个确认 OOM 样本）。' : '已加载 40 样本 Monte Carlo 演示（含 2 个尾部失配超标与 1 个显式保留的执行失败种子）。');
+    } catch (error) {
+      directState.batchError = error.message;
+      toast(error.message);
+    } finally {
+      directState.batchBusy = false;
+      await refreshDirect();
+    }
+    return;
+  }
+  if (action === 'batch-select') {
+    directState.selectedBatchId = id;
+    await refreshDirect();
+    return;
+  }
+  if (action === 'batch-dispatch' || action === 'batch-refresh' || action === 'batch-cancel') {
+    if (!id || directState.batchBusy) return;
+    const op = action.slice(6);
+    if (op === 'cancel' && !window.confirm(`确认取消批次 ${id} 中所有运行中及待派发的任务？`)) return;
+    directState.batchBusy = true; directState.batchError = null; render();
+    try {
+      const body = op === 'refresh' ? {auto_collect: true, dispatch_more: true} : {};
+      await api(`/api/direct/batches/${encodeURIComponent(id)}/${op}`, {method: 'POST', body});
+      toast(`批量操作 ${op} 已完成。`);
+    } catch (error) {
+      directState.batchError = error.message;
+      toast(error.message);
+    } finally {
+      directState.batchBusy = false;
+      await refreshDirect();
+    }
+    return;
+  }
+  if (action === 'batch-download-md' || action === 'batch-download-csv') {
+    const isCsv = action === 'batch-download-csv';
+    const content = isCsv ? directState.batchDetail?.csv : directState.batchDetail?.markdown;
+    if (!content) { toast('没有可导出的批量报告。'); return; }
+    const blob = new Blob([content], {type: isCsv ? 'text/csv;charset=utf-8' : 'text/markdown;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `${id}-batch-summary.${isCsv ? 'csv' : 'md'}`;
+    document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(url);
     return;
   }
   if (action === 'rec-download') {
@@ -1790,6 +1993,13 @@ document.addEventListener('input', event => {
   if (event.target.id === 'wf-maxpts') directState.wfMaxPoints = Number(event.target.value) || 1200;
   if (event.target.id === 'wf-period') directState.wfPeriod = event.target.value;
   if (event.target.id === 'wf-jump-cycle') directState.wfJumpCycle = event.target.value;
+  const batchInputs = {
+    'batch-id': 'batch_id', 'batch-corners': 'corners', 'batch-voltages': 'voltages',
+    'batch-temps': 'temps', 'batch-mc-samples': 'mc_samples', 'batch-mc-seed': 'mc_base_seed',
+    'batch-max-conc': 'max_concurrency', 'batch-spec-name': 'spec_name',
+    'batch-spec-signal': 'spec_signal', 'batch-spec-min': 'spec_min', 'batch-spec-max': 'spec_max',
+  };
+  if (batchInputs[event.target.id]) batchDraft[batchInputs[event.target.id]] = event.target.value;
   if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
   if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
@@ -1838,6 +2048,8 @@ document.addEventListener('change', event => {
   if (event.target.id === 'wf-clock') { directState.wfClock = event.target.value; render(); }
   if (event.target.id === 'wf-worst-metric') directState.wfWorstMetric = event.target.value;
   if (event.target.id === 'wf-worst-signal') directState.wfWorstSignal = event.target.value;
+  if (event.target.id === 'batch-kind') { batchDraft.kind = event.target.value; render(); }
+  if (event.target.id === 'batch-metric-select') { directState.batchMetric = event.target.value; render(); }
   if (event.target.id === 'direct-netlist-file' && event.target.files?.[0]) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -1993,6 +2205,64 @@ document.addEventListener('submit', async event => {
     await refreshCodexStatus();
     codexPanelState.error = error.message;
   } finally { codexPanelState.busy = false; renderCodexActivity(); }
+});
+
+document.addEventListener('submit', async event => {
+  if (event.target.id !== 'direct-batch-form') return;
+  event.preventDefault();
+  if (isPublicDemo() || directState.batchBusy) return;
+  const tpl = directDraft.netlist_text.trim();
+  if (!tpl) { toast('请先在上方「1. 冻结并准备实验」中填入或导入网表模板。'); return; }
+  directState.batchBusy = true; directState.batchError = null; render();
+  try {
+    const parseNums = s => String(s || '').split(/[,\s]+/).map(x => x.trim()).filter(Boolean).map(Number);
+    const parseStrs = s => String(s || '').split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
+    const payload = {
+      batch_id: batchDraft.batch_id.trim(),
+      kind: batchDraft.kind,
+      netlist_template: tpl,
+      process_corners: parseStrs(batchDraft.corners),
+      voltages: parseNums(batchDraft.voltages),
+      temperatures: parseNums(batchDraft.temps),
+      max_concurrency: Number(batchDraft.max_concurrency) || 4,
+      backend: directDraft.backend,
+      simulator: directDraft.simulator,
+      output_format: directDraft.output_format,
+      cpus: Number(directDraft.cpus) || 1,
+      memory_gib: Number(directDraft.memory_gib) || 4,
+      wall_seconds: Number(directDraft.wall_seconds) || 3600,
+      remote_python: directDraft.remote_python.trim() || '/usr/bin/python3',
+      remote_root: directDraft.remote_root.trim() || '.spiceowl-runs',
+    };
+    if (batchDraft.kind !== 'pvt') {
+      payload.mc_samples = Number(batchDraft.mc_samples) || 10;
+      payload.mc_base_seed = Number(batchDraft.mc_base_seed) || 1001;
+      payload.mc_variation = batchDraft.mc_variation || 'mismatch';
+    }
+    if (batchDraft.spec_name.trim()) {
+      const sp = {
+        name: batchDraft.spec_name.trim(),
+        signal: batchDraft.spec_signal.trim() || null,
+        metric: batchDraft.spec_metric || 'max',
+        unit: batchDraft.spec_unit || '',
+      };
+      if (batchDraft.spec_min !== '') sp.min = Number(batchDraft.spec_min);
+      if (batchDraft.spec_max !== '') sp.max = Number(batchDraft.spec_max);
+      payload.specs = [sp];
+    }
+    if (directDraft.target_mode === 'pool') payload.host_ids = state.hosts.slice(0, 32).map(h => h.host_id);
+    else payload.host_id = directDraft.host_id;
+    const res = await api('/api/direct/batches/prepare', {method: 'POST', body: payload});
+    directState.selectedBatchId = res.batch.batch_id;
+    batchDraft.batch_id = '';
+    toast(`批量计划 ${res.batch.batch_id}（共 ${res.summary.counts.total} 个任务）已冻结在本地。`);
+  } catch (error) {
+    directState.batchError = error.message;
+    toast(error.message);
+  } finally {
+    directState.batchBusy = false;
+    await refreshDirect();
+  }
 });
 
 document.addEventListener('submit', async event => {

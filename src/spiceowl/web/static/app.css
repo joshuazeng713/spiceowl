@@ -1415,6 +1415,17 @@ dialog .muted {
 .wf-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 4px; }
 .wf-tab { padding:6px 11px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); font-size:12px; cursor:pointer; }
 .wf-tab.active { background:var(--green); border-color:var(--green); color:#fff; font-weight:600; }
+.direct-batch-panel { margin-top:18px; }
+.batch-metric-picker { width:auto; min-width:170px; padding:5px 8px; font-size:12px; margin-left:auto; }
+.batch-case-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(142px,1fr)); gap:7px; margin:8px 0 14px; }
+.batch-cell { display:flex; flex-direction:column; gap:3px; padding:8px 9px; border:1px solid var(--line); border-radius:6px; background:#fff; text-align:left; cursor:pointer; font-size:11px; color:var(--ink); transition:transform .1s ease, border-color .15s ease; }
+.batch-cell:hover { transform:translateY(-1px); border-color:var(--green); }
+.batch-cell strong { font-family:ui-monospace,monospace; font-size:11px; }
+.batch-cell span { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.batch-cell.outcome-passed { background:#eef6f0; border-color:#b8d7c5; }
+.batch-cell.outcome-failed_spec { background:#fdf6ea; border-color:#e8c584; }
+.batch-cell.outcome-execution_failed,.batch-cell.outcome-missing { background:#fef2f2; border-color:#f0b6b6; }
+.batch-cell.outcome-active { background:#eff6ff; border-color:#bfdbfe; }
 @media(max-width:1050px) { .direct-workspace { grid-template-columns:minmax(0,1fr); } }
 @media(max-width:680px) { .direct-grid { grid-template-columns:minmax(0,1fr); } }
 .public-demo .topbar { position:sticky; top:0; z-index:8; gap:10px; background:#fff; }

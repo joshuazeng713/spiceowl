@@ -132,6 +132,55 @@ def parser():
     d_wfc.add_argument("--context-cycles", type=int, default=0)
     d_wfc.add_argument("--overlay-cycles", type=int, default=10)
     d_wfc.add_argument("--max-points-per-cycle", type=int, default=2000)
+    direct_actions.add_parser("batches", help="List persisted PVT / Corner / Monte Carlo batch experiments.")
+    d_bdemo = direct_actions.add_parser("batch-demo", help="Create a synthetic 27-corner PVT or 40-sample Monte Carlo demo batch.")
+    d_bdemo.add_argument("--kind", choices=("pvt", "monte_carlo"), default="pvt")
+    d_bdemo.add_argument("--batch-id", help="Optional custom demo batch ID.")
+    d_bprep = direct_actions.add_parser("batch-prepare", help="Freeze a PVT / Corner / Monte Carlo batch matrix locally without launching.")
+    d_bprep.add_argument("--batch-id", required=True)
+    d_bprep.add_argument("--netlist", required=True, help="Local netlist template file.")
+    d_bprep.add_argument("--kind", choices=("pvt", "monte_carlo", "pvt_mc"), default="pvt")
+    d_bprep.add_argument("--title", help="Optional human-readable batch title.")
+    d_bprep.add_argument("--corners", nargs="+", default=["tt"], help="Process corners (e.g. tt ss ff).")
+    d_bprep.add_argument("--voltages", nargs="+", type=float, default=[1.2], help="Supply voltages (e.g. 1.08 1.20 1.32).")
+    d_bprep.add_argument("--temps", nargs="+", type=float, default=[27.0], help="Temperatures in degC (e.g. -40 27 125).")
+    d_bprep.add_argument("--voltage-param", default="vdd")
+    d_bprep.add_argument("--mc-samples", type=int, default=0)
+    d_bprep.add_argument("--mc-base-seed", type=int, default=1001)
+    d_bprep.add_argument("--mc-variation", choices=("all", "mismatch", "process"), default="all")
+    d_bprep.add_argument("--specs-json", help="Optional JSON file containing acceptance spec list.")
+    d_bprep.add_argument("--max-concurrency", type=int, default=4)
+    d_bprep.add_argument("--host", help="Explicit registered host ID.")
+    d_bprep.add_argument("--hosts", nargs="+", help="Registered host pool IDs.")
+    d_bprep.add_argument("--backend", choices=("ssh_direct", "lsf", "slurm"), default="ssh_direct")
+    d_bprep.add_argument("--simulator", choices=("spectre", "ngspice"), default="spectre")
+    d_bprep.add_argument("--output-format", choices=("psfascii", "psfbin", "psfxl"), default="psfbin")
+    d_bprep.add_argument("--cpus", type=int, default=1)
+    d_bprep.add_argument("--memory-gib", type=float, default=4.0)
+    d_bprep.add_argument("--wall-seconds", type=int, default=3600)
+    d_bprep.add_argument("--queue", help="LSF queue name.")
+    d_bprep.add_argument("--partition", help="Slurm partition name.")
+    d_bprep.add_argument("--remote-python", default="/usr/bin/python3")
+    d_bprep.add_argument("--remote-root", default=".spiceowl-runs")
+    for bcmd, bhelp in (
+        ("batch-inspect", "Read persisted PVT / MC batch summary and case states."),
+        ("batch-dispatch", "Stage and launch pending batch cases up to max_concurrency."),
+        ("batch-refresh", "Poll active cases, collect terminal artifacts, and update batch summary."),
+        ("batch-cancel", "Cancel active cases and block queued cases in a batch."),
+        ("batch-report", "Print batch report as JSON, --markdown, or --csv."),
+    ):
+        bp = direct_actions.add_parser(bcmd, help=bhelp)
+        bp.add_argument("batch_id")
+        if bcmd == "batch-dispatch":
+            bp.add_argument("--limit", type=int)
+            bp.add_argument("--skip-resource-recheck", action="store_true")
+        elif bcmd == "batch-refresh":
+            bp.add_argument("--no-auto-collect", action="store_true")
+            bp.add_argument("--dispatch-more", action="store_true")
+            bp.add_argument("--skip-resource-recheck", action="store_true")
+        elif bcmd == "batch-report":
+            bp.add_argument("--markdown", action="store_true")
+            bp.add_argument("--csv", action="store_true")
     live = commands.add_parser("live", help="Use the configured real CircuitGit Runner with an explicitly bound project.")
     live.add_argument("--client-config", required=True, help="Private spiceowl.live-client.v1 JSON file.")
     live_actions = live.add_subparsers(dest="action", required=True)
@@ -398,6 +447,74 @@ def main(argv=None):
                     cycle_index=args.cycle_index, context_cycles=args.context_cycles,
                     overlay_cycles=args.overlay_cycles, max_points_per_cycle=args.max_points_per_cycle,
                 ))
+            elif args.action in ("batches", "batch-demo", "batch-prepare", "batch-inspect", "batch-dispatch", "batch-refresh", "batch-cancel", "batch-report"):
+                from spiceowl.batch import DirectBatchManager
+                bman = DirectBatchManager(manager.data_dir, manager)
+                if args.action == "batches":
+                    output({"batches": bman.list()})
+                elif args.action == "batch-demo":
+                    res = bman.create_demo_batch(kind=args.kind, batch_id=args.batch_id)
+                    output({"batch": res["batch"], "summary": res["summary"]})
+                elif args.action == "batch-prepare":
+                    tpl = Path(args.netlist).read_text(encoding="utf-8")
+                    specs = json.loads(Path(args.specs_json).read_text(encoding="utf-8")) if args.specs_json else None
+                    limits = {
+                        "cpu_count": args.cpus,
+                        "memory_bytes": int(round(args.memory_gib * 2**30)),
+                        "wall_seconds": args.wall_seconds,
+                    }
+                    scheduler = {}
+                    if args.backend == "lsf" and args.queue:
+                        scheduler["queue"] = args.queue
+                    elif args.backend == "slurm" and args.partition:
+                        scheduler["partition"] = args.partition
+                    output(bman.prepare(
+                        batch_id=args.batch_id,
+                        netlist_template=tpl,
+                        kind=args.kind,
+                        title=args.title,
+                        process_corners=args.corners,
+                        voltages=args.voltages,
+                        temperatures=args.temps,
+                        voltage_param=args.voltage_param,
+                        mc_samples=args.mc_samples,
+                        mc_base_seed=args.mc_base_seed,
+                        mc_variation=args.mc_variation,
+                        specs=specs,
+                        max_concurrency=args.max_concurrency,
+                        host_id=args.host,
+                        host_ids=args.hosts,
+                        backend=args.backend,
+                        simulator=args.simulator,
+                        output_format=args.output_format,
+                        limits=limits,
+                        scheduler=scheduler or None,
+                        remote_python=args.remote_python,
+                        remote_root=args.remote_root,
+                    ))
+                elif args.action == "batch-inspect":
+                    output(bman.build_summary(args.batch_id))
+                elif args.action == "batch-dispatch":
+                    recheck = False if args.skip_resource_recheck else None
+                    output(bman.dispatch_next(args.batch_id, limit=args.limit, recheck_resources=recheck))
+                elif args.action == "batch-refresh":
+                    recheck = False if args.skip_resource_recheck else None
+                    output(bman.refresh(
+                        args.batch_id,
+                        auto_collect=not args.no_auto_collect,
+                        dispatch_more=args.dispatch_more,
+                        recheck_resources=recheck,
+                    ))
+                elif args.action == "batch-cancel":
+                    output(bman.cancel(args.batch_id))
+                elif args.action == "batch-report":
+                    rep = bman.report(args.batch_id)
+                    if args.markdown:
+                        print(rep["markdown"])
+                    elif args.csv:
+                        print(rep["csv"], end="")
+                    else:
+                        output(rep["summary"])
             elif args.action == "watch":
                 monitor = manager.monitor(interval_seconds=args.interval, max_backoff_seconds=max(args.interval, 300.0))
                 monitor.watch(args.run_id, allow_collect=args.allow_collect)

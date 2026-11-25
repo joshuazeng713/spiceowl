@@ -52,7 +52,9 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
         from spiceowl.integrations.live import LiveSimulationClient
         live_client = LiveSimulationClient(live_client_config)
     from spiceowl.direct import DirectExecutionManager, DirectRecoverySupervisor
+    from spiceowl.batch import DirectBatchManager
     direct_manager = DirectExecutionManager(controller.store.directory, hosts=getattr(controller, "hosts", None))
+    batch_manager = DirectBatchManager(controller.store.directory, direct_manager)
     direct_supervisor = DirectRecoverySupervisor(direct_manager)
     direct_monitor = direct_supervisor.monitor
     direct_supervisor.resume()
@@ -296,6 +298,106 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     recovery_policy=payload.get("recovery_policy"),
                 )
                 return self.reply({"run": run}, 201)
+            if path == "/api/direct/batches" and self.command == "GET":
+                return self.reply({"batches": batch_manager.list()})
+            if path == "/api/direct/batches/demo" and self.command == "POST":
+                req = self.body()
+                if set(req) - {"kind", "batch_id"}:
+                    raise DomainError("Batch demo accepts optional kind and batch_id only.")
+                kind = req.get("kind", "pvt")
+                return self.reply(batch_manager.create_demo_batch(kind=kind, batch_id=req.get("batch_id")), 201)
+            if path == "/api/direct/batches/prepare" and self.command == "POST":
+                req = self.body(max_bytes=1024 * 1024 + 65536)
+                allowed = {
+                    "batch_id", "netlist_template", "kind", "title",
+                    "process_corners", "voltages", "temperatures", "voltage_param",
+                    "mc_samples", "mc_base_seed", "mc_variation", "mc_seeds",
+                    "specs", "max_concurrency", "host_id", "host_ids",
+                    "backend", "simulator", "output_format", "cpus", "memory_gib",
+                    "wall_seconds", "license_queue_seconds", "enforce_rlimit_as",
+                    "scheduler", "include_dirs", "remote_python", "remote_root", "recovery_policy",
+                }
+                if set(req) - allowed or not {"batch_id", "netlist_template"} <= set(req):
+                    raise DomainError("Batch prepare requires batch_id, netlist_template, and supported batch fields only.")
+                cpus = req.get("cpus", 1)
+                memory_gib = req.get("memory_gib", 4.0)
+                wall_seconds = req.get("wall_seconds", 3600)
+                lq_seconds = req.get("license_queue_seconds", 120)
+                enforce_as = req.get("enforce_rlimit_as", False)
+                if type(cpus) is not int or not 1 <= cpus <= 4096:
+                    raise DomainError("cpus must be an integer between 1 and 4096.")
+                if isinstance(memory_gib, bool) or not isinstance(memory_gib, (int, float)) or not 0.0625 <= float(memory_gib) <= 16384:
+                    raise DomainError("memory_gib must be a number between 0.0625 and 16384.")
+                limits = {
+                    "cpu_count": cpus,
+                    "memory_bytes": int(round(float(memory_gib) * 2**30)),
+                    "wall_seconds": wall_seconds,
+                    "license_queue_seconds": lq_seconds,
+                    "enforce_rlimit_as": enforce_as,
+                }
+                created = batch_manager.prepare(
+                    batch_id=req["batch_id"],
+                    netlist_template=req["netlist_template"],
+                    kind=req.get("kind", "pvt"),
+                    title=req.get("title"),
+                    process_corners=req.get("process_corners"),
+                    voltages=req.get("voltages"),
+                    temperatures=req.get("temperatures"),
+                    voltage_param=req.get("voltage_param", "vdd"),
+                    mc_samples=req.get("mc_samples", 0),
+                    mc_base_seed=req.get("mc_base_seed", 1001),
+                    mc_variation=req.get("mc_variation", "all"),
+                    mc_seeds=req.get("mc_seeds"),
+                    specs=req.get("specs"),
+                    max_concurrency=req.get("max_concurrency", 4),
+                    host_id=req.get("host_id"),
+                    host_ids=req.get("host_ids"),
+                    backend=req.get("backend", "ssh_direct"),
+                    simulator=req.get("simulator", "spectre"),
+                    output_format=req.get("output_format", "psfbin"),
+                    limits=limits,
+                    scheduler=req.get("scheduler"),
+                    include_dirs=req.get("include_dirs"),
+                    remote_python=req.get("remote_python", "/usr/bin/python3"),
+                    remote_root=req.get("remote_root", ".spiceowl-runs"),
+                    recovery_policy=req.get("recovery_policy"),
+                )
+                return self.reply(created, 201)
+            if path.startswith("/api/direct/batches/"):
+                sub = path.removeprefix("/api/direct/batches/").split("/")
+                if len(sub) not in (1, 2):
+                    raise DomainError("This endpoint does not exist.", "not_found")
+                batch_id = require_id(sub[0], "direct batch ID")
+                if len(sub) == 1 and self.command == "GET":
+                    return self.reply(batch_manager.report(batch_id))
+                if len(sub) == 2 and self.command == "POST":
+                    op = sub[1]
+                    req = self.body()
+                    if op == "dispatch":
+                        if set(req) - {"limit", "recheck_resources"}:
+                            raise DomainError("Dispatch accepts optional limit and recheck_resources only.")
+                        if "recheck_resources" in req and type(req["recheck_resources"]) is not bool:
+                            raise DomainError("recheck_resources must be boolean.")
+                        return self.reply(batch_manager.dispatch_next(
+                            batch_id, limit=req.get("limit"), recheck_resources=req.get("recheck_resources"),
+                        ), 202)
+                    if op == "refresh":
+                        if set(req) - {"auto_collect", "dispatch_more", "recheck_resources"}:
+                            raise DomainError("Refresh accepts optional auto_collect, dispatch_more, and recheck_resources only.")
+                        for k in ("auto_collect", "dispatch_more", "recheck_resources"):
+                            if k in req and type(req[k]) is not bool:
+                                raise DomainError(f"{k} must be boolean.")
+                        return self.reply(batch_manager.refresh(
+                            batch_id,
+                            auto_collect=req.get("auto_collect", True),
+                            dispatch_more=req.get("dispatch_more", False),
+                            recheck_resources=req.get("recheck_resources"),
+                        ))
+                    if op == "cancel":
+                        if req:
+                            raise DomainError("Batch cancel takes an empty object.")
+                        return self.reply(batch_manager.cancel(batch_id), 202)
+                raise DomainError("This endpoint does not exist.", "not_found")
             if path == "/api/direct/demo-waveform" and self.command == "POST":
                 req = self.body()
                 allowed = {"run_id", "cycles", "glitch_cycle"}

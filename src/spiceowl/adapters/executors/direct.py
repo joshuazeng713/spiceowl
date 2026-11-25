@@ -1475,9 +1475,10 @@ def _exchange(profile, request):
             raise DomainError(_SSH_ERROR_MESSAGES.get(category, "The SSH exchange did not complete."), category or "direct_transport_failed")
         begin = ("__SPICEOWL_DIRECT_%s_BEGIN__\n" % nonce).encode("ascii")
         end = ("\n__SPICEOWL_DIRECT_%s_END__" % nonce).encode("ascii")
-        if stdout.count(begin) != 1 or stdout.count(end) != 1:
+        norm_stdout = bytes(stdout).replace(b"\r\n", b"\n")
+        if norm_stdout.count(begin) != 1 or norm_stdout.count(end) != 1:
             raise DomainError("The SSH reply has invalid framing.", "direct_reply_invalid")
-        payload = bytes(stdout).split(begin, 1)[1].split(end, 1)[0]
+        payload = norm_stdout.split(begin, 1)[1].split(end, 1)[0]
         return json.loads(payload.decode("ascii"))
     except DomainError:
         raise
@@ -1758,9 +1759,10 @@ def _waveform_exchange(plan, operation, payload=None):
             raise DomainError(_SSH_ERROR_MESSAGES.get(category, "Remote waveform query did not complete."), category or "direct_transport_failed")
         begin = ("__SPICEOWL_DIRECT_%s_BEGIN__\n" % nonce).encode("ascii")
         end = ("\n__SPICEOWL_DIRECT_%s_END__" % nonce).encode("ascii")
-        if stdout.count(begin) != 1 or stdout.count(end) != 1:
+        norm_stdout = bytes(stdout).replace(b"\r\n", b"\n")
+        if norm_stdout.count(begin) != 1 or norm_stdout.count(end) != 1:
             raise DomainError("Remote waveform reply has invalid framing.", "direct_reply_invalid")
-        reply = json.loads(bytes(stdout).split(begin, 1)[1].split(end, 1)[0].decode("ascii"))
+        reply = json.loads(norm_stdout.split(begin, 1)[1].split(end, 1)[0].decode("ascii"))
         if not isinstance(reply, dict) or not reply.get("ok"):
             err_code = reply.get("error", "remote_waveform_failed") if isinstance(reply, dict) else "direct_reply_invalid"
             err_msg = reply.get("message", "Remote waveform query failed.") if isinstance(reply, dict) else "Invalid reply."

@@ -34,6 +34,22 @@ def parser():
     serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
     serve.add_argument("--enable-direct-exec", action="store_true", help="Expose standalone SSH Direct / LSF / Slurm execution tools to the local Codex window (still requires human tool approval).")
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
+    init_cmd = commands.add_parser("init", help="Cross-platform quickstart wizard: check local OS/SSH, bootstrap vivid demos, or register & prepare your first EDA simulation.")
+    init_cmd.add_argument("--check", action="store_true", help="Inspect local OS, OpenSSH, ~/.ssh/config aliases, and workspace readiness.")
+    init_cmd.add_argument("--demo", action="store_true", help="Bootstrap the full vivid offline demo workspace (overview + 500-cycle PSF Binary + 27-corner PVT + 40-sample MC + Agent Eval).")
+    init_cmd.add_argument("--host-id", help="Register an EDA server with this stable host ID.")
+    init_cmd.add_argument("--label", help="Display label for the EDA server.")
+    init_cmd.add_argument("--ssh-target", help="Existing OpenSSH alias from ~/.ssh/config (e.g. eda-sim).")
+    init_cmd.add_argument("--expected-host", help="Exact remote hostname returned by 'hostname'.")
+    init_cmd.add_argument("--expected-user", help="Exact remote username returned by 'id -un'.")
+    init_cmd.add_argument("--simulator", choices=("spectre", "ngspice"), default="spectre")
+    init_cmd.add_argument("--simulator-path", help="Remote absolute path to spectre or ngspice executable.")
+    init_cmd.add_argument("--probe", action="store_true", help="Actively verify SSH connectivity and simulator version right after registering.")
+    init_cmd.add_argument("--prepare-smoke", action="store_true", help="Freeze a zero-PDK RC smoke simulation targeting the registered EDA host.")
+    init_cmd.add_argument("--backend", choices=("ssh_direct", "lsf", "slurm"), default="ssh_direct")
+    init_cmd.add_argument("--queue", help="LSF queue name (if --backend lsf).")
+    init_cmd.add_argument("--partition", help="Slurm partition name (if --backend slurm).")
+    init_cmd.add_argument("--json", action="store_true", help="Print structured JSON output.")
     na_cmd = commands.add_parser("next-action", help="Evaluate an experiment/run snapshot JSON with the deterministic next-action orchestrator.")
     na_cmd.add_argument("--state-json", required=True, help="JSON file describing experiment/dependencies/plan/run/measurement state.")
     ev_cmd = commands.add_parser("eval-agent", help="Run the frozen 10-case Agent end-to-end evaluation benchmark.")
@@ -348,6 +364,77 @@ def main(argv=None):
             else:
                 output(res)
             return 0 if res["strict_qualification_passed"] else 2
+        if args.command == "init":
+            from spiceowl.batch import DirectBatchManager
+            from spiceowl.direct import DirectExecutionManager
+            from spiceowl.onboarding_wizard import (
+                bootstrap_vivid_demo,
+                diagnose_local_environment,
+                prepare_first_simulation,
+                quick_register_eda_host,
+            )
+            with Controller(args.data_dir, agent_mode="standalone") as app:
+                dm = DirectExecutionManager(app.store.directory, hosts=app.hosts)
+                bm = DirectBatchManager(app.store.directory, dm)
+                result: dict = {"environment": diagnose_local_environment(
+                    app.store.directory, hosts=app.hosts, direct_manager=dm, batch_manager=bm,
+                )}
+                if args.demo:
+                    result["demo"] = bootstrap_vivid_demo(app, dm, bm)
+                if args.host_id or args.ssh_target:
+                    if not all((args.host_id, args.ssh_target, args.expected_host, args.expected_user)):
+                        raise DomainError("Registering an EDA host requires --host-id, --ssh-target, --expected-host, and --expected-user.")
+                    host, created = quick_register_eda_host(
+                        app.hosts,
+                        host_id=args.host_id,
+                        label=args.label or args.host_id,
+                        ssh_target=args.ssh_target,
+                        expected_host=args.expected_host,
+                        expected_user=args.expected_user,
+                        simulator=args.simulator,
+                        simulator_executable=args.simulator_path,
+                    )
+                    probe_res = app.hosts.probe(host["host_id"]) if args.probe else None
+                    result["registered_host"] = {"host": app.hosts.inspect(host["host_id"]), "created": created, "probe": probe_res}
+                if args.prepare_smoke:
+                    target_host = args.host_id or (app.hosts.list()[0]["host_id"] if app.hosts.list() else None)
+                    if not target_host:
+                        raise DomainError("Register an EDA host first (or pass --host-id) before --prepare-smoke.")
+                    result["first_simulation"] = prepare_first_simulation(
+                        dm,
+                        host_id=target_host,
+                        simulator=args.simulator,
+                        backend=args.backend,
+                        queue=args.queue,
+                        partition=args.partition,
+                    )
+                if args.json:
+                    output(result)
+                else:
+                    env = result["environment"]
+                    print(f"SpiceOwl {__version__} Quickstart ({env['platform']['system']} / Python {env['platform']['python']})")
+                    print(f"Workspace: {env['platform']['data_dir']}")
+                    print("-" * 64)
+                    for chk in env["checks"]:
+                        tag = {"ok": "[OK]", "warning": "[WARN]", "missing": "[MISS]"}.get(chk["status"], "[?]")
+                        print(f"  {tag:6s} {chk['label']}: {chk['detail']}")
+                    if env["ssh_aliases"]:
+                        names = ", ".join(a["alias"] for a in env["ssh_aliases"][:12])
+                        print(f"\nDetected ~/.ssh/config aliases: {names}")
+                    if "demo" in result:
+                        print("\nVivid demo workspace bootstrapped:")
+                        for st in result["demo"]["stations"]:
+                            print(f"  {st['step']}. {st['title']} ({st['badge']}) -> {st['route']}")
+                    if "registered_host" in result:
+                        h = result["registered_host"]["host"]
+                        print(f"\nRegistered EDA host: {h['host_id']} (alias={h['ssh_target']})")
+                    if "first_simulation" in result:
+                        fs = result["first_simulation"]["run"]
+                        print(f"\nFirst smoke simulation frozen: {fs['run_id']} ({fs['simulator']} via {fs['backend']})")
+                        print(f"  Next: spiceowl direct stage {fs['run_id']} && spiceowl direct launch {fs['run_id']}")
+                    print("\nStart the local web console & open #quickstart:")
+                    print("  spiceowl serve")
+            return 0
         if args.command == "direct":
             from spiceowl.direct import DirectExecutionManager
             manager = DirectExecutionManager(args.data_dir)

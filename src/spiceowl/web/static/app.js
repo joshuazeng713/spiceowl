@@ -45,6 +45,16 @@ let batchDraft = {
   mc_samples: 20, mc_base_seed: 1001, mc_variation: 'mismatch', max_concurrency: 4,
   spec_name: '', spec_signal: 'v(out)', spec_metric: 'max', spec_min: '', spec_max: '', spec_unit: 'V',
 };
+let wizardState = {
+  loaded: false, loading: false, busy: false, status: null, demo: null,
+  firstSim: null, lastProbe: null, error: null,
+};
+let wizardDraft = {
+  alias_pick: '', host_id: '', label: '', ssh_target: '', expected_host: '', expected_user: '',
+  simulator: 'spectre', simulator_executable: '', backend: 'ssh_direct', queue: '', partition: '',
+  selected_host_id: '', template_id: 'spectre_rc_smoke', custom_netlist: '',
+  remote_python: '/usr/bin/python3', remote_root: '.spiceowl-runs',
+};
 let directDraft = {
   run_key: '', target_mode: 'host', host_id: '', backend: 'ssh_direct', simulator: 'spectre',
   output_format: 'psfascii', cpus: 2, memory_gib: 8, wall_seconds: 3600,
@@ -98,6 +108,109 @@ function publicDemoChrome() {
 
 function publicDirectPage() {
   return heading('DIRECT EXECUTION PREVIEW', '不依赖网关，直接驱动 SSH / LSF / Slurm 仿真。', '公共演示页面不连接 SSH 或集群调度器；在本地运行 SpiceOwl 即可直接使用。') + `<section class="panel public-info" data-public-demo-info="direct"><div class="panel-body"><span class="chip">LOCAL WORKFLOW</span><h2>三步在本地控制台完成直连仿真</h2><div class="public-feature-grid"><article><h3>1. 选主机或集群</h3><p>在 Simulation hosts 注册 OpenSSH 别名后，可按 CPU/内存自动选机，或指定 LSF / Slurm 登录节点。</p></article><article><h3>2. 冻结并提交</h3><p>Prepare 仅在本地冻结网表与校验和；Stage 写入隔离目录；Launch 具备原子防重发占位，断线不盲目重提。</p></article><article><h3>3. 盯守与五维报告</h3><p>支持后台 Watch、精准 Cancel、安全收集日志与波形，自动输出五维 Spectre 报告与 SOA/OOM 证据。</p></article></div><div class="public-info-links"><a class="button primary" href="#local">Run locally</a><a class="button secondary" href="./workflow.html">Explore workflow</a></div></div></section>`;
+}
+
+async function refreshWizard() {
+  if (isPublicDemo() || wizardState.loading) return;
+  wizardState.loading = true;
+  try {
+    const data = await api('/api/wizard/status');
+    wizardState.status = data;
+    wizardState.error = null;
+    const aliases = data.ssh_aliases || [];
+    if (!wizardDraft.ssh_target && aliases.length) {
+      applySshAliasToDraft(aliases[0]);
+    }
+    const hosts = data.workspace?.hosts || [];
+    if (!wizardDraft.selected_host_id && hosts.length) {
+      wizardDraft.selected_host_id = hosts[0].host_id;
+    }
+    if (wizardState.firstSim?.run?.run_id) {
+      try {
+        const d = await api(`/api/direct/runs/${encodeURIComponent(wizardState.firstSim.run.run_id)}`);
+        wizardState.firstSim = {...wizardState.firstSim, run: d.run, report: d.report || null};
+      } catch { /* Keep previous snapshot if removed */ }
+    } else if (data.workspace?.first_sim_runs?.length) {
+      wizardState.firstSim = {run: data.workspace.first_sim_runs[0], template_id: 'saved'};
+    }
+  } catch (error) {
+    wizardState.error = error.message;
+  } finally {
+    wizardState.loaded = true;
+    wizardState.loading = false;
+    if (location.hash === '#quickstart') render();
+  }
+}
+
+function applySshAliasToDraft(aliasObj) {
+  if (!aliasObj) return;
+  wizardDraft.alias_pick = aliasObj.alias;
+  wizardDraft.ssh_target = aliasObj.alias;
+  wizardDraft.host_id = aliasObj.alias.replace(/[^A-Za-z0-9_-]/g, '-');
+  wizardDraft.label = `EDA Server (${aliasObj.alias})`;
+  if (aliasObj.hostname) wizardDraft.expected_host = aliasObj.hostname.split('.')[0];
+  if (aliasObj.user) wizardDraft.expected_user = aliasObj.user;
+}
+
+function quickstartPage() {
+  if (isPublicDemo()) {
+    return heading('QUICKSTART PREVIEW', '30 秒体验 SpiceOwl，或 4 步连上你的 EDA 服务器。', '在线演示不连接本机 SSH；在本地安装运行 spiceowl init --demo 或 spiceowl serve 即可打开完整交互向导。')
+      + `<section class="panel public-info"><div class="panel-body"><span class="chip">TWO-TRACK ONBOARDING</span><h2>双轨快速上手体验</h2><div class="public-feature-grid"><article><h3>路线 A · 无服务器全功能演示</h3><p>本地运行 <code>spiceowl init --demo</code> 或在向导页点击一键演示，立即体验 500 周期 PSF Binary 毛刺钻取、27-Corner PVT 矩阵、40 样本 MC 良率与 10 项 Agent 评测。</p></article><article><h3>路线 B · 4 步跑通真实 EDA 服务器</h3><p>自动读取 <code>~/.ssh/config</code> 别名（零私钥读取）→ 验证 SSH 与 Spectre/ngspice → 冻结零 PDK 烟雾网表 → 网页端一键上传、启动、盯守并看波形。</p></article><article><h3>原生三平台支持</h3><p>macOS、Linux、原生 Windows（无需 WSL）开箱即用。</p></article></div><div class="public-info-links"><a class="button primary" href="#local">查看本地安装命令</a><a class="button secondary" href="#overview">先看在线演示</a></div></div></section>`;
+  }
+  const st = wizardState.status;
+  const checks = st?.checks || [];
+  const aliases = st?.ssh_aliases || [];
+  const hosts = st?.workspace?.hosts || state.hosts || [];
+  const templates = st?.templates || [];
+  const activeTpl = templates.find(t => t.id === wizardDraft.template_id) || templates[0] || null;
+  const fRun = wizardState.firstSim?.run || null;
+  const demo = wizardState.demo;
+
+  let html = heading(
+    'QUICKSTART · 新手引导与首次仿真',
+    '没有服务器？30 秒沉浸式演示。有 EDA 服务器？4 步跑通首个真实仿真。',
+    '全程网页端点击即可完成，零终端脚本依赖，原生支持 macOS / Linux / Windows。',
+  );
+  if (wizardState.error) html += `<p class="error-text" role="alert">${escape(wizardState.error)}</p>`;
+
+  // Track A: Vivid 5-station offline demo
+  const defaultStations = demo?.stations || [
+    {step: 1, id: 'overview_runs', title: '五维状态总览与断连诊断', badge: '4 个合成场景', summary: '区分执行完成、测量有效、性能未达标与连接未知。', route: '#overview', action_label: '前往总览 →'},
+    {step: 2, id: 'binary_waveform', title: '500 周期 PSF Binary 隐藏毛刺钻取', badge: '20,000 点 · #317 毛刺', summary: 'Min-Max 包络预览零丢毛刺，拖拽放大自动切 100% 无损原始点，Cycle Slicer 自动抓出 #317 异常周期。', route: '#direct', target_run_id: 'demo-psfbin-500c', action_label: '打开 500 周期波形 →'},
+    {step: 3, id: 'pvt_batch', title: '27-Corner PVT 彩色工艺角矩阵', badge: '含 OOM 与慢角超标', summary: '清晰区分有效测量未达标（ss/1.08V/125°C）与确认 OOM 故障（ff/1.32V/-40°C）。', route: '#direct', target_batch_id: 'demo-pvt-27', action_label: '查看 PVT 矩阵 →'},
+    {step: 4, id: 'mc_batch', title: '40 样本 Monte Carlo 分布直方图', badge: '保守良率 · 种子零丢弃', summary: '带 LSL/USL 规格线与 Cpk，执行失败种子 #2029 完整保留在分母中。', route: '#direct', target_batch_id: 'demo-mc-40', action_label: '查看 MC 直方图 →'},
+    {step: 5, id: 'agent_eval', title: 'Agent 10 项安全闭环评测', badge: '确定性 100% vs 弱模型', summary: '体验 0 越权、0 重复派发、0 虚假通过的 Next-Action 编排器与中断回合恢复。', route: '#agents', action_label: '前往 Agent 评测 →'},
+  ];
+  const demoReady = !!(demo || (st?.workspace?.has_demo_waveform && st?.workspace?.has_demo_pvt && st?.workspace?.has_demo_mc));
+
+  html += `<section class="panel wizard-hero"><div class="section-title"><h2>路线 A · 30 秒沉浸式全功能演示（零服务器要求）</h2>${chip(demoReady ? '演示工作区已就绪 ✓' : '一键生成全套数据', demoReady ? 'green' : 'blue')}</div><p class="subtle-note">点击下方按钮一次性生成全部 5 大核心场景演示数据，然后按 1 → 5 号站逐一点击直达体验。</p><div class="direct-actions"><button type="button" class="button primary" data-action="wizard-demo" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '正在生成全套演示数据…' : demoReady ? '✦ 重新加载 / 刷新全套演示工作区' : '✦ 一键启动全套沉浸式演示工作区'}</button></div><div class="wizard-station-grid">${defaultStations.map(s => `<article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">${s.step}</span>${chip(s.badge, 'blue')}</div><h3>${escape(s.title)}</h3><p>${escape(s.summary)}</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="${escape(s.route)}" data-run="${escape(s.target_run_id || '')}" data-batch="${escape(s.target_batch_id || '')}" ${demoReady ? '' : 'disabled'}>${escape(s.action_label)}</button></article>`).join('')}</div></section>`;
+
+  // Track B: 4-step real EDA server onboarding & first simulation
+  html += `<section class="panel wizard-eda-panel"><div class="section-title"><h2>路线 B · 4 步连上你的远程 EDA 服务器并跑通首个仿真</h2><button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>重新体检</button></div>`;
+
+  // Step 1: Local environment readiness
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">1</span> 本地环境自检（自动识别 macOS / Linux / Windows 与 SSH 别名）</h3><div class="wizard-check-grid">${checks.map(c => `<div class="wizard-check-card status-${escape(c.status)}"><strong>${escape(c.label)}</strong>${chip(c.status === 'ok' ? '就绪' : c.status === 'missing' ? '缺失' : '提示', c.status === 'ok' ? 'green' : c.status === 'missing' ? 'red' : 'amber')}<p>${escape(c.detail)}</p></div>`).join('') || '<p class="subtle-note">正在体检本地环境…</p>'}</div><details class="host-form-details"><summary>还没有配置 SSH 免密登录？查看 ~/.ssh/config 配置模板（支持跳板机）</summary><pre class="direct-rec-md">${escape(st?.ssh_config_example || '')}</pre><p class="subtle-note">配好后在终端确认 <code>ssh eda-sim "hostname &amp;&amp; id -un &amp;&amp; which spectre"</code> 无需输密码即可返回，再点击上方「重新体检」，别名就会自动出现在第 2 步下拉框中。</p></details></div>`;
+
+  // Step 2: Register & Probe EDA Server
+  const probeBadge = wizardState.lastProbe
+    ? (wizardState.lastProbe.identity?.verified && !wizardState.lastProbe.error
+      ? `<div class="wf-mode-banner exact">${chip('SSH 身份验证通过 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code> · 工具状态：${(wizardState.lastProbe.tools || []).map(t => `${escape(t.kind)}=${escape(t.status)}${t.version ? ` (${escape(t.version)})` : ''}`).join(', ') || '仅身份校验'}</span></div>`
+      : `<div class="wf-mode-banner preview">${chip('连接未通过', 'red')}<span>${escape(wizardState.lastProbe.error?.message || '请核对 SSH 别名、主机名或用户名是否与远端 hostname / id -un 一致。')}</span></div>`)
+    : '';
+
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">2</span> 登记并验证你的 EDA 服务器（只用本机 OpenSSH 别名，绝不存密码）</h3><form id="wizard-host-form"><div class="direct-grid">${aliases.length ? `<label class="direct-wide">从本机 ~/.ssh/config 一键选择别名（共发现 ${aliases.length} 个）<select id="wiz-alias-pick"><option value="">— 手动填写或从列表选择 —</option>${aliases.map(a => `<option value="${escape(a.alias)}" ${a.alias === wizardDraft.alias_pick ? 'selected' : ''}>${escape(a.alias)}${a.hostname ? ` (${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)})` : ''}</option>`).join('')}</select></label>` : ''}<label>OpenSSH 别名 (ssh_target)<input id="wiz-ssh-target" value="${escape(wizardDraft.ssh_target)}" required placeholder="eda-sim"></label><label>服务器 ID (host_id)<input id="wiz-host-id" value="${escape(wizardDraft.host_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="eda-sim-01"></label><label>期望远端主机名 (hostname)<input id="wiz-expected-host" value="${escape(wizardDraft.expected_host)}" required placeholder="sim-node-01"></label><label>期望远端用户名 (id -un)<input id="wiz-expected-user" value="${escape(wizardDraft.expected_user)}" required placeholder="your_user"></label><label>主仿真器<select id="wiz-simulator"><option value="spectre" ${wizardDraft.simulator === 'spectre' ? 'selected' : ''}>Cadence Spectre</option><option value="ngspice" ${wizardDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice (开源)</option></select></label><label>远端仿真器绝对路径（可选）<input id="wiz-sim-exe" value="${escape(wizardDraft.simulator_executable)}" placeholder="${wizardDraft.simulator === 'spectre' ? '/opt/cadence/tools/bin/spectre' : '/usr/bin/ngspice'}"></label></div><div class="direct-actions"><button type="submit" class="button secondary small" data-probe="0" ${wizardState.busy ? 'disabled' : ''}>仅保存服务器档案</button><button type="button" class="button primary small" data-action="wizard-register-probe" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '连接验证中…' : '保存并立即测试 SSH 与仿真器 (Register &amp; Probe)'}</button></div></form>${probeBadge}</div>`;
+
+  // Step 3: Prepare first smoke simulation
+  const selHostId = wizardDraft.selected_host_id || hosts[0]?.host_id || '';
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">3</span> 准备你的第一个仿真（内置零 PDK 烟雾网表，开箱即测）</h3><form id="wizard-first-sim-form"><div class="direct-grid"><label>目标 EDA 服务器<select id="wiz-target-host" ${hosts.length ? '' : 'disabled'}>${hosts.length ? hosts.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === selHostId ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})${h.last_probe?.identity?.verified ? ' · 已验证 ✓' : ''}</option>`).join('') : '<option value="">请先在第 2 步登记服务器</option>'}</select></label><label>执行后端<select id="wiz-backend"><option value="ssh_direct" ${wizardDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连托管进程 (单机工作站)</option><option value="lsf" ${wizardDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${wizardDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>测试网表模板<select id="wiz-template">${templates.map(t => `<option value="${escape(t.id)}" ${t.id === wizardDraft.template_id ? 'selected' : ''}>${escape(t.title)}</option>`).join('')}<option value="custom" ${wizardDraft.template_id === 'custom' ? 'selected' : ''}>自定义粘贴我的网表 (.scs / .sp)</option></select></label>${wizardDraft.backend === 'lsf' ? `<label>LSF Queue（必填）<input id="wiz-queue" value="${escape(wizardDraft.queue)}" required placeholder="analog_short"></label>` : wizardDraft.backend === 'slurm' ? `<label>Slurm Partition（必填）<input id="wiz-partition" value="${escape(wizardDraft.partition)}" required placeholder="sim_compute"></label>` : `<label>远端工作目录<input id="wiz-remote-root" value="${escape(wizardDraft.remote_root)}" placeholder=".spiceowl-runs"></label>`}</div>${activeTpl && wizardDraft.template_id !== 'custom' ? `<p class="subtle-note">${escape(activeTpl.description)}</p><pre class="direct-rec-md" style="max-height:160px">${escape(activeTpl.netlist)}</pre>` : `<textarea id="wiz-custom-netlist" class="direct-netlist" placeholder="在此粘贴你的 Spectre 或 ngspice 网表…">${escape(wizardDraft.custom_netlist)}</textarea>`}<div class="direct-actions"><button type="submit" class="button primary small" ${wizardState.busy || !hosts.length ? 'disabled' : ''}>冻结我的第一个仿真计划 (Prepare First Sim)</button></div></form></div>`;
+
+  // Step 4: Live execution stepper for first simulation
+  const fTerminal = fRun && ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed', 'input_hash_failure'].includes(fRun.state);
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">4</span> 跑通首个仿真并查看波形与五维报告</h3>${fRun ? `<div class="direct-rec-card"><div class="section-title"><strong>当前首个仿真：<code>${escape(fRun.run_id)}</code>（主机 ${escape(fRun.host_id)} · ${escape(fRun.backend)} · ${escape(fRun.simulator)}）</strong>${directRunChip(fRun)}</div><div class="direct-actions"><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="stage" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !['prepared', 'stage_incomplete'].includes(fRun.state) ? 'disabled' : ''}>① 上传输入 (Stage)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="launch" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state !== 'staged' || fRun.dispatch_claimed ? 'disabled' : ''}>② 启动仿真 (Launch)</button><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="status" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state === 'prepared' ? 'disabled' : ''}>③ 查询状态 (Status)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="collect" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !fTerminal || fRun.collection_phase === 'complete' ? 'disabled' : ''}>④ 收集报告与波形 (Collect)</button><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-run="${escape(fRun.run_id)}" data-batch="">在直连工作台查看完整报告与波形 →</button></div>${fRun.last_error ? `<p class="error-text">${escape(fRun.last_error.message || fRun.last_error.code)}</p>` : ''}${fRun.collection_phase === 'complete' ? '<p class="wf-mode-banner exact"><strong>恭喜！你的第一个真实仿真已收集完成。</strong> 点击右侧「在直连工作台查看完整报告与波形 →」即可查看五维诊断报告与交互式波形！</p>' : ''}</div>` : '<p class="subtle-note">完成第 3 步「冻结我的第一个仿真计划」后，这里会出现 ① 上传 → ② 启动 → ③ 状态查询 → ④ 收集并查看波形 的一键执行栏。</p>'}</div>`;
+
+  // Legacy compatibility notice (cleanly separated!)
+  html += `<details class="host-form-details"><summary>关于已退役的历史兼容层（spiceowl mcp 与旧版 Q&amp;A）</summary><p class="subtle-note">早期 <code>spiceowl mcp</code> 启动器与旧版 Q&amp;A 均已归档为只读/兼容层，新用户请直接使用本向导、<code>#direct</code> 原生直连与 <code>#agents</code> 独立/嵌入 Codex 通道。详见 <code>docs/legacy-compatibility.md</code>。</p></details></section>`;
+  return html;
 }
 
 async function refreshDirect() {
@@ -1708,9 +1821,10 @@ function render() {
   const page = location.hash.slice(1) || 'overview';
   if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'direct' ? '直连仿真 · SSH / 集群' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent channel' : run ? run.label : 'Overview';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'quickstart' ? '快速上手 · 新手向导' : page === 'direct' ? '直连仿真 · SSH / 集群' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent channel' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
-  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  if (page === 'quickstart' && !isPublicDemo() && !wizardState.loaded && !wizardState.loading) refreshWizard();
   if (page === 'direct' && !isPublicDemo() && !directState.loaded && !directState.loading) refreshDirect();
   if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
@@ -1843,6 +1957,85 @@ document.addEventListener('click', async event => {
 
 document.addEventListener('click', handleLiveClick);
 document.addEventListener('click', handleDirectClick);
+document.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-action^="wizard-"]');
+  if (!button || isPublicDemo()) return;
+  const action = button.dataset.action.slice(7);
+  if (action === 'refresh') { await refreshWizard(); return; }
+  if (action === 'goto') {
+    const route = button.dataset.route || '#overview';
+    const targetRun = button.dataset.run || '';
+    const targetBatch = button.dataset.batch || '';
+    if (targetRun) directState.selectedId = targetRun;
+    if (targetBatch) directState.selectedBatchId = targetBatch;
+    location.hash = route;
+    if (route === '#direct') {
+      await refreshDirect();
+      if (targetRun === 'demo-psfbin-500c') {
+        await runWaveformQuery();
+        await runWaveformCycles();
+      }
+    }
+    return;
+  }
+  if (wizardState.busy) return;
+  if (action === 'demo') {
+    wizardState.busy = true; wizardState.error = null; render();
+    try {
+      wizardState.demo = await api('/api/wizard/demo', {method: 'POST', body: {}});
+      await refresh();
+      toast('已生成全套 5 站沉浸式演示工作区！点击任意站点卡片即可直达体验。');
+    } catch (error) { wizardState.error = error.message; toast(error.message); }
+    finally { wizardState.busy = false; await refreshWizard(); }
+    return;
+  }
+  if (action === 'register-probe') {
+    await submitWizardHost(true);
+    return;
+  }
+  if (action === 'sim-op') {
+    const op = button.dataset.op, id = button.dataset.id;
+    if (!op || !id) return;
+    wizardState.busy = true; wizardState.error = null; render();
+    try {
+      const body = op === 'launch' ? {recheck_resources: false} : {};
+      const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/${op}`, {method: 'POST', body});
+      if (res.run) wizardState.firstSim = {...(wizardState.firstSim || {}), run: res.run, report: res.report || null};
+      toast(`首个仿真操作 ${op} 已完成。`);
+    } catch (error) { wizardState.error = error.message; toast(error.message); }
+    finally { wizardState.busy = false; await refreshWizard(); }
+  }
+});
+
+async function submitWizardHost(probeAfter = false) {
+  if (wizardState.busy) return;
+  const payload = {
+    host_id: wizardDraft.host_id.trim(),
+    label: (wizardDraft.label || wizardDraft.host_id).trim(),
+    ssh_target: wizardDraft.ssh_target.trim(),
+    expected_host: wizardDraft.expected_host.trim(),
+    expected_user: wizardDraft.expected_user.trim(),
+    simulator: wizardDraft.simulator || 'spectre',
+    simulator_executable: wizardDraft.simulator_executable.trim() || null,
+    probe: !!probeAfter,
+  };
+  if (!payload.host_id || !payload.ssh_target || !payload.expected_host || !payload.expected_user) {
+    wizardState.error = '请完整填写服务器 ID、OpenSSH 别名、期望远端主机名与用户名。';
+    render();
+    return;
+  }
+  wizardState.busy = true; wizardState.error = null; render();
+  try {
+    const res = await api('/api/wizard/register-host', {method: 'POST', body: payload});
+    wizardState.lastProbe = res.probe || null;
+    wizardDraft.selected_host_id = res.host.host_id;
+    await refresh();
+    toast(probeAfter
+      ? (res.probe?.identity?.verified && !res.probe?.error ? `服务器 ${res.host.host_id} 验证通过！可以继续第 3 步。` : '服务器已登记，但连接验证未通过，请查看提示。')
+      : `服务器 ${res.host.host_id} 已登记到本地。`);
+  } catch (error) { wizardState.error = error.message; toast(error.message); }
+  finally { wizardState.busy = false; await refreshWizard(); }
+}
 
 // Interactive waveform drag-to-zoom & trend click-to-drill-down
 let wfDrag = null;
@@ -2014,6 +2207,13 @@ document.addEventListener('input', event => {
     'batch-spec-signal': 'spec_signal', 'batch-spec-min': 'spec_min', 'batch-spec-max': 'spec_max',
   };
   if (batchInputs[event.target.id]) batchDraft[batchInputs[event.target.id]] = event.target.value;
+  const wizInputs = {
+    'wiz-ssh-target': 'ssh_target', 'wiz-host-id': 'host_id', 'wiz-expected-host': 'expected_host',
+    'wiz-expected-user': 'expected_user', 'wiz-sim-exe': 'simulator_executable',
+    'wiz-queue': 'queue', 'wiz-partition': 'partition', 'wiz-remote-root': 'remote_root',
+    'wiz-custom-netlist': 'custom_netlist',
+  };
+  if (wizInputs[event.target.id]) wizardDraft[wizInputs[event.target.id]] = event.target.value;
   if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
   if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
@@ -2068,6 +2268,18 @@ document.addEventListener('change', event => {
   if (event.target.id === 'wf-worst-signal') directState.wfWorstSignal = event.target.value;
   if (event.target.id === 'batch-kind') { batchDraft.kind = event.target.value; render(); }
   if (event.target.id === 'batch-metric-select') { directState.batchMetric = event.target.value; render(); }
+  if (event.target.id === 'wiz-alias-pick') {
+    const picked = (wizardState.status?.ssh_aliases || []).find(a => a.alias === event.target.value);
+    if (picked) { applySshAliasToDraft(picked); render(); }
+  }
+  if (event.target.id === 'wiz-simulator') {
+    wizardDraft.simulator = event.target.value;
+    wizardDraft.template_id = event.target.value === 'ngspice' ? 'ngspice_rc_smoke' : 'spectre_rc_smoke';
+    render();
+  }
+  if (event.target.id === 'wiz-target-host') wizardDraft.selected_host_id = event.target.value;
+  if (event.target.id === 'wiz-backend') { wizardDraft.backend = event.target.value; render(); }
+  if (event.target.id === 'wiz-template') { wizardDraft.template_id = event.target.value; render(); }
   if (event.target.id === 'direct-netlist-file' && event.target.files?.[0]) {
     const reader = new FileReader();
     reader.onload = () => {
@@ -2252,6 +2464,36 @@ document.addEventListener('submit', async event => {
 });
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'wizard-host-form') {
+    event.preventDefault();
+    if (!isPublicDemo()) await submitWizardHost(false);
+    return;
+  }
+  if (event.target.id === 'wizard-first-sim-form') {
+    event.preventDefault();
+    if (isPublicDemo() || wizardState.busy) return;
+    const hostId = wizardDraft.selected_host_id || (wizardState.status?.workspace?.hosts?.[0]?.host_id) || '';
+    if (!hostId) { toast('请先在第 2 步登记至少一台 EDA 服务器。'); return; }
+    wizardState.busy = true; wizardState.error = null; render();
+    try {
+      const payload = {
+        host_id: hostId,
+        simulator: wizardDraft.template_id === 'ngspice_rc_smoke' ? 'ngspice' : wizardDraft.simulator || 'spectre',
+        backend: wizardDraft.backend || 'ssh_direct',
+        remote_python: wizardDraft.remote_python.trim() || '/usr/bin/python3',
+        remote_root: wizardDraft.remote_root.trim() || '.spiceowl-runs',
+      };
+      if (wizardDraft.template_id === 'custom') payload.netlist_text = wizardDraft.custom_netlist;
+      else payload.template_id = wizardDraft.template_id;
+      if (payload.backend === 'lsf') payload.queue = wizardDraft.queue.trim();
+      if (payload.backend === 'slurm') payload.partition = wizardDraft.partition.trim();
+      wizardState.firstSim = await api('/api/wizard/first-sim', {method: 'POST', body: payload});
+      directState.selectedId = wizardState.firstSim.run.run_id;
+      toast(`首个仿真计划 ${wizardState.firstSim.run.run_id} 已冻结！现在点击第 4 步「① 上传输入」即可开始运行。`);
+    } catch (error) { wizardState.error = error.message; toast(error.message); }
+    finally { wizardState.busy = false; await refreshWizard(); }
+    return;
+  }
   if (event.target.id !== 'direct-batch-form') return;
   event.preventDefault();
   if (isPublicDemo() || directState.batchBusy) return;

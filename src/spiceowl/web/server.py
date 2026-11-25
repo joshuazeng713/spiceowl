@@ -315,6 +315,67 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     recovery_policy=payload.get("recovery_policy"),
                 )
                 return self.reply({"run": run}, 201)
+            if path == "/api/wizard/status" and self.command == "GET":
+                from spiceowl.onboarding_wizard import diagnose_local_environment
+                return self.reply(diagnose_local_environment(
+                    controller.store.directory,
+                    hosts=controller.hosts,
+                    direct_manager=direct_manager,
+                    batch_manager=batch_manager,
+                ))
+            if path == "/api/wizard/demo" and self.command == "POST":
+                if self.body():
+                    raise DomainError("Wizard demo bootstrap takes an empty object.")
+                from spiceowl.onboarding_wizard import bootstrap_vivid_demo
+                return self.reply(bootstrap_vivid_demo(controller, direct_manager, batch_manager), 201)
+            if path == "/api/wizard/register-host" and self.command == "POST":
+                from spiceowl.onboarding_wizard import quick_register_eda_host
+                req = self.body()
+                allowed = {
+                    "host_id", "label", "ssh_target", "expected_host", "expected_user",
+                    "simulator", "simulator_executable", "ssh_hostname", "probe",
+                }
+                required = {"host_id", "ssh_target", "expected_host", "expected_user"}
+                if set(req) - allowed or not required <= set(req):
+                    raise DomainError("Host registration requires host_id, ssh_target, expected_host, and expected_user.")
+                if "probe" in req and type(req["probe"]) is not bool:
+                    raise DomainError("probe must be boolean.")
+                host, created = quick_register_eda_host(
+                    controller.hosts,
+                    host_id=req["host_id"],
+                    label=req.get("label") or req["host_id"],
+                    ssh_target=req["ssh_target"],
+                    expected_host=req["expected_host"],
+                    expected_user=req["expected_user"],
+                    simulator=req.get("simulator", "spectre"),
+                    simulator_executable=req.get("simulator_executable"),
+                    ssh_hostname=req.get("ssh_hostname"),
+                )
+                probe_res = controller.hosts.probe(host["host_id"]) if req.get("probe") else None
+                return self.reply({"host": controller.hosts.inspect(host["host_id"]), "created": created, "probe": probe_res}, 201 if created else 200)
+            if path == "/api/wizard/first-sim" and self.command == "POST":
+                from spiceowl.onboarding_wizard import prepare_first_simulation
+                req = self.body(max_bytes=1024 * 1024 + 65536)
+                allowed = {
+                    "host_id", "simulator", "backend", "template_id", "netlist_text",
+                    "run_key", "queue", "partition", "remote_python", "remote_root", "output_format",
+                }
+                if set(req) - allowed or "host_id" not in req:
+                    raise DomainError("First simulation setup requires host_id and supported template parameters only.")
+                return self.reply(prepare_first_simulation(
+                    direct_manager,
+                    host_id=req["host_id"],
+                    simulator=req.get("simulator", "spectre"),
+                    backend=req.get("backend", "ssh_direct"),
+                    template_id=req.get("template_id"),
+                    netlist_text=req.get("netlist_text"),
+                    run_key=req.get("run_key"),
+                    queue=req.get("queue"),
+                    partition=req.get("partition"),
+                    remote_python=req.get("remote_python", "/usr/bin/python3"),
+                    remote_root=req.get("remote_root", ".spiceowl-runs"),
+                    output_format=req.get("output_format"),
+                ), 201)
             if path == "/api/direct/batches" and self.command == "GET":
                 return self.reply({"batches": batch_manager.list()})
             if path == "/api/direct/batches/demo" and self.command == "POST":

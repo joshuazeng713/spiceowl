@@ -179,8 +179,12 @@ class ReadApiTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), before_mode)
         self.assertEqual(sorted(path.name for path in self.directory.iterdir()), before_files)
-        with connect(self.path) as db:
-            self.assertEqual(db.execute('SELECT status FROM turns WHERE turn_id=?', ('pending-turn',)).fetchone()[0], 'running')
+        db = connect(self.path)
+        try:
+            with db:
+                self.assertEqual(db.execute('SELECT status FROM turns WHERE turn_id=?', ('pending-turn',)).fetchone()[0], 'running')
+        finally:
+            db.close()
 
     def test_existing_redaction_event_resource_and_ic_evidence_bounds_are_preserved(self):
         with patch.object(read_api, 'utcnow', return_value=READ_AT):
@@ -210,16 +214,20 @@ class ReadApiTests(unittest.TestCase):
         self.assertFalse(results['get_ic_run']['simulation_actions'])
 
     def test_every_stored_list_retains_the_fixed_record_bound(self):
-        with sqlite3.connect(self.path) as db:
-            originals = db.execute('SELECT kind,body FROM records WHERE id IN (?,?,?,?,?)',
-                ('synthetic-run', 'fake-connection', 'synthetic-host', GATEWAY, NATIVE_RUN)).fetchall()
-            for kind, body in originals:
-                for i in range(MAX_RECORDS + 2):
-                    row = json.loads(body); identifier = 'extra-%d' % i
-                    field = {'run': 'run_id', 'connection': 'connection_id', 'host': 'host_id',
-                             'ic_gateway': 'id', 'ic_run:' + GATEWAY: 'run_id'}[kind]
-                    row[field] = identifier
-                    db.execute('INSERT INTO records VALUES (?,?,?)', (kind, identifier, json.dumps(row)))
+        db = sqlite3.connect(self.path)
+        try:
+            with db:
+                originals = db.execute('SELECT kind,body FROM records WHERE id IN (?,?,?,?,?)',
+                    ('synthetic-run', 'fake-connection', 'synthetic-host', GATEWAY, NATIVE_RUN)).fetchall()
+                for kind, body in originals:
+                    for i in range(MAX_RECORDS + 2):
+                        row = json.loads(body); identifier = 'extra-%d' % i
+                        field = {'run': 'run_id', 'connection': 'connection_id', 'host': 'host_id',
+                                 'ic_gateway': 'id', 'ic_run:' + GATEWAY: 'run_id'}[kind]
+                        row[field] = identifier
+                        db.execute('INSERT INTO records VALUES (?,?,?)', (kind, identifier, json.dumps(row)))
+        finally:
+            db.close()
         views = read_api.open_read_views(self.directory)
         for method, args, key in [('list_runs', (), 'runs'), ('list_connections', (), 'connections'),
                                   ('list_hosts', (), 'hosts'), ('list_ic_gateways', (), 'gateways'),

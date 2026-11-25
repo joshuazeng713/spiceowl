@@ -236,8 +236,8 @@ class LocalExchangeTests(unittest.TestCase):
             request = json.loads(base64.b64decode(command[-1]))
             nonce = request["nonce"]
             payload = {"ok": True, "data": {"manifest_sha256": plan()["manifest_sha256"], "state": "staged"}}
-            out = "startup warning\n__SPICEOWL_SMOKE_%s_BEGIN__\n%s\n__SPICEOWL_SMOKE_%s_END__\n" % (nonce, json.dumps(payload), nonce)
-            return REAL_POPEN([sys.executable, "-c", "import sys;sys.stdout.write(" + repr(out) + ")"], **kwargs)
+            out = ("startup warning\n__SPICEOWL_SMOKE_%s_BEGIN__\n%s\n__SPICEOWL_SMOKE_%s_END__\n" % (nonce, json.dumps(payload), nonce)).encode("utf-8")
+            return REAL_POPEN([sys.executable, "-c", "import sys;sys.stdout.buffer.write(" + repr(out) + ")"], **kwargs)
         with patch.object(smoke.subprocess, "Popen", side_effect=peer):
             result = smoke.stage(plan())
         self.assertEqual(result["state"], "staged")

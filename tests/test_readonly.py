@@ -147,9 +147,13 @@ class ReadStoreTests(unittest.TestCase):
         other = Path(self.temp.name) / "other"
         other.mkdir()
         path = other / "spiceowl.sqlite3"
-        with sqlite3.connect(path) as db:
-            db.execute("CREATE TABLE wrong (value)")
-            db.execute("PRAGMA user_version=1")
+        db = sqlite3.connect(path)
+        try:
+            with db:
+                db.execute("CREATE TABLE wrong (value)")
+                db.execute("PRAGMA user_version=1")
+        finally:
+            db.close()
         with self.assertRaises(DomainError) as error:
             ReadStore(other)
         self.assertEqual(error.exception.code, "storage_invalid")

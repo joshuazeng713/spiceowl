@@ -359,7 +359,8 @@ class OnboardingEnvironmentTests(unittest.TestCase):
 
     def test_observed_shell_syntax_is_classified_without_evaluation(self):
         namespace = {'__name__': 'synthetic_scanner'}
-        exec(compile(REMOTE_PYTHON, '<fixed observer>', 'exec'), namespace)
+        with patch.dict(sys.modules, {'pwd': types.SimpleNamespace()}):
+            exec(compile(REMOTE_PYTHON, '<fixed observer>', 'exec'), namespace)
         classify = namespace['setup_shell']
         for path, body, kind in (('/synthetic/setup.csh', 'setenv PATH /synthetic/bin', 'csh'),
                                   ('/synthetic/custom', 'setenv CDS_INST_DIR /synthetic/tool', 'csh'),
@@ -522,7 +523,7 @@ class OnboardingEnvironmentTests(unittest.TestCase):
                 self.assertNotIn('touch', json.dumps(private['platform']))
 
     def test_platform_presentation_never_substitutes_local_values_or_private_identity_text(self):
-        with patch('os.uname', side_effect=AssertionError('Do not inspect the client platform')):
+        with patch('os.uname', side_effect=AssertionError('Do not inspect the client platform'), create=True):
             unknown = public_platform(None)
             self.assertIsNone(unknown['system']); self.assertIsNone(unknown['machine'])
             values = {'system': 'Linux', 'machine': 'SYNTHETIC_PRIVATE_VALUE',

@@ -1,6 +1,16 @@
 # Tests and validation plan
 
-Run `PYTHONPATH=src python3 -m unittest discover -s tests` with Python 3.11+. Tests cover fake connections, strict evidence/proposals, acceptance, synthetic replay, SQLite service recovery, loopback HTTP, bounded SSH peer failures, private profile import and read-only storage. Install `.[mcp]` to include actual stdio SDK handshake/tool-call tests. Temporary local data is isolated per test. No credentials, provider inference requests, real SSH hosts or real simulations are used.
+Run the one-command cross-platform test workflow on **macOS, Linux, or Windows**:
+
+```bash
+# macOS / Linux
+python3 scripts/run_full_tests.py
+
+# Windows (PowerShell)
+py -3 scripts\run_full_tests.py
+```
+
+Or run the Python unit test suite directly with `PYTHONPATH=src python3 -m unittest discover -s tests` (Python 3.11+). Tests cover cross-platform primitives and the AST POSIX guardrail (`test_cross_platform.py`), fake connections, strict evidence/proposals, acceptance, synthetic replay, SQLite service recovery, loopback HTTP, bounded SSH peer failures, private profile import, Direct SSH/LSF/Slurm execution, M4 bounded recovery & searchable reports, `RuntimeMonitor`, Codex bridge, standalone/embedded Agent workflows, PDK discovery/LUT/scope, Verilog-A, experiment recipes/measurement, Spectre diagnostics/reports, and read-only storage. Install `.[mcp]` and `.[adctools]` to include stdio MCP protocol and numerical ADCToolbox tests. Temporary local data is isolated per test. No credentials, provider inference requests, real SSH hosts or real simulations are used. See [cross-platform support and maintenance](../docs/cross-platform.md) for the GitHub Actions macOS/Windows/Linux CI matrix and compatibility rules.
 
 Browser verification covers connection creation/probing, the host page and explicit probe controls, manual run replay, diagnostic events, persisted-session reload, escaped content and narrow layouts. The [local guide](../docs/local-console.md) records the implemented scope.
 

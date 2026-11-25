@@ -102,9 +102,15 @@ class CodexBridgeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.exe = self.root / 'fake-codex'
-        self.exe.write_text('#!' + sys.executable + '\n' + FAKE_PROCESS)
-        self.exe.chmod(0o700)
+        if os.name == 'nt':
+            script = self.root / 'fake_codex.py'
+            script.write_text(FAKE_PROCESS, encoding='utf-8')
+            self.exe = self.root / 'fake-codex.cmd'
+            self.exe.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding='utf-8')
+        else:
+            self.exe = self.root / 'fake-codex'
+            self.exe.write_text('#!' + sys.executable + '\n' + FAKE_PROCESS)
+            self.exe.chmod(0o700)
         self.bridges = []
         self.dispatched = []
 
@@ -396,7 +402,8 @@ class CodexBridgeTests(unittest.TestCase):
         bridge=self.bridge();self.ready(bridge)
         with self.assertRaises(BridgeError) as caught:CodexBridge(bridge.directory)
         self.assertEqual('codex_session_busy',caught.exception.code)
-        self.assertEqual(0o600,os.stat(bridge.directory/'codex-bridge.json').st_mode & 0o777)
+        if os.name != 'nt':
+            self.assertEqual(0o600,os.stat(bridge.directory/'codex-bridge.json').st_mode & 0o777)
 
     def test_bounded_events_have_explicit_gap_and_no_pagination_skip(self):
         bridge=self.bridge()

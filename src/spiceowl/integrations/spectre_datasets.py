@@ -200,7 +200,7 @@ def parse_psf_analysis(text, *, analysis_kind, analysis_name=None):
     sections,digest=_sections(text);header,duplicates=_header(sections['HEADER']);types=_types(sections['TYPE'])
     native_type=header.get('analysis type');native_name=header.get('analysis name')
     expected=(native_type=='ac' if analysis_kind=='ac' else native_type=='dc' if analysis_kind=='dc'
-              else native_type in ('info','dcOp') and header.get('AnalysisType','dcOp' if native_type=='dcOp' else None)=='dcOp')
+              else native_type in ('info','dcOp') and header.get('AnalysisType','dcOp' if native_type=='dcOp' else None) in ('dcOp','dc_op','dc'))
     if not expected or not isinstance(native_name,str) or not native_name or analysis_name is not None and native_name!=analysis_name:
         raise PsfError('Native analysis identity does not match the requested dataset.','psf_identity')
     dataset={'schema':SCHEMA,'format':'psf_ascii','raw_sha256':digest,

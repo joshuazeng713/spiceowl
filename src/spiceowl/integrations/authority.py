@@ -8,6 +8,8 @@ import re
 import stat
 import time
 
+from spiceowl._platform import is_owner_private_file
+
 CALLERS = {'paired-helper', 'native-agent', 'spiceowl-local'}
 
 
@@ -16,7 +18,7 @@ def load_key(path):
         raise PermissionError('A private operator authority key is required')
     value = Path(path)
     metadata = value.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid not in (0, os.getuid()) or metadata.st_mode & 0o077:
+    if not is_owner_private_file(metadata, allow_root=True):
         raise PermissionError('Simulation authority key must be an owner-private regular file')
     raw = value.read_bytes()
     if not 32 <= len(raw) <= 128:

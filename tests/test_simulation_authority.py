@@ -1,3 +1,4 @@
+import os
 import tempfile
 from pathlib import Path
 import unittest
@@ -16,9 +17,11 @@ class AuthorityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'key';path.write_bytes(b'x'*32);path.chmod(0o600)
             self.assertEqual(load_key(path),b'x'*32)
-            path.chmod(0o644)
-            with self.assertRaises(PermissionError):load_key(path)
-            path.chmod(0o600);path.write_bytes(b'x')
+            if os.name != 'nt':
+                path.chmod(0o644)
+                with self.assertRaises(PermissionError):load_key(path)
+                path.chmod(0o600)
+            path.write_bytes(b'x')
             with self.assertRaises(PermissionError):load_key(path)
             link=Path(d)/'link';link.symlink_to(path)
             with self.assertRaises(PermissionError):load_key(link)

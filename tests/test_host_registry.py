@@ -91,8 +91,14 @@ class HostRegistryTests(unittest.TestCase):
     def test_probe_respects_another_process_lock(self):
         self.registry.add(profile())
         lock_path = str(Path(self.temp.name) / ".host-probe-test-host.lock")
-        code = "import fcntl,sys; f=open(sys.argv[1],'a+'); fcntl.flock(f,fcntl.LOCK_EX); print('locked',flush=True); sys.stdin.read(1)"
-        process = subprocess.Popen([sys.executable, "-c", code, lock_path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        src_root = str(Path(__file__).resolve().parents[1] / "src")
+        code = (
+            "import sys; sys.path.insert(0, sys.argv[2]); "
+            "from spiceowl._platform import lock_file, unlock_file; "
+            "f=open(sys.argv[1],'a+'); lock_file(f, nonblocking=False); "
+            "print('locked',flush=True); sys.stdin.read(1); unlock_file(f); f.close()"
+        )
+        process = subprocess.Popen([sys.executable, "-c", code, lock_path, src_root], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         try:
             self.assertEqual(process.stdout.readline().strip(), "locked")
             with patch("spiceowl.adapters.hosts.probe_host") as probe:

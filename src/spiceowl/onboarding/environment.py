@@ -15,11 +15,17 @@ import os
 from pathlib import Path
 import re
 import secrets
-import selectors
-import signal
 import subprocess
 import time
 
+from spiceowl._platform import (
+    BoundedIOError,
+    communicate_bounded,
+    popen_isolation_kwargs,
+    resolve_ssh_executable,
+    ssh_client_options,
+    terminate_process_tree,
+)
 from spiceowl.adapters.executors.ssh import _SSH_OPTIONS, _SSH_ERROR_MESSAGES, _StderrHints
 from spiceowl.domain.common import DomainError, utcnow
 from .ssh_discovery import config_path, discover_ssh_hosts, validate_ssh_target
@@ -523,42 +529,30 @@ class ProbeReply:
 
 def _transport(argv, script, *, timeout=PROBE_TIMEOUT, max_output=MAX_OUTPUT_BYTES):
     deadline = time.monotonic() + timeout
-    output, total, hints = bytearray(), 0, _StderrHints()
+    output, hints = bytearray(), _StderrHints()
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        shell=False, start_new_session=True, close_fds=True, env={**os.environ, 'LC_ALL': 'C', 'LANG': 'C'})
-    pending = memoryview(script.encode('utf-8'))
+        shell=False, close_fds=True, env={**os.environ, 'LC_ALL': 'C', 'LANG': 'C'},
+        **popen_isolation_kwargs())
     try:
-        with selectors.DefaultSelector() as selector:
-            for stream, kind in ((process.stdout, 'out'), (process.stderr, 'err')):
-                selector.register(stream, selectors.EVENT_READ, kind)
-            selector.register(process.stdin, selectors.EVENT_WRITE, 'in')
-            while selector.get_map():
-                left = deadline-time.monotonic()
-                if left <= 0:
-                    raise DomainError('Selected-server observation reached its deadline.', 'environment_probe_timeout')
-                for key, _ in selector.select(left):
-                    if key.data == 'in':
-                        try: count = os.write(key.fileobj.fileno(), pending[:4096])
-                        except BrokenPipeError: count = len(pending)
-                        pending = pending[count:]
-                        if not pending: selector.unregister(key.fileobj); key.fileobj.close()
-                        continue
-                    chunk = os.read(key.fileobj.fileno(), min(8192, max_output-total+1))
-                    if not chunk: selector.unregister(key.fileobj); continue
-                    total += len(chunk)
-                    if total > max_output:
-                        raise DomainError('Selected-server observation exceeded its output budget.', 'environment_probe_output_limit')
-                    if key.data == 'out': output.extend(chunk)
-                    else: hints.feed(chunk)
-            status = process.wait(timeout=max(.001, deadline-time.monotonic()))
+        status = communicate_bounded(
+            process,
+            deadline=deadline,
+            max_output_bytes=max_output,
+            stdin_bytes=script.encode('utf-8'),
+            on_stdout=output.extend,
+            on_stderr=hints.feed,
+            chunk_size=8192,
+        )
         return ProbeReply(status, bytes(output), hints.category() if status else None)
+    except BoundedIOError as error:
+        if error.kind == 'output_limit':
+            raise DomainError('Selected-server observation exceeded its output budget.', 'environment_probe_output_limit') from None
+        raise DomainError('Selected-server observation reached its deadline.', 'environment_probe_timeout') from None
     except subprocess.TimeoutExpired:
         raise DomainError('Selected-server observation reached its deadline.', 'environment_probe_timeout') from None
     finally:
         if process.poll() is None:
-            try: os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError: pass
-            process.wait()
+            terminate_process_tree(process, force=True, grace_timeout=1.0)
         for stream in (process.stdin, process.stdout, process.stderr):
             if not stream.closed: stream.close()
 
@@ -765,8 +759,9 @@ def capture_server_environment(alias, ssh_config_path, *, transport=None, user_h
     discovery = discover_ssh_hosts(path, user_home=user_home)
     discovered = alias in {row['alias'] for row in discovery['hosts']}
     nonce = secrets.token_hex(16)
-    argv = ['/usr/bin/ssh', '-T', '-F', str(path)]
-    for option in (*_SSH_OPTIONS, 'StdinNull=no'):
+    ssh_exe = resolve_ssh_executable()
+    argv = [ssh_exe, '-T', '-F', str(path)]
+    for option in (*ssh_client_options(_SSH_OPTIONS, executable=ssh_exe), 'StdinNull=no'):
         argv.extend(('-o', option))
     argv.extend(('--', alias, '/bin/sh -s'))
     try:
@@ -851,8 +846,9 @@ def activate_observed_environment(target, ssh_config_path, capture, setup_source
         nonce = secrets.token_hex(16)
         selected_input = {'source_id': setup_source_id, 'path': source_path, 'sha256': expected_hash,
             'identity': {key: identity[key] for key in ('hostname', 'username', 'uid')}}
-        argv = ['/usr/bin/ssh', '-T', '-F', str(path)]
-        for option in (*_SSH_OPTIONS, 'StdinNull=no'): argv.extend(('-o', option))
+        ssh_exe = resolve_ssh_executable()
+        argv = [ssh_exe, '-T', '-F', str(path)]
+        for option in (*ssh_client_options(_SSH_OPTIONS, executable=ssh_exe), 'StdinNull=no'): argv.extend(('-o', option))
         argv.extend(('--', target, '/bin/sh -s'))
         attempted = True
         reply = (transport or _transport)(argv, _build_setup_probe(nonce, selected_input),

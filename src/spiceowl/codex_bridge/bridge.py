@@ -6,7 +6,6 @@ the host; they have no route to the bridge's human decision methods.
 """
 
 import copy
-import fcntl
 import hashlib
 import json
 import math
@@ -19,6 +18,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from .._platform import fsync_dir, lock_file, open_lock_nofollow, unlock_file
 from ..domain.common import DomainError, utcnow
 from .transport import BridgeError, StdioTransport, encode
 
@@ -133,9 +133,9 @@ class CodexBridge:
             self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             lock_path = self.directory / 'codex-bridge.lock'
             try:
-                descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                descriptor = open_lock_nofollow(lock_path, 0o600)
                 self.file_lock = os.fdopen(descriptor, 'a+')
-                fcntl.flock(self.file_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(self.file_lock, nonblocking=True)
             except OSError:
                 if self.file_lock:
                     self.file_lock.close()
@@ -143,6 +143,7 @@ class CodexBridge:
             try:
                 self._restore()
             except Exception:
+                unlock_file(self.file_lock)
                 self.file_lock.close()
                 raise
 
@@ -207,11 +208,7 @@ class CodexBridge:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp, self.directory / 'codex-bridge.json')
-            directory_fd = os.open(self.directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            fsync_dir(self.directory)
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)
@@ -748,4 +745,5 @@ class CodexBridge:
             self.disconnect()
         self.closed = True
         if self.file_lock:
+            unlock_file(self.file_lock)
             self.file_lock.close()

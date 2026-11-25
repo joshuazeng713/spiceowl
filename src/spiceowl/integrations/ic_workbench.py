@@ -7,7 +7,7 @@ submits work, collects artifacts, follows redirects, or retries a failed read.
 from contextlib import contextmanager
 import copy
 from datetime import datetime
-import fcntl
+from spiceowl._platform import lock_file, unlock_file
 import http.client
 import json
 import math
@@ -403,13 +403,13 @@ class ICGatewayBackend:
         path = self.store.directory / (".ic-gateway-" + require_id(gateway_id) + ".lock")
         with path.open("a+") as lock:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(lock, nonblocking=True)
             except BlockingIOError:
                 raise DomainError("A read of this IC gateway is already in progress.", "ic_gateway_busy") from None
             try:
                 yield
             finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+                unlock_file(lock)
 
     def _save_run(self, db, gateway_id, run, source_read_at, checked_at):
         kind = self._run_kind(gateway_id)

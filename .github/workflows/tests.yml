@@ -1,20 +1,35 @@
-name: Connectivity and offline tests
+name: Cross-platform automated test workflow
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Core suite (${{ matrix.os }} / py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.11', '3.12', '3.13']
+        include:
+          - os: ubuntu-latest
+            python: '3.11'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: ubuntu-latest
+            python: '3.13'
+          - os: macos-latest
+            python: '3.12'
+          - os: windows-latest
+            python: '3.12'
+    env:
+      PYTHONUTF8: '1'
+      MPLBACKEND: Agg
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,33 +39,85 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install the local package
         run: python -m pip install --no-deps .
-      - name: Test the installed distribution
+      - name: Verify cross-platform primitives and AST POSIX guardrail
+        run: python -m unittest tests.test_cross_platform -v
+      - name: Run full offline Python test suite
         run: python -m unittest discover -s tests
-      - name: Check CLI and bundled browser assets
+      - name: Verify CLI, packaged web assets, and loopback console smoke
+        shell: bash
         run: |
           spiceowl --version
-          python -c "from importlib.resources import files; root=files('spiceowl.web').joinpath('static'); assert all(root.joinpath(n).is_file() for n in ('index.html','app.js','app.css','owl.svg'))"
+          python - <<'PY'
+          import json, tempfile, threading
+          from importlib.resources import files
+          from urllib.request import urlopen
+          from spiceowl.service import Controller
+          from spiceowl.web.server import make_server
+
+          root = files('spiceowl.web').joinpath('static')
+          assert all(root.joinpath(n).is_file() for n in ('index.html', 'app.js', 'app.css', 'owl.svg'))
+          with tempfile.TemporaryDirectory(prefix='spiceowl-ci-smoke-') as temp:
+              app = Controller(temp, agent_mode='standalone')
+              try:
+                  app.seed_demo()
+                  srv = make_server(app, port=0)
+                  t = threading.Thread(target=srv.serve_forever, daemon=True)
+                  t.start()
+                  try:
+                      base = f'http://127.0.0.1:{srv.server_address[1]}'
+                      for path in ('/', '/api/state', '/api/direct/runs', '/api/direct/recovery-reports'):
+                          with urlopen(base + path, timeout=5) as resp:
+                              assert resp.status == 200, (path, resp.status)
+                  finally:
+                      srv.shutdown()
+                      srv.server_close()
+              finally:
+                  app.close()
+          print('Loopback console smoke passed.')
+          PY
           git diff --check
 
   ui:
-    runs-on: ubuntu-latest
+    name: Frontend & demo pages (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Test offline host configuration and Agent channel
+      - name: Test offline host configuration, Agent channel, and workflow page
+        shell: bash
         run: |
           node tests/ui-host-onboarding.mjs
           node tests/ui-agent-channel.mjs
           node tests/workflow-page.mjs
+      - name: Build and verify static demo pages
+        shell: bash
+        run: |
+          python -m pip install --no-deps .
+          python scripts/build_pages.py --output dist/pages
+          node tests/pages-demo.mjs dist/pages
 
   mcp:
-    runs-on: ubuntu-latest
+    name: Optional MCP stdio protocol (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,13 +128,19 @@ jobs:
       - name: Install optional MCP SDK and local package
         run: python -m pip install '.[mcp]'
       - name: Test real stdio MCP protocol against local fixtures
-        run: python -m unittest discover -s tests
+        run: python -m unittest discover -s tests -p test_mcp.py -v
 
   adctools:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Numerical ADCTools extra (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       MPLBACKEND: Agg
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,12 +149,13 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install numerical extra and verify dependency consistency
+        shell: bash
         run: |
           python -m pip install '.[adctools]'
           python -m pip check
           python -VV
-          python -m pip freeze --all
       - name: Run actual numerical and pinned upstream tests without skips
+        shell: bash
         run: |
           python - <<'PY'
           import importlib.metadata
@@ -98,8 +172,16 @@ jobs:
           spiceowl-adctools --help
 
   developer-setup:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Developer setup & full runner (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      MPLBACKEND: Agg
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,10 +189,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Set up the pinned editable developer environment
         run: python scripts/setup_dev.py --no-python-download
-      - name: Recheck without installation and verify repository links
+      - name: Recheck setup, links, and run one-command full verification
+        shell: bash
         run: |
           python scripts/setup_dev.py --check-only
-          .venv/bin/python scripts/check_links.py
-          .venv/bin/python -m unittest tests.test_dev_setup
+          if [ -x ".venv/Scripts/python.exe" ]; then
+            VENV_PY=".venv/Scripts/python.exe"
+          else
+            VENV_PY=".venv/bin/python"
+          fi
+          "$VENV_PY" scripts/run_full_tests.py --quick --require-extras --require-node --report .spiceowl/test-report.json
+      - name: Upload cross-platform test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ matrix.os }}
+          path: .spiceowl/test-report.json
+          if-no-files-found: warn

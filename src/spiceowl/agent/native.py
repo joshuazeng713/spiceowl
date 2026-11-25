@@ -84,7 +84,7 @@ def validate_agent_profile(data):
         raise DomainError("Agent label must be 1 to 80 printable characters.", "invalid_agent_profile")
     executable = data["executable"]
     if (not isinstance(executable, str) or len(executable) > 4096 or not executable.isprintable()
-            or not Path(executable).is_absolute() or Path(executable).name not in ("codex", "codex.exe")
+            or not Path(executable).is_absolute() or Path(executable).name.lower() not in ("codex", "codex.exe", "codex.cmd")
             or "://" in executable):
         raise DomainError("Select an absolute path to the installed Codex binary.", "invalid_agent_profile")
     if data["model"] is not None and _identifier(data["model"]) is None:
@@ -94,13 +94,14 @@ def validate_agent_profile(data):
 
 @contextmanager
 def _workspace(workspace):
+    from spiceowl._platform import is_owner_private_dir
     try:
         base = Path(workspace)
         if not base.is_absolute():
             raise ValueError("relative")
         base = base.resolve(strict=True)
         info = base.stat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        if not is_owner_private_dir(info):
             raise ValueError("untrusted scratch")
     except (TypeError, ValueError, OSError, RuntimeError):
         raise DomainError("Select an existing operator-owned scratch directory without shared write access.", "invalid_workspace") from None

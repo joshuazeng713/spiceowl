@@ -1,10 +1,10 @@
 """Single-owner simulation controller, shared by the CLI and local web console."""
 
 from concurrent.futures import ThreadPoolExecutor
-import fcntl
 import threading
 
 from spiceowl import __version__
+from spiceowl._platform import lock_file, unlock_file
 from spiceowl.agent_channel import agent_channel_error, agent_channel_info, normalize_agent_mode
 from spiceowl.domain.common import DomainError, digest, require_id, utcnow
 from spiceowl.storage.sqlite import Store
@@ -22,7 +22,7 @@ class Controller:
         self.store = Store(directory)
         self._lock = (self.store.directory / ".controller.lock").open("a+")
         try:
-            fcntl.flock(self._lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(self._lock, nonblocking=True)
         except BlockingIOError:
             self._lock.close()
             raise DomainError("A controller already owns this state directory. Use its web console or choose a separate --data-dir.", "controller_busy") from None
@@ -41,7 +41,7 @@ class Controller:
         if self.codex is not None:
             self.codex.close()
         self._workers.shutdown(wait=True)
-        fcntl.flock(self._lock, fcntl.LOCK_UN)
+        unlock_file(self._lock)
         self._lock.close()
 
     def __enter__(self):

@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from spiceowl._platform import popen_isolation_kwargs, resolve_ssh_executable
 from spiceowl.adapters.hosts import probe_host, validate_host_profile
 from spiceowl.adapters.executors import ssh
 from spiceowl.adapters.simulators.probes import parse_version, version_arguments
@@ -210,11 +211,12 @@ class SSHProbeTests(unittest.TestCase):
         self.assertEqual(len(peer.calls), 3)
         self.assertNotIn("/opt/example", peer.calls[0][0][-1])
         for argv, kwargs in peer.calls:
-            self.assertEqual(argv[0], "/usr/bin/ssh")
+            self.assertEqual(argv[0], resolve_ssh_executable())
             self.assertEqual(argv[-3:-1], ["--", "example-route"])
             self.assertFalse(kwargs["shell"])
             self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
-            self.assertTrue(kwargs["start_new_session"])
+            for iso_key, iso_val in popen_isolation_kwargs().items():
+                self.assertEqual(kwargs.get(iso_key), iso_val)
             for option in ("BatchMode=yes", "StrictHostKeyChecking=yes", "ForwardAgent=no",
                            "PermitLocalCommand=no", "ControlMaster=no", "ControlPath=none",
                            "UpdateHostKeys=no", "AddKeysToAgent=no", "ConnectionAttempts=1",
@@ -537,6 +539,7 @@ class VersionAndShellTests(unittest.TestCase):
         script = script.replace("/usr/bin/id -un 2>/dev/null", f"printf %s {shlex.quote(user)}")
         return ssh._ssh_argv("example-route", script)[-1]
 
+    @unittest.skipUnless(Path("/bin/sh").is_file(), "Requires POSIX /bin/sh")
     def test_remote_shell_guard_precedes_version_invocation(self):
         for host, user, allowed in (("sim-host", "researcher", True),
                                     ("wrong-host", "researcher", False),

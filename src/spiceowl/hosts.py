@@ -3,7 +3,6 @@
 These operations never claim controller ownership or change a simulation run.
 """
 
-import fcntl
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -12,6 +11,7 @@ import re
 import threading
 import time
 
+from spiceowl._platform import lock_file, unlock_file
 from spiceowl.domain.common import DomainError, digest, require_id, utcnow
 from spiceowl.domain.connectivity import resource_summary, summary_error as _summary_error
 from spiceowl.storage.sqlite import Store
@@ -163,10 +163,13 @@ class HostRegistry:
             # Never remove this lock file: replacing its inode defeats flock.
             with (self.store.directory / f".host-probe-{host_id}.lock").open("a+") as lock:
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_file(lock, nonblocking=True)
                 except BlockingIOError:
                     raise DomainError("This host already has a probe in progress. Wait for its result.", "busy") from None
-                yield profile_from_record(self.inspect(host_id))
+                try:
+                    yield profile_from_record(self.inspect(host_id))
+                finally:
+                    unlock_file(lock)
         finally:
             self._slots.release()
 
@@ -213,11 +216,14 @@ class HostRegistry:
                 return {"host_id": host_id, "error": {"code": "probe_unavailable", "message": "Host is busy or its local probe could not complete."}}
         with (self.store.directory / ".host-pool-scan.lock").open("a+") as lock:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(lock, nonblocking=True)
             except BlockingIOError:
                 raise DomainError("A pool scan is already running.", "busy") from None
-            with ThreadPoolExecutor(max_workers=2) as workers:
-                results = list(workers.map(scan_one, ids))
+            try:
+                with ThreadPoolExecutor(max_workers=2) as workers:
+                    results = list(workers.map(scan_one, ids))
+            finally:
+                unlock_file(lock)
         return {"started_at": started, "completed_at": utcnow(), "results": results,
                 "hosts": self.list(), "concurrency": 2, "simulation_actions": False}
 

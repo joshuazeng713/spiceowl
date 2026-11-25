@@ -12,11 +12,13 @@ Start with `.venv/bin/spiceowl serve --demo` and follow the printed localhost UR
 `python3 scripts/setup_dev.py --serve-demo` combines installation and startup.
 It starts no SSH connection, AI session, commercial simulator or real simulation.
 
-The launcher needs Python 3.9+ on macOS/Linux. The complete developer profile
+The launcher needs Python 3.9+ on macOS, Linux, or Windows. The complete developer profile
 uses Python 3.12/3.13. It reuses an available supported interpreter; otherwise it
 bootstraps pinned `uv==0.9.5` in a temporary environment and downloads Python
 3.12.12 into the ignored `.dev-tools/python` directory. Global Python packages
-and shell configuration are unchanged. On Windows use WSL. Application core
+and shell configuration are unchanged. On Windows, run `py -3 scripts\setup_dev.py`
+and start `.venv\Scripts\spiceowl.exe serve --demo` (WSL2 also works). See
+[cross-platform support](cross-platform.md) for OS compatibility details. Application core
 support for Python 3.11+ is unchanged.
 
 ## Pinned dependencies and self-check
@@ -55,6 +57,18 @@ rerun after resolving access. No automatic mirror or dependency substitution is
 used. `--check-only` performs no installation or interpreter download.
 
 ## Tests and link checking
+
+Run the one-command cross-platform test workflow (macOS, Linux, and Windows):
+
+```bash
+# macOS / Linux (full verification + JSON report in .spiceowl/test-report.json)
+.venv/bin/python scripts/run_full_tests.py
+
+# Windows (PowerShell)
+.venv\Scripts\python.exe scripts\run_full_tests.py
+```
+
+Or run individual checks directly:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests

@@ -18,12 +18,16 @@ import hashlib
 import json
 import os
 import re
-import selectors
 import secrets
-import signal
 import subprocess
 import time
 
+from spiceowl._platform import (
+    BoundedIOError,
+    communicate_bounded,
+    popen_isolation_kwargs,
+    terminate_process_tree,
+)
 from spiceowl.adapters.hosts import validate_host_profile
 from spiceowl.adapters.executors.ssh import _ssh_argv, _StderrHints, _SSH_ERROR_MESSAGES
 from spiceowl.domain.common import DomainError, require_id
@@ -552,31 +556,19 @@ def _exchange(profile, request):
     process = None
     stdout = bytearray()
     stderr = _StderrHints()
-    total = 0
     deadline = time.monotonic() + SSH_TIMEOUT_SECONDS
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   start_new_session=True, close_fds=True, env={**os.environ, "LC_ALL": "C", "LANG": "C"})
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ, "out")
-            selector.register(process.stderr, selectors.EVENT_READ, "err")
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise DomainError("The bounded SSH exchange timed out.", "smoke_transport_timeout")
-                for item, _ in selector.select(remaining):
-                    chunk = os.read(item.fileobj.fileno(), min(65536, MAX_REPLY_BYTES - total + 1))
-                    if not chunk:
-                        selector.unregister(item.fileobj)
-                        continue
-                    total += len(chunk)
-                    if total > MAX_REPLY_BYTES:
-                        raise DomainError("The SSH reply exceeded its size limit.", "smoke_reply_limit")
-                    if item.data == "out":
-                        stdout.extend(chunk)
-                    else:
-                        stderr.feed(chunk)
-        code = process.wait(timeout=max(0, deadline-time.monotonic()))
+                                   close_fds=True, env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+                                   **popen_isolation_kwargs())
+        code = communicate_bounded(
+            process,
+            deadline=deadline,
+            max_output_bytes=MAX_REPLY_BYTES,
+            on_stdout=stdout.extend,
+            on_stderr=stderr.feed,
+            chunk_size=65536,
+        )
         if code != 0:
             category = stderr.category() if code == 255 else None
             raise DomainError(_SSH_ERROR_MESSAGES.get(category, "The SSH exchange did not complete."), category or "smoke_transport_failed")
@@ -588,6 +580,10 @@ def _exchange(profile, request):
         return json.loads(payload.decode("ascii"))
     except DomainError:
         raise
+    except BoundedIOError as error:
+        if error.kind == "output_limit":
+            raise DomainError("The SSH reply exceeded its size limit.", "smoke_reply_limit") from None
+        raise DomainError("The bounded SSH exchange timed out.", "smoke_transport_timeout") from None
     except subprocess.TimeoutExpired:
         raise DomainError("The bounded SSH exchange timed out.", "smoke_transport_timeout") from None
     except (OSError, ValueError, UnicodeError):
@@ -595,11 +591,7 @@ def _exchange(profile, request):
     finally:
         if process is not None:
             if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
+                terminate_process_tree(process, force=True, grace_timeout=1.0)
             process.stdout.close()
             process.stderr.close()
 

@@ -39,6 +39,17 @@ The explicit mode selects one conversation owner: standalone SpiceOwl starts its
 
 Protocol/algorithm/browser tests use fake processes and synthetic results. They do not establish real inference or private circuit performance. Automatic unknown-turn recovery, solver restart and parameter repair remain unimplemented. Legacy P0.2/P0.3/ADR designs are historical context; the current dual-mode contract takes precedence.
 
+## Native direct execution backend (SSH Direct + LSF / Slurm) — implemented alpha slice
+
+- [x] Pure deterministic `prepare` freezing netlist, relative support files, include directories, license settings, and resource/scheduler limits (`spiceowl.adapters.executors.direct`).
+- [x] Three explicit backends over registered OpenSSH hosts: `ssh_direct` (Linux detached wrapper + `/proc` identity), `lsf` (`bsub`/`bjobs`/`bkill`), and `slurm` (`sbatch`/`squeue`/`sacct`/`scancel`, including run-bound `OUT_OF_MEMORY` evidence).
+- [x] Durable `DirectExecutionManager` implementing `RunnerProtocol` for `RuntimeMonitor` supervision, atomic once-only `launch-claim` fencing, verified-identity cancellation, bounded verified artifact collection, and five-dimensional `build_spectre_report` output.
+- [x] Standalone CLI (`spiceowl direct prepare|stage|launch|status|cancel|collect|report|watch|runs|inspect|lookup`) and opt-in standalone Agent tools (`spiceowl serve --enable-direct-exec`), without altering embedded CircuitGit mode.
+- [x] Web console `#direct` workflow (`/api/direct/*`), one-click host-placement handoff from `#hosts`, opt-in M4 bounded recovery (watch auto-resume on restart, license backoff retry, confirmed OOM memory scaling & host relocation), and searchable JSON + Markdown recovery reports.
+- [ ] Authorized live qualification on target Linux, LSF, and Slurm sites.
+
+See [direct execution](direct-execution.md). Offline tests verify transport framing, scheduler parsers, atomic launch claims, verified cancellation, and monitoring using synthetic fixtures; real cluster qualification remains site-specific.
+
 ## Standalone Spectre integration — implemented alpha slice
 
 - [x] Shared signed live client used by local CLI and web, with an explicit private project/host/caller grant.

@@ -13,6 +13,7 @@ import shlex
 import stat
 import time
 
+from spiceowl._platform import IS_WINDOWS, open_readonly_nofollow
 from spiceowl.domain.common import DomainError
 
 ALIAS = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,95}')
@@ -105,7 +106,7 @@ def discover_ssh_hosts(path, *, user_home=None):
         if attempts > MAX_READ_ATTEMPTS:
             warn('config_attempt_limit'); return
         try:
-            fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = open_readonly_nofollow(file)
             with os.fdopen(fd, 'rb') as stream:
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode):
@@ -126,7 +127,9 @@ def discover_ssh_hosts(path, *, user_home=None):
             if len(line) > 8192:
                 warn('config_line_limit'); continue
             try:
-                words = shlex.split(line, comments=True, posix=True)
+                words = shlex.split(line, comments=True, posix=not IS_WINDOWS)
+                if IS_WINDOWS:
+                    words = [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in ('"', "'") else w for w in words]
             except ValueError:
                 warn('config_syntax_unknown'); continue
             if not words:

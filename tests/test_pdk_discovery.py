@@ -428,18 +428,18 @@ class PdkDiscoveryTests(unittest.TestCase):
         self.assertTrue(all(m["confidence"] == "verified" for m in candidate["models"]))
 
     def test_optional_recommendation_metadata_never_displaces_fitting_model_contracts(self):
-        sections = ''.join('section C%03d\nendsection C%03d\n' % (n, n) for n in range(250))
-        values = ''.join('parameters vdd_nom=%s\n' % (0.5 + n / 100) for n in range(20))
+        sections = ''.join('section C%03d\nendsection C%03d\n' % (n, n) for n in range(210))
+        values = ''.join('parameters vdd_nom=%s\n' % (0.5 + n / 100) for n in range(32))
         self.write("models.scs", self.model_source() + values + sections)
         data = self.discover()
         self.assertFalse(data.get("results_omitted", False))
-        self.assertEqual(len(data["entry_candidates"]), 251)
+        self.assertEqual(len(data["entry_candidates"]), 211)
         self.assertIn("entry_candidates.*.operating_literal_evidence", {r["field"] for r in data["detail_omissions"]})
         self.assertTrue(data["search_complete"])
         for candidate in data["entry_candidates"]:
             self.assertTrue(all(m["confidence"] == "verified" and m["evidence"] for m in candidate["models"]))
             self.assertTrue(candidate["literal_evidence_truncated"])
-            self.assertEqual(candidate["literal_evidence_available_count"], 20)
+            self.assertEqual(candidate["literal_evidence_available_count"], 32)
             self.assertEqual(candidate["nominal_voltage_evidence"], [])
         self.assertLess(len(json.dumps(data, sort_keys=True).encode()), 2 * 1024 * 1024)
 

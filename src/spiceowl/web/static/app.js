@@ -26,6 +26,22 @@ let selectedHostIds = null;
 let hostSelectionRevision = 0, planningBusy = false;
 let live = {loaded: false, loading: false, enabled: false, projectId: '', runtime: null, error: null, busy: false, receipt: null};
 let liveDraft = {configuration: '', source_commit: '', run_id: ''};
+let directState = {
+  loaded: false, loading: false, busy: false, runs: [], monitor: null,
+  selectedId: null, detail: null, report: null, lookup: null, error: null,
+  recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
+  recoveryQuery: '', recoveryOutcome: '',
+};
+let directDraft = {
+  run_key: '', target_mode: 'host', host_id: '', backend: 'ssh_direct', simulator: 'spectre',
+  output_format: 'psfascii', cpus: 2, memory_gib: 8, wall_seconds: 3600,
+  queue: '', project: '', job_group: '', partition: '', account: '', qos: '', exclusive: false,
+  remote_python: '/usr/bin/python3', remote_root: '.spiceowl-runs', include_dirs: '',
+  netlist_text: '', lookup_key: '', allow_collect: true, recheck_resources: true,
+  rec_enabled: false, rec_max_attempts: 2, rec_max_memory_gib: 64, rec_max_elapsed_min: 240,
+  rec_retry_license: true, rec_license_backoff: 300, rec_retry_oom: true,
+  rec_oom_multiplier: 2, rec_allow_relocate: true,
+};
 const LIVE_PENDING = 'spiceowl.live-pending';
 const LIVE_COLLECT_PENDING = 'spiceowl.live-collect-pending';
 const livePendingKey = operation => operation === 'collect' ? LIVE_COLLECT_PENDING : LIVE_PENDING;
@@ -67,12 +83,272 @@ function publicDemoChrome() {
   $('#connection-dialog .muted').textContent = 'Try a scripted agent or model API. No provider is contacted and no credentials are needed.';
 }
 
+function publicDirectPage() {
+  return heading('DIRECT EXECUTION PREVIEW', '不依赖网关，直接驱动 SSH / LSF / Slurm 仿真。', '公共演示页面不连接 SSH 或集群调度器；在本地运行 SpiceOwl 即可直接使用。') + `<section class="panel public-info" data-public-demo-info="direct"><div class="panel-body"><span class="chip">LOCAL WORKFLOW</span><h2>三步在本地控制台完成直连仿真</h2><div class="public-feature-grid"><article><h3>1. 选主机或集群</h3><p>在 Simulation hosts 注册 OpenSSH 别名后，可按 CPU/内存自动选机，或指定 LSF / Slurm 登录节点。</p></article><article><h3>2. 冻结并提交</h3><p>Prepare 仅在本地冻结网表与校验和；Stage 写入隔离目录；Launch 具备原子防重发占位，断线不盲目重提。</p></article><article><h3>3. 盯守与五维报告</h3><p>支持后台 Watch、精准 Cancel、安全收集日志与波形，自动输出五维 Spectre 报告与 SOA/OOM 证据。</p></article></div><div class="public-info-links"><a class="button primary" href="#local">Run locally</a><a class="button secondary" href="./workflow.html">Explore workflow</a></div></div></section>`;
+}
+
+async function refreshDirect() {
+  if (isPublicDemo() || directState.loading) return;
+  directState.loading = true;
+  try {
+    const data = await api('/api/direct/runs');
+    directState.runs = Array.isArray(data.runs) ? data.runs : [];
+    directState.monitor = data.monitor || null;
+    directState.error = null;
+    if ($('#direct-count')) $('#direct-count').textContent = directState.runs.length;
+    if (!directState.selectedId || !directState.runs.some(r => r.run_id === directState.selectedId)) {
+      directState.selectedId = directState.runs[0]?.run_id || null;
+    }
+    if (directState.selectedId) {
+      const detail = await api(`/api/direct/runs/${encodeURIComponent(directState.selectedId)}`);
+      directState.detail = detail.run;
+      directState.report = detail.report || null;
+    } else {
+      directState.detail = null;
+      directState.report = null;
+    }
+    const qParams = new URLSearchParams();
+    if (directState.recoveryQuery.trim()) qParams.set('q', directState.recoveryQuery.trim());
+    if (directState.recoveryOutcome) qParams.set('outcome', directState.recoveryOutcome);
+    const qs = qParams.toString();
+    const recList = await api('/api/direct/recovery-reports' + (qs ? '?' + qs : ''));
+    directState.recoveryReports = Array.isArray(recList.reports) ? recList.reports : [];
+    if (directState.selectedRecoveryId && !directState.recoveryReports.some(r => r.root_run_id === directState.selectedRecoveryId)) {
+      directState.selectedRecoveryId = directState.recoveryReports[0]?.root_run_id || null;
+    } else if (!directState.selectedRecoveryId && directState.recoveryReports.length) {
+      directState.selectedRecoveryId = directState.recoveryReports[0].root_run_id;
+    }
+    if (directState.selectedRecoveryId) {
+      directState.recoveryDetail = await api(`/api/direct/recovery-reports/${encodeURIComponent(directState.selectedRecoveryId)}`);
+    } else {
+      directState.recoveryDetail = null;
+    }
+  } catch (error) {
+    directState.error = error.message;
+  } finally {
+    directState.loaded = true;
+    directState.loading = false;
+    if (location.hash === '#direct') render();
+  }
+}
+
+function recoveryOutcomeChip(outcome) {
+  const map = {
+    recovered: ['已自动恢复', 'green'],
+    completed_first_try: ['首次即成功', 'green'],
+    in_progress: ['恢复执行中', 'blue'],
+    exhausted: ['预算耗尽停止', 'amber'],
+    not_recoverable: ['不可自动恢复', ''],
+    policy_disabled: ['未开启恢复', ''],
+  };
+  const [label, color] = map[outcome] || [title(outcome), ''];
+  return chip(label, color);
+}
+
+function directRecoveryReportsPanel() {
+  const rows = directState.recoveryReports || [];
+  const detail = directState.recoveryDetail?.report || null;
+  const markdown = directState.recoveryDetail?.markdown || '';
+  const listHtml = rows.map(row => `<button type="button" class="direct-run-row ${row.root_run_id === detail?.root_run_id ? 'selected' : ''}" data-action="direct-rec-select" data-id="${escape(row.root_run_id)}"><div><strong>${escape(row.root_run_id)} · ${row.attempts_count} 次尝试</strong><small>${escape(row.summary_zh)}</small><small>${escape(row.backend.toUpperCase())} · 主机 ${escape((row.hosts || []).join(', '))} · 更新于 ${escape(row.updated_at ? new Date(row.updated_at).toLocaleString() : '-')}</small></div>${recoveryOutcomeChip(row.outcome)}</button>`).join('')
+    || '<p class="subtle-note">当前还没有有界恢复报告。开启有界恢复并在任务触发评估或恢复后，报告会自动归档在这里并支持检索。</p>';
+
+  let detailHtml = '';
+  if (detail) {
+    const integrity = detail.input_integrity || {};
+    const budget = detail.budget_usage || {};
+    const attemptRows = (detail.attempts || []).map(a => {
+      const fd = a.five_dim_summary || {};
+      const fdText = fd.available ? `${fd.execution_status || '-'} / ${fd.measurement_validity || '-'} / ${fd.functional_performance || '-'} / ${fd.operating_qualification || '-'}` : '未收集';
+      return `<tr><td>#${a.attempt_number}</td><td><button type="button" class="button secondary small" data-action="direct-select" data-id="${escape(a.run_id)}">${escape(a.run_id)}</button></td><td>${escape(a.host_id)}</td><td>${escape(a.memory_gib)} GiB</td><td>${escape(a.scheduler_job_id || '-')}</td><td>${escape(a.state)}</td><td>${escape(a.failure_class)}</td><td>${escape(fdText)}</td></tr>`;
+    }).join('');
+    const decisionRows = (detail.decisions || []).map(dec => {
+      const diff = dec.resource_diff || {};
+      const parts = [];
+      if (diff.memory_bytes && diff.memory_bytes.from !== diff.memory_bytes.to) parts.push(`内存 ${(diff.memory_bytes.from / 2**30).toFixed(2)} → ${(diff.memory_bytes.to / 2**30).toFixed(2)} GiB`);
+      if (diff.host_id && diff.host_id.from !== diff.host_id.to) parts.push(`主机 ${diff.host_id.from} → ${diff.host_id.to}`);
+      return `<li><strong>[${escape(String(dec.result || '').toUpperCase())}] ${escape(dec.action)}</strong>（${escape(dec.source_run_id)}${dec.child_run_id ? ` → ${escape(dec.child_run_id)}` : ''}）：${escape(dec.reason)}${parts.length ? ` · <em>${escape(parts.join('，'))}</em>` : ''}</li>`;
+    }).join('');
+    detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
+  }
+
+  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>4. 有界恢复报告中心（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界恢复评估或自动重提的任务谱系都会自动持久化 JSON + Markdown 报告，方便事后审计与检索。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
+}
+
+function directRunChip(run) {
+  const s = run.state || 'unknown';
+  if (s === 'simulator_complete_pending_measurements') return chip('execution completed', 'green');
+  if (s === 'running_observed' || s === 'submitted') return chip(s === 'running_observed' ? 'running' : 'queued', 'blue');
+  if (s === 'simulator_failed' || s === 'job_setup_failed' || s === 'input_hash_failure') return chip(s, 'red');
+  if (s === 'launch_outcome_unknown' || s === 'reconcile_required') return chip(s, 'amber');
+  return chip(s, '');
+}
+
+function directReportSection(report) {
+  if (!report) return '';
+  if (report.schema === 'spiceowl.simulation-report.v1') {
+    const dims = [
+      ['Execution', report.execution_status?.status],
+      ['Measurement', report.measurement_validity?.status],
+      ['Performance', report.functional_performance?.status],
+      ['Operating / SOA', report.operating_qualification?.status],
+      ['Dependencies', report.dependency_provenance?.status],
+    ];
+    const findings = Array.isArray(report.diagnostics?.diagnostics) ? report.diagnostics.diagnostics.slice(0, 8) : [];
+    return `<div class="direct-report"><h3>五维仿真报告（Spectre）</h3><div class="direct-report-grid">${dims.map(([k, v]) => `<div class="direct-dim-card"><span>${escape(k)}</span><strong>${escape(title(v))}</strong></div>`).join('')}</div>${findings.map(item => `<div class="live-diagnostic"><strong>${escape(item.code || item.category)} · ${escape(title(item.severity))}</strong>${item.redacted_excerpt ? `<pre>${escape(item.redacted_excerpt)}</pre>` : ''}<ul>${(Array.isArray(item.suggested_actions) ? item.suggested_actions : []).slice(0, 4).map(act => `<li>${escape(act)}</li>`).join('')}</ul></div>`).join('')}</div>`;
+  }
+  return `<div class="direct-report"><h3>收集报告（${escape(report.simulator || 'direct')}）</h3><pre class="plan-json">${escape(JSON.stringify(report, null, 2))}</pre></div>`;
+}
+
+function directPage() {
+  let html = heading('DIRECT EXECUTION · SSH / LSF / SLURM', '直连仿真控制台', '不依赖 CircuitGit 网关，直接通过已注册的 OpenSSH 主机或 LSF / Slurm 集群执行、盯守并分析仿真。');
+  if (isPublicDemo()) return html + publicDirectPage();
+  const hostsList = state.hosts || [];
+  if (!directDraft.host_id && hostsList.length) directDraft.host_id = hostsList[0].host_id;
+  if (!directDraft.run_key) {
+    const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
+    directDraft.run_key = `direct-${stamp}`;
+  }
+  const run = directState.detail || directState.runs.find(r => r.run_id === directState.selectedId) || null;
+  const watchEntry = directState.monitor?.watches?.find(w => w && w.run_id === run?.run_id) || null;
+  const watchArmed = watchEntry?.watch_state === 'armed';
+  const terminal = ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed', 'input_hash_failure'].includes(run?.state);
+  const canStage = run && ['prepared', 'stage_incomplete'].includes(run.state) && !directState.busy;
+  const canLaunch = run && run.state === 'staged' && !run.dispatch_claimed && !directState.busy;
+  const canStatus = run && run.state !== 'prepared' && !directState.busy;
+  const canWatch = run && run.dispatch_claimed && !terminal && !watchArmed && !directState.busy;
+  const canUnwatch = run && watchArmed && !directState.busy;
+  const canCancel = run && run.dispatch_claimed && !terminal && !directState.busy;
+  const canCollect = run && terminal && run.collection_phase !== 'complete' && !directState.busy;
+  const canRecover = run && terminal && run.state !== 'simulator_complete_pending_measurements' && !directState.busy;
+  const recPolicy = run?.recovery_policy || {};
+  const recBox = `<details class="host-form-details" ${directDraft.rec_enabled ? 'open' : ''}><summary>M4 有界自动恢复策略（不改网表与科学条件）</summary><div class="direct-check-row"><label><input id="direct-rec-enabled" type="checkbox" ${directDraft.rec_enabled ? 'checked' : ''}> 启用有界自动恢复（Watch 自动收集后按预算恢复）</label></div><div class="direct-grid"><label>最大恢复次数 (0–5)<input id="direct-rec-attempts" type="number" min="0" max="5" value="${escape(directDraft.rec_max_attempts)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>最大内存上限 (GiB)<input id="direct-rec-maxmem" type="number" min="1" max="16384" value="${escape(directDraft.rec_max_memory_gib)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>许可证退避等待 (秒)<input id="direct-rec-backoff" type="number" min="0" max="3600" value="${escape(directDraft.rec_license_backoff)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>总时间预算 (分钟)<input id="direct-rec-elapsed" type="number" min="1" max="10080" value="${escape(directDraft.rec_max_elapsed_min)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label></div><div class="direct-check-row"><label><input id="direct-rec-lic" type="checkbox" ${directDraft.rec_retry_license ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 许可证失败退避重试</label><label><input id="direct-rec-oom" type="checkbox" ${directDraft.rec_retry_oom ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 确认 OOM 自动内存翻倍</label><label><input id="direct-rec-relocate" type="checkbox" ${directDraft.rec_allow_relocate ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 允许迁移至更大内存主机</label></div></details>`;
+
+  const schedBox = directDraft.backend === 'lsf'
+    ? `<div class="direct-sched-box"><strong>LSF 集群参数（bsub）</strong><div class="direct-grid"><label>Queue（必填）<input id="direct-queue" value="${escape(directDraft.queue)}" placeholder="analog_long" required></label><label>Project（可选）<input id="direct-project" value="${escape(directDraft.project)}" placeholder="adc_proj"></label><label class="direct-wide">Job group（可选）<input id="direct-job-group" value="${escape(directDraft.job_group)}" placeholder="/analog/sim"></label></div><div class="direct-check-row"><label><input id="direct-exclusive" type="checkbox" ${directDraft.exclusive ? 'checked' : ''}> 独占计算节点 (-x)</label></div></div>`
+    : directDraft.backend === 'slurm'
+    ? `<div class="direct-sched-box"><strong>Slurm 集群参数（sbatch）</strong><div class="direct-grid"><label>Partition（必填）<input id="direct-partition" value="${escape(directDraft.partition)}" placeholder="sim_compute" required></label><label>Account（可选）<input id="direct-account" value="${escape(directDraft.account)}" placeholder="analog_lab"></label><label class="direct-wide">QoS（可选）<input id="direct-qos" value="${escape(directDraft.qos)}" placeholder="normal"></label></div><div class="direct-check-row"><label><input id="direct-exclusive" type="checkbox" ${directDraft.exclusive ? 'checked' : ''}> 独占计算节点 (--exclusive)</label></div></div>`
+    : '';
+
+  html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>1. 冻结并准备实验</h2><span class="chip">PREPARE · NO LAUNCH</span></div><p class="subtle-note">仅在本地冻结网表与配置，不连接服务器、不启动求解器。${!hostsList.length ? '请先前往 <a href="#hosts">Simulation hosts</a> 注册至少一台 SSH 主机。' : ''}</p><form id="direct-prepare-form"><div class="direct-grid"><label class="direct-wide">运行标识（Run Key / 幂等键）<input id="direct-run-key" value="${escape(directDraft.run_key)}" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="direct-inv-001"></label><label>执行后端<select id="direct-backend"><option value="ssh_direct" ${directDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连托管进程</option><option value="lsf" ${directDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${directDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>仿真器<select id="direct-simulator"><option value="spectre" ${directDraft.simulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${directDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></label><label>主机选择方式<select id="direct-target-mode"><option value="host" ${directDraft.target_mode === 'host' ? 'selected' : ''}>指定单台主机</option><option value="pool" ${directDraft.target_mode === 'pool' ? 'selected' : ''}>按资源自动推荐（所有已登记主机）</option></select></label><label>目标主机<select id="direct-host-id" ${directDraft.target_mode === 'pool' || !hostsList.length ? 'disabled' : ''}>${hostsList.length ? hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === directDraft.host_id ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})</option>`).join('') : '<option value="">尚未注册主机</option>'}</select></label><label>CPU 核数<input id="direct-cpus" type="number" min="1" max="4096" value="${escape(directDraft.cpus)}" required></label><label>内存 (GiB)<input id="direct-memory" type="number" min="0.1" step="any" max="16384" value="${escape(directDraft.memory_gib)}" required></label><label>最大墙钟时长 (秒)<input id="direct-wall" type="number" min="10" max="604800" value="${escape(directDraft.wall_seconds)}" required></label><label>波形格式<select id="direct-format"><option value="psfascii" ${directDraft.output_format === 'psfascii' ? 'selected' : ''}>PSF ASCII</option><option value="psfbin" ${directDraft.output_format === 'psfbin' ? 'selected' : ''}>PSF Binary</option><option value="psfxl" ${directDraft.output_format === 'psfxl' ? 'selected' : ''}>PSFXL</option></select></label></div>${schedBox}${recBox}<details class="host-form-details"><summary>高级远端路径设置（可选）</summary><div class="direct-grid"><label>远端 Python3 路径<input id="direct-python" value="${escape(directDraft.remote_python)}"></label><label>远端工作根目录<input id="direct-root" value="${escape(directDraft.remote_root)}" placeholder=".spiceowl-runs 或 /scratch/..."></label><label class="direct-wide">Spectre Include 目录（每行一个绝对路径）<textarea id="direct-includes" rows="2" placeholder="/opt/pdk/models">${escape(directDraft.include_dirs)}</textarea></label></div></details><div class="direct-file-row"><label for="direct-netlist">网表内容（input.scs）</label><label class="direct-file-label">从本地文件读取 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label></div><textarea id="direct-netlist" class="direct-netlist" required placeholder="simulator lang=spectre&#10;...">${escape(directDraft.netlist_text)}</textarea><div class="direct-actions"><button class="button primary" type="submit" ${directState.busy || !hostsList.length ? 'disabled' : ''}>冻结并准备计划（Prepare）</button></div></form></section>`;
+
+  html += `<div class="detail-stack"><section class="panel direct-panel"><div class="section-title"><h2>2. 直连运行记录 (${directState.runs.length})</h2><button class="button secondary small" data-action="direct-refresh" ${directState.busy ? 'disabled' : ''}>刷新列表</button></div>${directState.error ? `<p class="error-text" role="alert">${escape(directState.error)}</p>` : ''}<div class="direct-run-list">${directState.runs.map(item => `<button type="button" class="direct-run-row ${item.run_id === run?.run_id ? 'selected' : ''}" data-action="direct-select" data-id="${escape(item.run_id)}"><div><strong>${escape(item.run_id)}</strong><small>${escape(item.backend.toUpperCase())} · ${escape(item.simulator)} · ${escape(item.host_id)}${item.scheduler?.job_id ? ' · Job ' + escape(item.scheduler.job_id) : ''}</small></div>${directRunChip(item)}</button>`).join('') || '<p class="subtle-note">还没有直连运行记录。先在左侧准备一个实验。</p>'}</div><div class="direct-lookup"><input id="direct-lookup-key" value="${escape(directDraft.lookup_key)}" placeholder="按原 Run Key / Submission Key 对账查询"><button type="button" class="button secondary small" data-action="direct-lookup" ${directState.busy ? 'disabled' : ''}>查询原 Key</button></div>${directState.lookup ? `<p class="subtle-note" role="status">${directState.lookup.found ? `已找到原记录：<code>${escape(directState.lookup.run_id)}</code>（状态：${escape(title(directState.lookup.run?.state))}）` : escape(directState.lookup.note)}</p>` : ''}</section>`;
+
+  if (run) {
+    html += `<section class="panel direct-panel"><div class="section-title"><h2>3. 任务控制 · ${escape(run.run_id)}</h2>${directRunChip(run)}</div><p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试（根任务：<code>${escape(run.root_run_id || run.run_id)}</code>${run.parent_run_id ? ` · 恢复自 <code>${escape(run.parent_run_id)}</code>` : ''}）· 有界恢复：<strong>${recPolicy.enabled ? `已启用（最多 ${recPolicy.max_recovery_attempts} 次 / 上限 ${((recPolicy.max_memory_bytes || 0) / 2**30).toFixed(0)} GiB）` : '未启用'}</strong><br>后端：<strong>${escape(run.backend)}</strong> · 主机：<strong>${escape(run.host_id)}</strong> · 仿真器：<strong>${escape(run.simulator)}</strong>${run.expected_version ? ` (${escape(run.expected_version)})` : ''}${run.scheduler?.job_id ? ` · 调度 Job ID：<code>${escape(run.scheduler.job_id)}</code>` : ''}<br>冻结摘要：<code>${escape(run.manifest_sha256.slice(0, 16))}…</code> · 最近观察：${escape(run.observed_at ? new Date(run.observed_at).toLocaleString() : '尚未联网')}</p>${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「查询状态」与远端对账。</p>' : ''}${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}<div class="direct-check-row"><label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label><label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label></div><div class="direct-actions"><button type="button" class="button secondary" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>1. 上传输入 (Stage)</button><button type="button" class="button primary" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>2. 启动仿真 (Launch)</button><button type="button" class="button secondary" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>查询状态 (Status)</button><button type="button" class="button secondary" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button><button type="button" class="button secondary" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button><button type="button" class="button secondary" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button><button type="button" class="button primary" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>3. 收集结果与报告 (Collect)</button><button type="button" class="button secondary" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button><button type="button" class="button primary" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button></div>${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${run.collection.skipped_files.length} 个超大原始文件已跳过并保留日志`}</p>` : ''}${directReportSection(directState.report)}</section>`;
+  }
+  html += '</div></div>';
+  html += directRecoveryReportsPanel();
+  return html;
+}
+
+async function handleDirectClick(event) {
+  const button = event.target.closest('button[data-action^="direct-"]');
+  if (!button) return;
+  if (isPublicDemo()) { location.hash = '#local'; return; }
+  const action = button.dataset.action.slice(7);
+  const id = button.dataset.id;
+  if (action === 'use-placement') {
+    directDraft.target_mode = 'host';
+    directDraft.host_id = id;
+    directDraft.cpus = requestedCpus;
+    directDraft.memory_gib = requestedMemory;
+    directDraft.simulator = requestedSimulator;
+    location.hash = '#direct';
+    return;
+  }
+  if (action === 'refresh') { await refreshDirect(); return; }
+  if (action === 'select') {
+    directState.selectedId = id;
+    await refreshDirect();
+    return;
+  }
+  if (action === 'rec-select') {
+    directState.selectedRecoveryId = id;
+    await refreshDirect();
+    return;
+  }
+  if (action === 'rec-search') {
+    await refreshDirect();
+    return;
+  }
+  if (action === 'rec-download') {
+    const md = directState.recoveryDetail?.markdown;
+    if (!md) { toast('没有可下载的 Markdown 报告。'); return; }
+    const blob = new Blob([md], {type: 'text/markdown;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `${id}-recovery-report.md`;
+    document.body.appendChild(link); link.click(); link.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  if (action === 'toggle-policy') {
+    const targetRun = directState.runs.find(r => r.run_id === id) || directState.detail;
+    if (!targetRun || directState.busy) return;
+    directState.busy = true; directState.error = null; render();
+    try {
+      const nextPolicy = {...(targetRun.recovery_policy || {}), enabled: !(targetRun.recovery_policy?.enabled)};
+      await api(`/api/direct/runs/${encodeURIComponent(id)}/policy`, {method: 'POST', body: nextPolicy});
+      toast(nextPolicy.enabled ? '已开启该任务的有界恢复策略。' : '已关闭该任务的有界恢复策略。');
+    } catch (error) { directState.error = error.message; toast(error.message); }
+    finally { directState.busy = false; await refreshDirect(); }
+    return;
+  }
+  if (action === 'recover') {
+    if (directState.busy || !id) return;
+    directState.busy = true; directState.error = null; render();
+    try {
+      const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/recover`, {method: 'POST', body: {execute: true}});
+      if (res.child_run?.run_id) directState.selectedId = res.child_run.run_id;
+      if (res.recovery_report?.root_run_id) directState.selectedRecoveryId = res.recovery_report.root_run_id;
+      toast(res.decision?.reason || '已完成有界恢复评估并更新恢复报告。');
+    } catch (error) { directState.error = error.message; toast(error.message); }
+    finally { directState.busy = false; await refreshDirect(); }
+    return;
+  }
+  if (action === 'lookup') {
+    const key = directDraft.lookup_key.trim();
+    if (!key) { toast('请先输入要对账的 Run Key。'); return; }
+    directState.busy = true; directState.error = null; render();
+    try {
+      directState.lookup = await api('/api/direct/submission?key=' + encodeURIComponent(key));
+      if (directState.lookup.found && directState.lookup.run_id) directState.selectedId = directState.lookup.run_id;
+    } catch (error) { directState.error = error.message; }
+    finally { directState.busy = false; await refreshDirect(); }
+    return;
+  }
+  if (directState.busy || !id) return;
+  if (action === 'cancel' && !window.confirm(`确认取消直连任务 ${id}？只向已验证归属的进程组或集群作业发送取消信号。`)) return;
+  directState.busy = true; directState.error = null; render();
+  try {
+    const targetRun = directState.runs.find(r => r.run_id === id) || directState.detail;
+    let body = {};
+    if (action === 'launch') body = {recheck_resources: targetRun?.backend === 'ssh_direct' ? !!directDraft.recheck_resources : false};
+    if (action === 'watch') body = {allow_collect: !!directDraft.allow_collect};
+    const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/${action}`, {method: 'POST', body});
+    if (res.report) directState.report = res.report;
+    toast(`直连操作 ${action} 已完成。`);
+  } catch (error) {
+    directState.error = error.message;
+    toast(error.message);
+  } finally {
+    directState.busy = false;
+    await refreshDirect();
+  }
+}
+
 function publicLocalPage() {
-  return heading('RUN LOCALLY', 'Bring the console to your workspace.', 'Use your local installation for private host profiles and saved simulation observations.') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><h2>Start with the synthetic workspace</h2><p>Requires Python 3.11+ on macOS or Linux. Use the branch that supplies this demo, then run these commands in a terminal on your own computer:</p><pre class="public-command">git clone --branch ${escape(demoSource().branch)} https://github.com/spiceowl-dev/spiceowl.git
+  return heading('RUN LOCALLY', 'Bring the console to your workspace.', 'Use your local installation for private host profiles and saved simulation observations.') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><h2>Start with the synthetic workspace</h2><p>Requires Python 3.11+ on macOS, Linux, or Windows. Use the branch that supplies this demo, then run these commands in a terminal on your own computer:</p><pre class="public-command"># macOS / Linux
+git clone --branch ${escape(demoSource().branch)} https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
 .venv/bin/python -m pip install .
-.venv/bin/spiceowl serve --demo</pre><p>Open the loopback address printed by that command. This public page never connects to that address or to your computer.</p><h3>Connect only when you choose</h3><p>The local console can register an existing SSH route, make explicit host checks and connect a configured CircuitGit simulation runtime. Standalone mode offers an explicit local Codex connection. Embedded mode shares CircuitGit’s current Codex conversation.</p><div class="public-info-links"><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">Local setup guide</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">Host connection guide</a><a class="button secondary" href="#overview">Back to the demo</a></div></div></section>`;
+.venv/bin/spiceowl serve --demo
+
+# Windows (PowerShell)
+py -3 -m venv .venv
+.venv\\Scripts\\python.exe -m pip install .
+.venv\\Scripts\\spiceowl.exe serve --demo</pre><p>Open the loopback address printed by that command. This public page never connects to that address or to your computer.</p><h3>Connect only when you choose</h3><p>The local console can register an existing SSH route, make explicit host checks and connect a configured CircuitGit simulation runtime. Standalone mode offers an explicit local Codex connection. Embedded mode shares CircuitGit’s current Codex conversation.</p><div class="public-info-links"><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">Local setup guide</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">Host connection guide</a><a class="button secondary" href="#overview">Back to the demo</a></div></div></section>`;
 }
 
 function publicHostPage() {
@@ -117,6 +393,7 @@ async function refresh() {
   $('#version').textContent = state.version;
   $('#connection-count').textContent = state.connections.length;
   $('#host-count').textContent = state.hosts.length;
+  if ($('#direct-count')) $('#direct-count').textContent = isPublicDemo() ? '0' : directState.runs.length;
   $('#native-count').textContent = isStandaloneAgent() ? codexPanelState.threads.length : state.questions.length;
   if (!isPublicDemo()) $('.prototype-badge').textContent = isStandaloneAgent() ? 'Standalone · Codex Agent' : 'CircuitGit channel · Engine';
   $('#recent-runs').innerHTML = state.runs.slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
@@ -427,7 +704,7 @@ function poolOverview() {
     return `<tr><td class="host-select-cell"><input type="checkbox" data-host-select="${escape(host.host_id)}" aria-label="Select ${escape(host.label)} for pool check" ${selectedHostIds?.has(host.host_id) ? 'checked' : ''} ${poolScanning ? 'disabled' : ''}></td><th scope="row">${escape(host.label)}<small>${escape(host.host_id)}</small></th><td class="host-connection-cell">${chip(connection.label, connection.color)}<small>Connection: ${escape(observationTime(evidence))}</small>${connection.help ? `<details class="host-next-step"><summary>Next step</summary><p>${escape(connection.help)}</p></details>` : ''}<button class="button secondary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></td><td>${metric(r.cpu_busy_percent, '%')}<small>${metric(r.cpu_count, ' CPUs', 0)}</small></td><td>${metric(r.load_1m)} / ${metric(r.load_5m)}</td><td>${metric(Number.isFinite(r.memory_available_bytes) ? r.memory_available_bytes / 2**30 : null, ' GiB')}<small>of ${metric(Number.isFinite(r.memory_total_bytes) ? r.memory_total_bytes / 2**30 : null, ' GiB')}</small></td><td data-resource-status="${escape(host.host_id)}">${chip(resources.label, resources.color)}<small>Resources: ${escape(observationTime(sample))}</small>${sample?.error ? `<small>${escape(sample.error.message)}</small>` : ''}</td></tr>`;
   }).join('');
   let html = `<section class="panel"><div class="panel-head"><h2>Connections and resources</h2><span class="section-note">Two hosts checked at a time · explicit checks</span></div><p class="host-table-note">Listed hosts are registered candidates. Resource values are saved samples and expire after two minutes; unknown values do not mean idle. No automatic remote polling.</p><div class="host-selection-bar"><div><strong id="host-selection-count" role="status">${escape(hostSelectionLabel())}</strong><small>${state.hosts.length > 32 ? 'Choose the hosts for this check using the row checkboxes. No partial pool is chosen automatically.' : 'Only checked rows will be contacted. New registrations are not added to your existing selection.'}</small></div><div><button class="button secondary small" data-action="host-select-all" ${poolScanning || !state.hosts.length || state.hosts.length > 32 ? 'disabled' : ''}>Select all</button><button class="button secondary small" data-action="host-select-none" ${poolScanning || !selectedHostIds?.size ? 'disabled' : ''}>Clear selection</button></div></div><div class="pool-table-wrap"><table class="pool-table"><thead><tr><th scope="col">Select</th><th>Host</th><th>Connection evidence</th><th>CPU busy</th><th>Load 1m / 5m</th><th>Memory available</th><th>Resource evidence</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No registered hosts.</td></tr>'}</tbody></table></div></section>`;
-  html += `<section class="panel pool-placement"><div class="panel-head"><h2>Plan a new execution</h2><span class="chip">NO RESERVATION</span></div><div class="panel-body"><p id="placement-scope" class="subtle-note">${escape(hostPlanScope())}</p><form id="placement-form" class="placement-form"><div><label for="pool-cpus">Requested CPUs</label><input id="pool-cpus" name="cpus" type="number" min="1" max="4096" value="${requestedCpus}" required></div><div><label for="pool-memory">Memory (GiB)</label><input id="pool-memory" name="memory" type="number" min="0.001" step="any" max="1048576" value="${requestedMemory}" required></div><div><label for="pool-simulator">Simulator</label><select id="pool-simulator" name="simulator"><option value="spectre" ${requestedSimulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${requestedSimulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></div><button class="button secondary" type="submit">Evaluate saved data</button></form><div class="placement-result">${placement ? `<strong>${placement.recommended_host_id ? 'Proposed host: ' + escape(placement.recommended_host_id) : 'No eligible host in this snapshot'}</strong><p class="subtle-note">Evaluation: ${escape(new Date(placement.evaluated_at).toLocaleString())} · ${placement.candidates.length} candidate(s). Resource observations expire; this does not reserve the host.</p><ul>${placement.excluded.map(h => `<li>${escape(h.label || h.host_id)}: ${escape(h.reasons.join('; '))}</li>`).join('')}</ul>` : '<p class="subtle-note">Set requirements, select 1–32 hosts above, then evaluate their saved observations. Unknown nodes are excluded.</p>'}</div><form id="execution-plan-form" class="execution-plan-form"><label for="execution-kind">Simulation origin</label><select id="execution-kind" name="kind"><option value="standalone">New standalone exported netlist</option><option value="virtuoso_managed">Existing Virtuoso-managed run</option></select><label for="execution-ref">Experiment input reference / native run reference</label><input id="execution-ref" name="reference" maxlength="96" placeholder="experiment-rc-check" required><label for="execution-host">Existing native host (Virtuoso only)</label><select id="execution-host" name="host">${state.hosts.map(h => `<option value="${escape(h.host_id)}">${escape(h.label)}</option>`).join('')}</select><button class="button secondary" type="submit">Prepare reviewable plan</button></form>${executionPlan ? planSummary(executionPlan) : ''}</div></section>`;
+  html += `<section class="panel pool-placement"><div class="panel-head"><h2>Plan a new execution</h2><span class="chip">NO RESERVATION</span></div><div class="panel-body"><p id="placement-scope" class="subtle-note">${escape(hostPlanScope())}</p><form id="placement-form" class="placement-form"><div><label for="pool-cpus">Requested CPUs</label><input id="pool-cpus" name="cpus" type="number" min="1" max="4096" value="${requestedCpus}" required></div><div><label for="pool-memory">Memory (GiB)</label><input id="pool-memory" name="memory" type="number" min="0.001" step="any" max="1048576" value="${requestedMemory}" required></div><div><label for="pool-simulator">Simulator</label><select id="pool-simulator" name="simulator"><option value="spectre" ${requestedSimulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${requestedSimulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></div><button class="button secondary" type="submit">Evaluate saved data</button></form><div class="placement-result">${placement ? `<strong>${placement.recommended_host_id ? 'Proposed host: ' + escape(placement.recommended_host_id) : 'No eligible host in this snapshot'}</strong><p class="subtle-note">Evaluation: ${escape(new Date(placement.evaluated_at).toLocaleString())} · ${placement.candidates.length} candidate(s). Resource observations expire; this does not reserve the host.</p>${placement.recommended_host_id ? `<div class="direct-handoff"><button class="button primary small" type="button" data-action="direct-use-placement" data-id="${escape(placement.recommended_host_id)}">用推荐主机创建直连仿真 →</button></div>` : ''}<ul>${placement.excluded.map(h => `<li>${escape(h.label || h.host_id)}: ${escape(h.reasons.join('; '))}</li>`).join('')}</ul>` : '<p class="subtle-note">Set requirements, select 1–32 hosts above, then evaluate their saved observations. Unknown nodes are excluded.</p>'}</div><form id="execution-plan-form" class="execution-plan-form"><label for="execution-kind">Simulation origin</label><select id="execution-kind" name="kind"><option value="standalone">New standalone exported netlist</option><option value="virtuoso_managed">Existing Virtuoso-managed run</option></select><label for="execution-ref">Experiment input reference / native run reference</label><input id="execution-ref" name="reference" maxlength="96" placeholder="experiment-rc-check" required><label for="execution-host">Existing native host (Virtuoso only)</label><select id="execution-host" name="host">${state.hosts.map(h => `<option value="${escape(h.host_id)}">${escape(h.label)}</option>`).join('')}</select><button class="button secondary" type="submit">Prepare reviewable plan</button></form>${executionPlan ? planSummary(executionPlan) : ''}</div></section>`;
   return html;
 }
 
@@ -768,9 +1045,10 @@ function render() {
   const page = location.hash.slice(1) || 'overview';
   if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent channel' : run ? run.label : 'Overview';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'direct' ? '直连仿真 · SSH / 集群' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent channel' : run ? run.label : 'Overview';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
-  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  if (page === 'direct' && !isPublicDemo() && !directState.loaded && !directState.loading) refreshDirect();
   if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
   if (page === 'hosts' && !isPublicDemo()) {
@@ -829,7 +1107,7 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
-  if (action.startsWith('live-') || action.startsWith('codex-')) return;
+  if (action.startsWith('live-') || action.startsWith('codex-') || action.startsWith('direct-')) return;
   if (isPublicDemo() && ['add-host', 'import-pool', 'host-probe', 'pool-scan', 'native-select'].includes(action)) {
     location.hash = '#local'; return;
   }
@@ -901,6 +1179,7 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('click', handleLiveClick);
+document.addEventListener('click', handleDirectClick);
 
 $('#connection-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -996,6 +1275,17 @@ document.addEventListener('input', event => {
     const collect=document.querySelector('[data-action="live-collect"]');
     if(collect){try{collect.disabled=live.busy||!live.runtime?.capabilities?.direct_collect||!!livePending('collect')||!liveCollectReady();}catch{collect.disabled=true;}}
   }
+  const directInputs = {
+    'direct-run-key': 'run_key', 'direct-cpus': 'cpus', 'direct-memory': 'memory_gib',
+    'direct-wall': 'wall_seconds', 'direct-queue': 'queue', 'direct-project': 'project',
+    'direct-job-group': 'job_group', 'direct-partition': 'partition', 'direct-account': 'account',
+    'direct-qos': 'qos', 'direct-python': 'remote_python', 'direct-root': 'remote_root',
+    'direct-includes': 'include_dirs', 'direct-netlist': 'netlist_text', 'direct-lookup-key': 'lookup_key',
+    'direct-rec-attempts': 'rec_max_attempts', 'direct-rec-maxmem': 'rec_max_memory_gib',
+    'direct-rec-backoff': 'rec_license_backoff', 'direct-rec-elapsed': 'rec_max_elapsed_min',
+  };
+  if (directInputs[event.target.id]) directDraft[directInputs[event.target.id]] = event.target.value;
+  if (event.target.id === 'direct-rec-query') directState.recoveryQuery = event.target.value;
   if (event.target.id === 'diagnostic-question') draftQuestion = event.target.value;
   if (event.target.closest('#pool-import-form')) resetPoolPreview();
 });
@@ -1012,6 +1302,29 @@ document.addEventListener('change', event => {
       invalidateHostPlans();
     }
     updateHostSelectionUI();
+  }
+  if (event.target.id === 'direct-backend') { directDraft.backend = event.target.value; render(); }
+  if (event.target.id === 'direct-simulator') directDraft.simulator = event.target.value;
+  if (event.target.id === 'direct-target-mode') { directDraft.target_mode = event.target.value; render(); }
+  if (event.target.id === 'direct-host-id') directDraft.host_id = event.target.value;
+  if (event.target.id === 'direct-format') directDraft.output_format = event.target.value;
+  if (event.target.id === 'direct-exclusive') directDraft.exclusive = event.target.checked;
+  if (event.target.id === 'direct-recheck') directDraft.recheck_resources = event.target.checked;
+  if (event.target.id === 'direct-allow-collect') directDraft.allow_collect = event.target.checked;
+  if (event.target.id === 'direct-rec-enabled') { directDraft.rec_enabled = event.target.checked; render(); }
+  if (event.target.id === 'direct-rec-lic') directDraft.rec_retry_license = event.target.checked;
+  if (event.target.id === 'direct-rec-oom') directDraft.rec_retry_oom = event.target.checked;
+  if (event.target.id === 'direct-rec-relocate') directDraft.rec_allow_relocate = event.target.checked;
+  if (event.target.id === 'direct-rec-outcome') { directState.recoveryOutcome = event.target.value; refreshDirect(); }
+  if (event.target.id === 'direct-netlist-file' && event.target.files?.[0]) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      directDraft.netlist_text = String(reader.result || '');
+      const box = $('#direct-netlist');
+      if (box) box.value = directDraft.netlist_text;
+      toast(`已读取网表文件：${event.target.files[0].name}`);
+    };
+    reader.readAsText(event.target.files[0]);
   }
   if (event.target.id === 'diagnostic-connection') selectedConnection = event.target.value;
   if (event.target.id === 'session-picker') { selectedSession = event.target.value; sessionView = null; routeEpoch++; pollSession(); }
@@ -1161,6 +1474,64 @@ document.addEventListener('submit', async event => {
 });
 
 document.addEventListener('submit', async event => {
+  if (event.target.id !== 'direct-prepare-form') return;
+  event.preventDefault();
+  if (isPublicDemo() || directState.busy) return;
+  directState.busy = true; directState.error = null; render();
+  try {
+    const payload = {
+      run_key: directDraft.run_key.trim(),
+      netlist_text: directDraft.netlist_text,
+      backend: directDraft.backend,
+      simulator: directDraft.simulator,
+      output_format: directDraft.output_format,
+      cpus: Number(directDraft.cpus),
+      memory_gib: Number(directDraft.memory_gib),
+      wall_seconds: Number(directDraft.wall_seconds),
+      remote_python: directDraft.remote_python.trim() || '/usr/bin/python3',
+      remote_root: directDraft.remote_root.trim() || '.spiceowl-runs',
+      recovery_policy: {
+        enabled: !!directDraft.rec_enabled,
+        max_recovery_attempts: Number(directDraft.rec_max_attempts),
+        max_memory_bytes: Math.round(Math.max(Number(directDraft.rec_max_memory_gib), Number(directDraft.memory_gib)) * 2**30),
+        max_elapsed_seconds: Math.max(60, Math.round(Number(directDraft.rec_max_elapsed_min) * 60)),
+        retry_on_license: !!directDraft.rec_retry_license,
+        license_backoff_seconds: Number(directDraft.rec_license_backoff),
+        retry_on_oom: !!directDraft.rec_retry_oom,
+        oom_memory_multiplier: Number(directDraft.rec_oom_multiplier) || 2.0,
+        allow_host_relocation: !!directDraft.rec_allow_relocate,
+      },
+    };
+    if (directDraft.target_mode === 'pool') {
+      payload.host_ids = state.hosts.slice(0, 32).map(h => h.host_id);
+    } else {
+      payload.host_id = directDraft.host_id;
+    }
+    const includes = directDraft.include_dirs.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (includes.length) payload.include_dirs = includes;
+    if (directDraft.backend === 'lsf') {
+      payload.scheduler = {queue: directDraft.queue.trim(), exclusive: !!directDraft.exclusive};
+      if (directDraft.project.trim()) payload.scheduler.project = directDraft.project.trim();
+      if (directDraft.job_group.trim()) payload.scheduler.job_group = directDraft.job_group.trim();
+    } else if (directDraft.backend === 'slurm') {
+      payload.scheduler = {partition: directDraft.partition.trim(), exclusive: !!directDraft.exclusive};
+      if (directDraft.account.trim()) payload.scheduler.account = directDraft.account.trim();
+      if (directDraft.qos.trim()) payload.scheduler.qos = directDraft.qos.trim();
+    }
+    const res = await api('/api/direct/prepare', {method: 'POST', body: payload});
+    directState.selectedId = res.run.run_id;
+    directDraft.run_key = '';
+    toast(`计划 ${res.run.run_id} 已冻结在本地，可以执行上传与启动。`);
+  } catch (error) {
+    directState.error = error.message;
+    toast(error.message);
+  } finally {
+    directState.busy = false;
+    await refreshDirect();
+  }
+});
+
+document.addEventListener('submit', async event => {
   if (event.target.id !== 'diagnose-form') return;
   event.preventDefault();
   if (submitting) return;
@@ -1194,10 +1565,13 @@ window.addEventListener('hashchange', async () => {
   try { await refresh(); render(); } catch (error) { toast(error.message); }
 });
 setInterval(() => { if (currentRun() && selectedSession && !document.hidden) pollSession(); }, 900);
-// Only cached CircuitGit snapshots refresh; no scan/status action is implicit.
+// Only cached CircuitGit snapshots or local RuntimeMonitor state refresh; no SSH is implicit.
 setInterval(() => {
   if (!isPublicDemo() && location.hash === '#live' && live.enabled && !live.busy && !live.loading && !document.hidden
       && !document.activeElement?.closest('.live-input-grid')) refreshLive();
+  if (!isPublicDemo() && location.hash === '#direct' && !directState.busy && !directState.loading && !document.hidden
+      && directState.monitor?.watches?.some(w => w?.watch_state === 'armed')
+      && !document.activeElement?.closest('#direct-prepare-form')) refreshDirect();
 }, 3000);
 // Update the age label locally; this does not request another remote sample.
 setInterval(() => {

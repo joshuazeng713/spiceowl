@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -46,7 +47,9 @@ class OnboardingEnvironmentTests(unittest.TestCase):
     def scan(self, *, python2=False):
         """Run authored scanner functions with fixture-only OS and account IO."""
         namespace = {'__name__': 'offline_scanner_fixture'}
-        exec(compile(REMOTE_PYTHON, '<fixed remote scanner>', 'exec'), namespace)
+        fake_pwd = types.SimpleNamespace(getpwuid=lambda _: types.SimpleNamespace(pw_name='synthetic-user', pw_shell='/bin/tcsh'))
+        with patch.dict(sys.modules, {'pwd': fake_pwd}):
+            exec(compile(REMOTE_PYTHON, '<fixed remote scanner>', 'exec'), namespace)
         path = types.SimpleNamespace(**{name: getattr(os.path, name) for name in dir(os.path) if not name.startswith('__')})
         path.realpath = lambda value: value if value.startswith('/etc/') else os.path.realpath(value)
         path.isdir = lambda value: str(value).startswith(str(self.root)) and os.path.isdir(value)
@@ -56,7 +59,7 @@ class OnboardingEnvironmentTests(unittest.TestCase):
             if value.startswith('/etc/'):
                 return self.root / 'system-etc' / value[5:]
             if value == '/proc/meminfo': return self.root / 'meminfo'
-            if value.startswith(str(self.root) + '/') or value == str(self.root): return Path(value)
+            if value.startswith(str(self.root) + os.sep) or value.startswith(str(self.root) + '/') or value == str(self.root): return Path(value)
             raise AssertionError('Scanner attempted IO outside original fixture: ' + value)
         def opening(value, flags):
             self.opens.append(str(value))
@@ -66,8 +69,8 @@ class OnboardingEnvironmentTests(unittest.TestCase):
             return builtins.open(mapped(value), *args, **kwargs)
         observed_os = types.SimpleNamespace(environ=dict(self.env), getcwd=lambda: str(self.cwd), geteuid=lambda: 1234,
             uname=lambda: ('Linux', 'synthetic-server', 'fixture', 'fixture', 'x86_64'),
-            path=path, pathsep=':', O_RDONLY=os.O_RDONLY, O_NONBLOCK=os.O_NONBLOCK,
-            O_NOFOLLOW=os.O_NOFOLLOW, open=opening, fdopen=os.fdopen, fstat=os.fstat,
+            path=path, pathsep=':', O_RDONLY=os.O_RDONLY, O_NONBLOCK=getattr(os, 'O_NONBLOCK', 0),
+            O_NOFOLLOW=getattr(os, 'O_NOFOLLOW', 0), open=opening, fdopen=os.fdopen, fstat=os.fstat,
             access=lambda target, mode: os.access(mapped(target), mode), X_OK=os.X_OK,
             sysconf=lambda _: 8, getloadavg=lambda: (.5, .25, .1), listdir=lambda value: os.listdir(mapped(value)))
         if not python2:
@@ -335,8 +338,9 @@ class OnboardingEnvironmentTests(unittest.TestCase):
 
     def test_fixed_remote_code_and_posix_bootstrap_parse_without_running_commands(self):
         ast.parse(REMOTE_PYTHON)
-        result = subprocess.run(['/bin/sh', '-n'], input=build_environment_probe('c' * 16).encode(), capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        if Path('/bin/sh').is_file():
+            result = subprocess.run(['/bin/sh', '-n'], input=build_environment_probe('c' * 16).encode(), capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertNotIn('eval ', build_environment_probe('c' * 16))
 
     def setup_capture(self):
@@ -466,8 +470,9 @@ class OnboardingEnvironmentTests(unittest.TestCase):
         selected = {'source_id': sid, 'path': str(setup), 'sha256': hashlib.sha256(setup.read_bytes()).hexdigest(),
             'identity': capture['private']['identity']}
         program = _build_setup_probe('f' * 32, selected)
-        result = subprocess.run(['/bin/sh', '-n'], input=program.encode(), capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        if Path('/bin/sh').is_file():
+            result = subprocess.run(['/bin/sh', '-n'], input=program.encode(), capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
         driver = program.split("<<'SPICEOWL_FIXED_ACTIVATION'\n", 1)[1].rsplit('\nSPICEOWL_FIXED_ACTIVATION', 1)[0]
         ast.parse(driver)
         self.assertIn(repr(REMOTE_PYTHON), driver)

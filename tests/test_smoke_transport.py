@@ -101,6 +101,7 @@ class FrozenPlanTests(unittest.TestCase):
                                   license_environment=environment)
 
 
+@unittest.skipIf(os.name == "nt", "Remote Linux worker script requires POSIX modules (pwd/resource)")
 class RemoteFixtureTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

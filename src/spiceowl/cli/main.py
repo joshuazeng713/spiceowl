@@ -8,6 +8,7 @@ import sys
 import time
 
 from spiceowl import __version__
+from spiceowl._platform import default_state_dir
 from spiceowl.agent_channel import agent_channel_error, agent_channel_info
 from spiceowl.domain.common import DomainError, new_id
 from spiceowl.service import Controller
@@ -17,7 +18,7 @@ from spiceowl.storage.sqlite import Store
 def parser():
     result = argparse.ArgumentParser(prog="spiceowl", description="Simulation engine SDK/CLI with standalone Codex and embedded CircuitGit Agent modes.")
     result.add_argument("--version", action="version", version=f"SpiceOwl {__version__}")
-    default = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "spiceowl"
+    default = default_state_dir("spiceowl")
     result.add_argument("--data-dir", default=str(default), help="Local persistent state directory (put before the command).")
     commands = result.add_subparsers(dest="command", required=True)
     serve = commands.add_parser("serve", help="Open the standalone Codex/engine console, or explicitly select CircuitGit embedding.")
@@ -31,7 +32,75 @@ def parser():
     serve.add_argument('--circuitgit-sdk-path', help='Explicit parent of ic_gateway when it is not installed in this Python environment.')
     serve.add_argument("--demo", action="store_true", help="Idempotently add synthetic demo data.")
     serve.add_argument("--live-client-config", help="Private CircuitGit simulation client configuration; enables a separate real simulation panel.")
+    serve.add_argument("--enable-direct-exec", action="store_true", help="Expose standalone SSH Direct / LSF / Slurm execution tools to the local Codex window (still requires human tool approval).")
     commands.add_parser("demo", help="Create the synthetic demo workspace.")
+    direct = commands.add_parser("direct", help="Run simulations directly over SSH, LSF, or Slurm without a CircuitGit gateway.")
+    direct_actions = direct.add_subparsers(dest="action", required=True)
+    d_prep = direct_actions.add_parser("prepare", help="Freeze netlist, support files, and host/scheduler plan locally without launching.")
+    d_prep.add_argument("--run-key", required=True, help="Stable unique run/submission key.")
+    d_prep.add_argument("--netlist", required=True, help="Local Spectre or ngspice netlist file.")
+    d_prep.add_argument("--support", action="append", default=[], help="Optional support file as RELATIVE_PATH=LOCAL_FILE (repeatable).")
+    d_prep.add_argument("--host", help="Explicit registered host ID.")
+    d_prep.add_argument("--hosts", nargs="+", help="Registered host pool IDs for resource-aware host recommendation.")
+    d_prep.add_argument("--scan-hosts", action="store_true", help="Actively scan --hosts before selecting a host.")
+    d_prep.add_argument("--backend", choices=("ssh_direct", "lsf", "slurm"), default="ssh_direct")
+    d_prep.add_argument("--simulator", choices=("spectre", "ngspice"), default="spectre")
+    d_prep.add_argument("--output-format", choices=("psfascii", "psfbin", "psfxl"), default="psfascii")
+    d_prep.add_argument("--expected-version", help="Explicit expected simulator version token.")
+    d_prep.add_argument("--no-pin-version", action="store_true", help="Do not auto-pin the last probed simulator version.")
+    d_prep.add_argument("--cpus", type=int, default=1)
+    d_prep.add_argument("--memory-gib", type=float, default=4.0)
+    d_prep.add_argument("--wall-seconds", type=int, default=3600)
+    d_prep.add_argument("--license-queue-seconds", type=int, default=120)
+    d_prep.add_argument("--enforce-rlimit-as", action="store_true")
+    d_prep.add_argument("--include-dir", action="append", default=[], help="Remote absolute include directory passed via -I (repeatable).")
+    d_prep.add_argument("--remote-python", default="/usr/bin/python3")
+    d_prep.add_argument("--remote-root", default=".spiceowl-runs")
+    d_prep.add_argument("--license-env-json", help="Private JSON file with CDS_LIC_FILE / LM_LICENSE_FILE / CDS_AUTO_64BIT.")
+    d_prep.add_argument("--source-commit", help="Optional lowercase 40-character Git SHA for provenance.")
+    d_prep.add_argument("--queue", help="LSF queue name (required for --backend lsf).")
+    d_prep.add_argument("--project", help="Optional LSF project name.")
+    d_prep.add_argument("--job-group", help="Optional LSF job group path (e.g. /analog/sim).")
+    d_prep.add_argument("--partition", help="Slurm partition name (required for --backend slurm).")
+    d_prep.add_argument("--account", help="Optional Slurm account.")
+    d_prep.add_argument("--qos", help="Optional Slurm QoS.")
+    d_prep.add_argument("--exclusive", action="store_true", help="Request exclusive node allocation on LSF or Slurm.")
+    d_prep.add_argument("--enable-recovery", action="store_true", help="Enable bounded M4 recovery policy for license/OOM operational failures.")
+    d_prep.add_argument("--max-recovery-attempts", type=int, default=2)
+    d_prep.add_argument("--max-memory-gib", type=float, default=64.0)
+    d_prep.add_argument("--license-backoff-seconds", type=int, default=300)
+    direct_actions.add_parser("runs", help="List locally recorded direct-execution runs.")
+    for name in ("inspect", "stage", "launch", "status", "cancel", "collect", "report", "watch", "recover"):
+        cmd = direct_actions.add_parser(name, help={
+            "inspect": "Read local run state without contacting the remote host.",
+            "stage": "Write frozen inputs into the isolated remote run directory.",
+            "launch": "Claim and dispatch at most one remote execution.",
+            "status": "Query remote process or scheduler state without re-launching.",
+            "cancel": "Cancel only the verified owned process group or scheduler job.",
+            "collect": "Collect verified terminal artifacts and build the five-dimensional report.",
+            "report": "Read the collected five-dimensional simulation report.",
+            "watch": "Poll an existing run via RuntimeMonitor until terminal or --max-wait; Ctrl-C never cancels the remote job.",
+            "recover": "Evaluate bounded M4 recovery policy and optionally spawn/launch a child attempt with a saved recovery report.",
+        }[name])
+        cmd.add_argument("run_id")
+        if name == "launch":
+            cmd.add_argument("--skip-resource-recheck", action="store_true", help="Skip pre-launch host headroom recheck.")
+        elif name == "cancel":
+            cmd.add_argument("--action-key", help="Explicit stable cancel action key.")
+        elif name == "watch":
+            cmd.add_argument("--interval", type=float, default=15.0)
+            cmd.add_argument("--max-wait", type=float, default=600.0)
+            cmd.add_argument("--allow-collect", action="store_true", help="Collect terminal artifacts automatically once confirmed terminal.")
+        elif name == "recover":
+            cmd.add_argument("--dry-run", action="store_true", help="Evaluate policy and create child plan without staging or launching.")
+    d_lookup = direct_actions.add_parser("lookup", help="Look up a direct submission key locally without replaying.")
+    d_lookup.add_argument("--key", required=True)
+    d_rec_list = direct_actions.add_parser("recovery-reports", help="Search and list persisted bounded recovery reports.")
+    d_rec_list.add_argument("--query", help="Filter by run ID, host, failure class, or summary.")
+    d_rec_list.add_argument("--outcome", choices=("recovered", "in_progress", "exhausted", "not_recoverable", "policy_disabled", "completed_first_try"))
+    d_rec_get = direct_actions.add_parser("recovery-report", help="Read one persisted recovery report by root or child run ID.")
+    d_rec_get.add_argument("run_id")
+    d_rec_get.add_argument("--markdown", action="store_true", help="Print the human-readable Markdown report.")
     live = commands.add_parser("live", help="Use the configured real CircuitGit Runner with an explicitly bound project.")
     live.add_argument("--client-config", required=True, help="Private spiceowl.live-client.v1 JSON file.")
     live_actions = live.add_subparsers(dest="action", required=True)
@@ -173,6 +242,126 @@ def output(value):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "direct":
+            from spiceowl.direct import DirectExecutionManager
+            manager = DirectExecutionManager(args.data_dir)
+            if args.action == "prepare":
+                if not 0 < args.memory_gib <= 16384:
+                    raise DomainError("Memory must be a positive finite GiB value.")
+                netlist_text = Path(args.netlist).expanduser().read_text(encoding="utf-8")
+                support = {}
+                for entry in args.support:
+                    if "=" not in entry:
+                        raise DomainError("Support file must be formatted as RELATIVE_PATH=LOCAL_FILE.")
+                    rel, local = entry.split("=", 1)
+                    support[rel] = Path(local).expanduser().read_bytes()
+                license_env = None
+                if args.license_env_json:
+                    from spiceowl.hosts import load_profile
+                    license_env = load_profile(args.license_env_json)
+                scheduler = {}
+                if args.backend == "lsf":
+                    scheduler = {"queue": args.queue, "exclusive": args.exclusive}
+                    if args.project is not None:
+                        scheduler["project"] = args.project
+                    if args.job_group is not None:
+                        scheduler["job_group"] = args.job_group
+                elif args.backend == "slurm":
+                    scheduler = {"partition": args.partition, "exclusive": args.exclusive}
+                    if args.account is not None:
+                        scheduler["account"] = args.account
+                    if args.qos is not None:
+                        scheduler["qos"] = args.qos
+                limits = {
+                    "cpu_count": args.cpus,
+                    "memory_bytes": int(args.memory_gib * 2**30),
+                    "wall_seconds": args.wall_seconds,
+                    "license_queue_seconds": args.license_queue_seconds,
+                    "enforce_rlimit_as": args.enforce_rlimit_as,
+                }
+                recovery_policy = {
+                    "enabled": bool(args.enable_recovery),
+                    "max_recovery_attempts": args.max_recovery_attempts,
+                    "max_memory_bytes": int(round(max(float(args.max_memory_gib), float(args.memory_gib)) * 2**30)),
+                    "license_backoff_seconds": args.license_backoff_seconds,
+                    "candidate_host_ids": list(args.hosts) if args.hosts else [],
+                }
+                output(manager.prepare(
+                    run_key=args.run_key,
+                    netlist_text=netlist_text,
+                    host_id=args.host,
+                    host_ids=args.hosts,
+                    scan_hosts=args.scan_hosts,
+                    backend=args.backend,
+                    simulator=args.simulator,
+                    expected_version=args.expected_version,
+                    pin_version=not args.no_pin_version,
+                    support_files=support or None,
+                    limits=limits,
+                    scheduler=scheduler or None,
+                    output_format=args.output_format,
+                    include_dirs=args.include_dir or None,
+                    remote_python=args.remote_python,
+                    remote_root=args.remote_root,
+                    license_environment=license_env,
+                    source_commit=args.source_commit,
+                    recovery_policy=recovery_policy,
+                ))
+            elif args.action == "runs":
+                output(manager.list())
+            elif args.action == "inspect":
+                output(manager.read(args.run_id))
+            elif args.action == "lookup":
+                output(manager.lookup_submission(args.key))
+            elif args.action == "stage":
+                output(manager.stage(args.run_id))
+            elif args.action == "launch":
+                recheck = False if args.skip_resource_recheck else None
+                result = manager.launch(args.run_id, recheck_resources=recheck)
+                output(result)
+                return 2 if result.get("state") in ("launch_outcome_unknown", "reconcile_required", "job_setup_failed") else 0
+            elif args.action == "status":
+                result = manager.status(args.run_id)
+                output(result)
+                return 2 if result.get("status_transport") != "connected" else 0
+            elif args.action == "cancel":
+                result = manager.cancel(args.run_id, action_key=args.action_key)
+                output(result)
+                return 2 if result.get("outcome") not in ("confirmed", "already_terminal") else 0
+            elif args.action == "collect":
+                output(manager.collect(args.run_id))
+            elif args.action == "report":
+                output(manager.report(args.run_id))
+            elif args.action == "recover":
+                res = manager.evaluate_and_recover(args.run_id, execute=not args.dry_run)
+                output(res)
+                return 0 if res["decision"].get("result") in ("allow", "already_recovered") else 2
+            elif args.action == "recovery-reports":
+                output({"reports": manager.list_recovery_reports(query=args.query, outcome=args.outcome)})
+            elif args.action == "recovery-report":
+                res = manager.get_recovery_report(args.run_id)
+                if args.markdown:
+                    print(res["markdown"])
+                else:
+                    output(res)
+            elif args.action == "watch":
+                monitor = manager.monitor(interval_seconds=args.interval, max_backoff_seconds=max(args.interval, 300.0))
+                monitor.watch(args.run_id, allow_collect=args.allow_collect)
+                deadline = time.monotonic() + max(0.0, args.max_wait)
+                receipt = None
+                try:
+                    while True:
+                        receipt = monitor.poll_once(args.run_id)
+                        if receipt["watch_state"] != "armed" or time.monotonic() >= deadline:
+                            break
+                        sleep_for = min(args.interval, max(0.0, deadline - time.monotonic()))
+                        if sleep_for > 0:
+                            time.sleep(sleep_for)
+                except KeyboardInterrupt:
+                    receipt = monitor.snapshot(args.run_id)
+                output({"run": manager.read(args.run_id), "monitor": receipt, "remote_cancelled": False})
+                return 0 if receipt and receipt.get("watch_state") == "terminal" else 2
+            return 0
         if args.command == "workflow":
             from spiceowl.integrations.live import LiveSimulationClient
             client = LiveSimulationClient(args.client_config)
@@ -302,7 +491,8 @@ def main(argv=None):
                 with make_server(app, args.port, live_client_config=args.live_client_config,
                         codex_executable=args.codex_executable, codex_model=args.codex_model,
                         pdk_lut_path=args.pdk_lut, circuitgit_client_config=args.circuitgit_client_config,
-                        circuitgit_sdk_path=args.circuitgit_sdk_path) as server:
+                        circuitgit_sdk_path=args.circuitgit_sdk_path,
+                        enable_direct_exec=args.enable_direct_exec) as server:
                     simulation_mode = "configured real simulation client + separate synthetic demos" if args.live_client_config else "synthetic simulation runs"
                     print(f"SpiceOwl {__version__} · simulation engine · Agent mode: {args.agent_mode} · {simulation_mode}", flush=True)
                     print(f"http://127.0.0.1:{server.server_address[1]}", flush=True)

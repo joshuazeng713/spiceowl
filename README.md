@@ -28,7 +28,7 @@ The showcase distinguishes synthetic teaching controls from saved native simulat
 
 > **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use the standalone Codex window or CircuitGit's existing window in embedded mode. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
 
-> **Early alpha — simulation management from SpiceOwl's own console or CLI.** Scan an authorized server pool, submit committed inputs, observe existing runs in the background, and explicitly collect results. SpiceOwl provides monitoring, Spectre diagnostics, PSF ASCII parsing and numerical analysis. The current remote execution adapter uses CircuitGit's Service/Runner; using that backend does not require working in CircuitGit's design interface. The public demo executes no simulation; automatic solver restart and parameter repair remain future work. Start with the [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [Agent setup guide](docs/dual-mode-agent.md).
+> **Early alpha — simulation management from SpiceOwl's own console or CLI.** Scan an authorized server pool, submit committed inputs, observe existing runs in the background, and explicitly collect results. SpiceOwl provides monitoring, Spectre diagnostics, PSF ASCII parsing and numerical analysis. Remote execution supports both the [native direct execution backend](docs/direct-execution.md) (`ssh_direct`, `lsf`, and `slurm` directly over registered OpenSSH hosts via `spiceowl direct` or `--enable-direct-exec`) and the optional CircuitGit Service/Runner adapter. The public demo executes no simulation; automatic solver restart and parameter repair remain future work. Start with the [direct execution guide](docs/direct-execution.md), [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [Agent setup guide](docs/dual-mode-agent.md).
 
 **Two Agent modes:** standalone SpiceOwl owns one explicitly connected Codex App-Server window; embedded SpiceOwl exports tools into CircuitGit's existing window and never starts a second Agent. Authentication stays with the selected Codex runtime. See the [dual-mode guide](docs/dual-mode-agent.md). See the [paired integration and submodule contract](docs/circuitgit-integration.md).
 
@@ -60,7 +60,7 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
 | Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
 | Validate | Check inputs, required signals, measurement windows, and result completeness | Frozen inverter/prepared-transient recipes, finite authored-TB validation, and optional named ADC algorithms; general TB intent remains explicit |
-| Recover | Apply bounded, recorded recovery policies for supported failures | Advisory policy only; automatic restart, migration and parameter repair are not implemented |
+| Recover | Apply bounded, recorded recovery policies for supported failures | Opt-in bounded M4 recovery implemented for direct runs (watch resume, license backoff retry, confirmed OOM scale-up/relocation + searchable JSON/Markdown recovery reports); native checkpoint continuation and numerical-parameter repair remain unimplemented |
 | Diagnose | Explain evidence and propose actions | Deterministic Spectre classification and five-dimension reports; evidence is available in the standalone Agent conversation or an embedded host conversation |
 | Report | Separate execution outcome, measurement validity, and circuit performance | Five independent experiment dimensions: execution, measurement, performance, operating qualification and dependency provenance |
 
@@ -145,9 +145,10 @@ numerical extras and historical MCP test dependencies, downloads a project-local
 a quick self-check. Use `--serve-demo` to install and start in one command.
 See [developer setup](docs/developer-setup.md) for requirements and recovery.
 
-With Python 3.11+ on macOS or Linux:
+With Python 3.11+ on macOS, Linux, or Windows (see [cross-platform guide](docs/cross-platform.md)):
 
 ```bash
+# macOS / Linux
 git clone https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
@@ -155,7 +156,28 @@ python3 -m venv .venv
 .venv/bin/spiceowl serve --demo
 ```
 
+```powershell
+# Windows (PowerShell)
+git clone https://github.com/spiceowl-dev/spiceowl.git
+cd spiceowl
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install .
+.venv\Scripts\spiceowl.exe serve --demo
+```
+
 Open the printed loopback URL. Explore Connections, inspect a synthetic run, advance its observations and request a demo diagnosis. No model, simulator, Node.js or credentials are needed. Repeating `--demo` preserves stored history. The [guide](docs/local-console.md) covers CLI commands, persistence, limitations and tests.
+
+To verify your installation locally across all features (macOS, Linux, or Windows), run the one-command test workflow:
+
+```bash
+# macOS / Linux
+.venv/bin/python scripts/run_full_tests.py
+
+# Windows (PowerShell)
+.venv\Scripts\python.exe scripts\run_full_tests.py
+```
+
+GitHub Actions automatically runs this full matrix on **macOS, Windows, and Ubuntu** ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)); see [cross-platform support & testing](docs/cross-platform.md) for compatibility rules and ongoing maintenance.
 
 To add a real connection, use **Simulation hosts → Add host**, or import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`. Registration saves local configuration; **Check connection** explicitly verifies the selected host. OpenSSH uses your existing alias and jump-host configuration. The [host onboarding guide](docs/host-onboarding.md) explains setup, safe retries and separate trust, authentication, network and stale-resource states. Version queries do not establish license availability, job state, or simulation validity.
 

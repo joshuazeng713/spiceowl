@@ -3,6 +3,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -59,7 +60,8 @@ class PdkLutTests(unittest.TestCase):
         self.assertFalse(result['record']['coverage']['whole_pdk_inventory'])
         self.assertTrue(result['fresh_audit_required'])
         self.assertFalse(result['remote_freshness_verified'])
-        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+        if os.name != 'nt':
+            self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
     def test_read_only_lookup_does_not_create_or_change_the_database(self):
         before = self.path.read_bytes(); modified = self.path.stat().st_mtime_ns

@@ -76,14 +76,15 @@ class LiveClientTests(unittest.TestCase):
                 LiveSimulationClient(self.config_path)
         self.config = original
         self.write_config()
-        self.config_path.chmod(0o644)
-        with self.assertRaises(DomainError):
-            LiveSimulationClient(self.config_path)
-        self.config_path.chmod(0o600)
-        self.key_path.chmod(0o644)
-        with self.assertRaises(DomainError):
-            LiveSimulationClient(self.config_path)
-        self.key_path.chmod(0o600)
+        if os.name != 'nt':
+            self.config_path.chmod(0o644)
+            with self.assertRaises(DomainError):
+                LiveSimulationClient(self.config_path)
+            self.config_path.chmod(0o600)
+            self.key_path.chmod(0o644)
+            with self.assertRaises(DomainError):
+                LiveSimulationClient(self.config_path)
+            self.key_path.chmod(0o600)
         symlink = self.root / 'linked.json'
         symlink.symlink_to(self.config_path)
         with self.assertRaises(DomainError):
@@ -151,7 +152,8 @@ class LiveClientTests(unittest.TestCase):
         journal = self.journal()
         key = journal['requests'][0]['key']
         self.assertEqual(journal['requests'][0]['state'], 'pending')
-        self.assertEqual(self.client._journal_path.stat().st_mode & 0o777, 0o600)
+        if os.name != 'nt':
+            self.assertEqual(self.client._journal_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(json.loads(records[-1][2].request.call_args.kwargs['body'])['idempotency_key'], key)
         restarted = LiveSimulationClient(self.config_path)
         with patch.object(restarted, '_request', side_effect=AssertionError('must not replay')):

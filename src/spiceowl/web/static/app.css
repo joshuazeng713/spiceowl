@@ -1345,6 +1345,51 @@ dialog .muted {
 
 /* Public preview shares the product UI; these rules apply only to its notice and info pages. */
 .public-demo-banner[hidden],.public-github-link[hidden] { display:none; }
+.direct-handoff { margin:10px 0 6px; }
+.direct-workspace { display:grid; grid-template-columns:minmax(320px,420px) minmax(0,1fr); gap:22px; align-items:start; }
+.direct-panel { padding:22px 24px; }
+.direct-panel h2 { margin:0 0 8px; font-size:16px; }
+.direct-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0; }
+.direct-grid label,.direct-panel>form>label,.direct-sched-box label { display:block; font-size:12px; font-weight:600; color:var(--ink); }
+.direct-grid input,.direct-grid select,.direct-panel textarea,.direct-sched-box input { width:100%; margin-top:5px; }
+.direct-wide { grid-column:1 / -1; }
+.direct-sched-box { margin:12px 0; padding:12px 14px; border:1px solid var(--line); border-radius:7px; background:#fafcfb; }
+.direct-sched-box .direct-grid { margin:6px 0 0; }
+.direct-file-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:12px 0 4px; }
+.direct-file-row label { margin:0; font-size:12px; font-weight:600; }
+.direct-file-label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:11px; color:var(--green); font-weight:600; }
+.direct-file-label input { display:none; }
+.direct-netlist { width:100%; min-height:140px; font:12px/1.6 ui-monospace,monospace; padding:10px; resize:vertical; }
+.direct-run-list { display:grid; gap:10px; margin-top:12px; }
+.direct-run-row { display:flex; justify-content:space-between; align-items:center; gap:12px; width:100%; text-align:left; padding:12px 14px; border:1px solid var(--line); border-radius:7px; background:#fff; cursor:pointer; }
+.direct-run-row.selected { border-color:var(--green); background:#f2f8f5; }
+.direct-run-row strong { display:block; font-size:13px; color:var(--ink); }
+.direct-run-row small { display:block; font-size:11px; color:var(--muted); margin-top:2px; }
+.direct-actions { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 10px; }
+.direct-check-row { display:flex; flex-wrap:wrap; gap:16px; margin:6px 0 10px; font-size:12px; color:var(--muted); }
+.direct-check-row label { display:inline-flex; align-items:center; gap:6px; font-weight:500; cursor:pointer; }
+.direct-check-row input { width:auto; margin:0; }
+.direct-lookup { display:flex; gap:8px; margin-top:12px; }
+.direct-lookup input { flex:1; min-width:0; }
+.direct-report-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin:12px 0; }
+.direct-dim-card { padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:#fafcfb; }
+.direct-dim-card span { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); }
+.direct-dim-card strong { display:block; margin-top:4px; font-size:13px; color:var(--ink); }
+.direct-rec-panel { margin-top:18px; }
+.direct-rec-filters { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.direct-rec-filters input { flex:1 1 220px; min-width:0; }
+.direct-rec-filters select { flex:0 1 180px; }
+.direct-rec-card { margin-top:14px; padding:16px; border:1px solid var(--line); border-radius:7px; background:#fcfcfa; }
+.direct-rec-integrity { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; padding:10px 12px; border-radius:6px; background:#eef6f0; border:1px solid #c9dcd2; font-size:12px; color:#2b5748; }
+.direct-rec-table-wrap { overflow-x:auto; margin:12px 0; }
+.direct-rec-table { width:100%; border-collapse:collapse; font-size:12px; }
+.direct-rec-table th,.direct-rec-table td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+.direct-rec-table th { font-size:11px; color:var(--muted); font-weight:600; }
+.direct-rec-decisions { margin:10px 0 0; padding-left:18px; font-size:12px; line-height:1.65; }
+.direct-rec-decisions li { margin-bottom:6px; }
+.direct-rec-md { max-height:280px; overflow:auto; font:11px/1.6 ui-monospace,monospace; padding:12px; border:1px solid var(--line); border-radius:6px; background:#fff; white-space:pre-wrap; }
+@media(max-width:1050px) { .direct-workspace { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:680px) { .direct-grid { grid-template-columns:minmax(0,1fr); } }
 .public-demo .topbar { position:sticky; top:0; z-index:8; gap:10px; background:#fff; }
 .public-demo .topbar>div { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .public-demo .topbar .prototype-badge { flex:none; margin-left:0; white-space:nowrap; }

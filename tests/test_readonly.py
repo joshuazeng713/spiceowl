@@ -56,7 +56,7 @@ class ReadStoreTests(unittest.TestCase):
         entries = sorted(p.name for p in self.directory.iterdir())
         with patch("spiceowl.storage.sqlite.Store.__init__", side_effect=AssertionError("Store")), patch(
             "spiceowl.storage.sqlite.Store.recover_interrupted", side_effect=AssertionError("recovery")
-        ), patch("fcntl.flock", side_effect=AssertionError("controller lock")), patch(
+        ), patch("spiceowl._platform.lock_file", side_effect=AssertionError("controller lock")), patch(
             "os.chmod", side_effect=AssertionError("chmod")
         ), patch("pathlib.Path.mkdir", side_effect=AssertionError("mkdir")):
             store = ReadStore(self.directory)
@@ -193,7 +193,7 @@ class ReadStoreTests(unittest.TestCase):
         before = self.app.store.path.read_bytes()
         entries = sorted(p.name for p in self.directory.iterdir())
         with patch("spiceowl.storage.sqlite.Store.__init__", side_effect=AssertionError("Store")), \
-                patch("fcntl.flock", side_effect=AssertionError("Lock")), \
+                patch("spiceowl._platform.lock_file", side_effect=AssertionError("Lock")), \
                 patch("os.chmod", side_effect=AssertionError("chmod")), \
                 patch("pathlib.Path.mkdir", side_effect=AssertionError("mkdir")), \
                 patch("socket.create_connection", side_effect=AssertionError("Network")):

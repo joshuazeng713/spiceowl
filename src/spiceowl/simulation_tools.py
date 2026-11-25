@@ -80,6 +80,12 @@ _OWNER = [
                  'arguments': _JSON}, ('operation', 'arguments')), 'approval'),
     _definition('spiceowl_lookup_submission', 'Reconcile one original submission key through the configured owner. Lookup never authorizes replay.',
         _object({'key': {'type': 'string', 'minLength': 8, 'maxLength': 160}}, ('key',))),
+    _definition('spiceowl_direct_read', 'Read locally stored direct-execution runs, submission key mappings, or collected five-dimensional reports without network I/O.',
+        _object({'operation': {'type': 'string', 'enum': ['list', 'inspect', 'lookup', 'report']},
+                 'arguments': _JSON}, ('operation', 'arguments'))),
+    _definition('spiceowl_direct_control', 'Run one bounded direct SSH/LSF/Slurm operation after human tool review. Preserve original identity after uncertainty; never auto-resubmits.',
+        _object({'operation': {'type': 'string', 'enum': ['prepare', 'stage', 'launch', 'status', 'cancel', 'collect']},
+                 'arguments': _JSON}, ('operation', 'arguments')), 'approval'),
 ]
 
 

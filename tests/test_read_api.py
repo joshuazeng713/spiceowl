@@ -166,7 +166,7 @@ class ReadApiTests(unittest.TestCase):
         with (patch('spiceowl.storage.readonly.sqlite3.connect', side_effect=read_connection),
               patch('pathlib.Path.mkdir', side_effect=AssertionError('No mkdir')),
               patch('os.chmod', side_effect=AssertionError('No chmod')),
-              patch('fcntl.flock', side_effect=AssertionError('No controller lock')),
+              patch('spiceowl._platform.lock_file', side_effect=AssertionError('No controller lock')),
               patch('subprocess.Popen', side_effect=AssertionError('No process'))):
             self.read_all(read_api.open_read_views(self.directory))
         self.assertTrue(connections)

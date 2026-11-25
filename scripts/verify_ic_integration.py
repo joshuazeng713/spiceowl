@@ -312,7 +312,8 @@ def write_report(path, report):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # A fresh path avoids silently replacing a previous private verification.
     with path.open("x", encoding="utf-8") as handle:
-        os.chmod(path, 0o600)
+        if os.name != "nt":
+            os.chmod(path, 0o600)
         json.dump(report, handle, ensure_ascii=False, indent=2, allow_nan=False)
         handle.write("\n")
 

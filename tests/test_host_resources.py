@@ -345,6 +345,7 @@ class ResourceShellTests(unittest.TestCase):
         # Disable the optional real filesystem probe; all sampled inputs are fixtures.
         return script.replace("/usr/bin/timeout", "/fictional/not-installed/timeout")
 
+    @unittest.skipUnless(Path("/bin/sh").is_file(), "Requires POSIX /bin/sh")
     def test_fixed_shell_collects_only_aggregate_fixtures(self):
         with tempfile.TemporaryDirectory(prefix="spiceowl-resources-") as directory:
             script = self.fixture_script(directory)
@@ -361,6 +362,7 @@ class ResourceShellTests(unittest.TestCase):
         self.assertNotIn(b"MemFree", result.stdout)
         self.assertNotIn(b"cpu0", result.stdout)
 
+    @unittest.skipUnless(Path("/bin/sh").is_file(), "Requires POSIX /bin/sh")
     def test_identity_guard_prevents_resource_reads(self):
         with tempfile.TemporaryDirectory(prefix="spiceowl-resources-") as directory:
             for host, user in (("wrong-host", "researcher"), ("sim-host", "wrong-user")):
@@ -370,6 +372,7 @@ class ResourceShellTests(unittest.TestCase):
                 self.assertNotIn(b"RESOURCES_BEGIN", result.stdout)
                 self.assertNotIn(b"cpu_first", result.stdout)
 
+    @unittest.skipUnless(Path("/bin/sh").is_file(), "Requires POSIX /bin/sh")
     def test_optional_disk_value_requires_successful_command(self):
         with tempfile.TemporaryDirectory(prefix="spiceowl-resources-") as directory:
             fake_timeout = Path(directory) / "fixture-timeout"

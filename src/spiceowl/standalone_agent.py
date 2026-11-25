@@ -75,13 +75,51 @@ approve, generic HTTP, shell, publication or canonical-source edit is exported.
 
 
 def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=None,
-                                circuitgit_client_config=None, circuitgit_sdk_path=None):
+                                circuitgit_client_config=None, circuitgit_sdk_path=None,
+                                direct_manager=None):
     from spiceowl.read_api import open_read_views
     handlers = {
         'spiceowl_probe_host': lambda args, **_: controller.hosts.probe(args['host_id']),
         'spiceowl_scan_resources': lambda args, **_: controller.hosts.scan(args['host_ids']),
         'spiceowl_recommend_hosts': lambda args, **_: controller.hosts.recommend(args['requirements'], args['host_ids']),
     }
+    if direct_manager is not None:
+        def direct_read(args, **_):
+            op, params = args['operation'], args['arguments']
+            if op == 'list':
+                if params:
+                    raise DomainError('list takes empty arguments.', 'invalid_tool_arguments')
+                return {'runs': direct_manager.list()}
+            if op == 'inspect':
+                return direct_manager.read(params['run_id'])
+            if op == 'lookup':
+                return direct_manager.lookup_submission(params['key'])
+            if op == 'report':
+                return direct_manager.report(params['run_id'])
+            raise DomainError('Unknown direct read operation.', 'invalid_tool_arguments')
+
+        def direct_control(args, *, context):
+            op, params = args['operation'], args['arguments']
+            if op == 'prepare':
+                return direct_manager.prepare(**params)
+            if op == 'stage':
+                return direct_manager.stage(params['run_id'])
+            if op == 'launch':
+                return direct_manager.launch(params['run_id'], recheck_resources=params.get('recheck_resources'))
+            if op == 'status':
+                return direct_manager.status(params['run_id'])
+            if op == 'cancel':
+                action_key = params.get('action_key')
+                if action_key is None and all(context.get(field) for field in ('request_key', 'thread_id', 'turn_id', 'tool_call_id')):
+                    identity = {field: context[field] for field in ('request_key', 'thread_id', 'turn_id', 'tool_call_id')}
+                    action_key = 'cancel-' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:32]
+                return direct_manager.cancel(params['run_id'], action_key=action_key)
+            if op == 'collect':
+                return direct_manager.collect(params['run_id'])
+            raise DomainError('Unknown direct control operation.', 'invalid_tool_arguments')
+
+        handlers['spiceowl_direct_read'] = direct_read
+        handlers['spiceowl_direct_control'] = direct_control
     if pdk_lut_path is not None:
         fixed_path = Path(pdk_lut_path).expanduser().absolute()
         def lookup(args, **_):

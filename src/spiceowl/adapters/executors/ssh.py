@@ -15,12 +15,18 @@ from dataclasses import dataclass
 import os
 import re
 import secrets
-import selectors
 import shlex
-import signal
 import subprocess
 import time
 
+from spiceowl._platform import (
+    BoundedIOError,
+    communicate_bounded,
+    popen_isolation_kwargs,
+    resolve_ssh_executable,
+    ssh_client_options,
+    terminate_process_tree,
+)
 from spiceowl.domain.common import DomainError, utcnow
 from spiceowl.adapters.simulators.probes import parse_version, version_arguments
 from spiceowl.adapters.resources import empty_resources, parse_resource_sample
@@ -151,8 +157,9 @@ def _ssh_argv(target, script, *, ssh_hostname=None):
     # The server's default shell may be csh. It receives one quoted, single-line
     # command; all assignments/control flow are interpreted by /bin/sh instead.
     remote = "exec /bin/sh -c " + shlex.quote(script)
-    argv = ["/usr/bin/ssh", "-T"]
-    for option in _SSH_OPTIONS:
+    executable = resolve_ssh_executable()
+    argv = [executable, "-T"]
+    for option in ssh_client_options(_SSH_OPTIONS, executable=executable):
         argv.extend(("-o", option))
     if ssh_hostname is not None:
         from spiceowl.adapters.hosts import _validate_ssh_hostname
@@ -163,16 +170,8 @@ def _ssh_argv(target, script, *, ssh_hostname=None):
 
 
 def _stop_owned_process(process):
-    # start_new_session gives only this client's process tree its own group.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    finally:
-        try:
-            process.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            pass
+    # Process-group isolation gives only this client's process tree its own group.
+    terminate_process_tree(process, force=True, grace_timeout=1.0)
 
 
 def _invoke(target, script, deadline, *, ssh_hostname=None):
@@ -181,39 +180,31 @@ def _invoke(target, script, deadline, *, ssh_hostname=None):
         raise DomainError("SSH probe reached its time limit.", "probe_timeout")
     process = None
     output = bytearray()
-    total = 0
     stderr_hints = _StderrHints()
     try:
         process = subprocess.Popen(
             _ssh_argv(target, script, ssh_hostname=ssh_hostname), stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            shell=False, start_new_session=True, close_fds=True,
+            shell=False, close_fds=True,
             # Local resolver/SSH errors need the same language as the fixed
             # classifier. Preserve the caller's agent socket and other route
             # environment; never mutate this long-lived service's environment.
             env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+            **popen_isolation_kwargs(),
         )
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise DomainError("SSH probe reached its time limit.", "probe_timeout")
-                for key, _ in selector.select(remaining):
-                    chunk = os.read(key.fileobj.fileno(), min(4096, MAX_OUTPUT_BYTES - total + 1))
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    total += len(chunk)
-                    if total > MAX_OUTPUT_BYTES:
-                        raise DomainError("SSH probe exceeded its output limit.", "probe_output_limit")
-                    if key.data == "stdout":
-                        output.extend(chunk)
-                    else:
-                        stderr_hints.feed(chunk)
-            status = process.wait(timeout=max(0, deadline - time.monotonic()))
+        status = communicate_bounded(
+            process,
+            deadline=deadline,
+            max_output_bytes=MAX_OUTPUT_BYTES,
+            on_stdout=output.extend,
+            on_stderr=stderr_hints.feed,
+            chunk_size=4096,
+        )
         return _Reply(status, bytes(output), stderr_hints.category())
+    except BoundedIOError as error:
+        if error.kind == "output_limit":
+            raise DomainError("SSH probe exceeded its output limit.", "probe_output_limit") from None
+        raise DomainError("SSH probe reached its time limit.", "probe_timeout") from None
     except subprocess.TimeoutExpired:
         raise DomainError("SSH probe reached its time limit.", "probe_timeout") from None
     except OSError:

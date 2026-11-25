@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -155,10 +156,16 @@ class NativeAgentTests(unittest.TestCase):
         self.options = self.root / "options.json"
         self.options.write_text("{}")
         self.trace = self.root / "trace.jsonl"
-        self.executable = self.root / "codex"
-        source = f"#!{sys.executable}\nOPTIONS={str(self.options)!r}\nTRACE={str(self.trace)!r}\nVERSION={SUPPORTED_VERSION!r}\nSENTINEL={SENTINEL!r}\n" + PEER
-        self.executable.write_text(source)
-        self.executable.chmod(0o700)
+        body = f"OPTIONS={str(self.options)!r}\nTRACE={str(self.trace)!r}\nVERSION={SUPPORTED_VERSION!r}\nSENTINEL={SENTINEL!r}\n" + PEER
+        if os.name == "nt":
+            script = self.root / "codex_peer.py"
+            script.write_text(body, encoding="utf-8")
+            self.executable = self.root / "codex.cmd"
+            self.executable.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+        else:
+            self.executable = self.root / "codex"
+            self.executable.write_text(f"#!{sys.executable}\n" + body)
+            self.executable.chmod(0o700)
         self.profile = {"schema":"spiceowl.agent.v1","agent_id":"native-test","label":"Native fixture",
                         "executable":str(self.executable),"model":None}
 
@@ -451,10 +458,11 @@ class NativeAgentTests(unittest.TestCase):
                 ask_agent(self.profile,question,self.workspace)
         with self.assertRaises(DomainError):
             ask_agent(self.profile,"Question","relative")
-        self.workspace.chmod(0o777)
-        with self.assertRaises(DomainError):
-            ask_agent(self.profile,"Question",self.workspace)
-        self.workspace.chmod(0o700)
+        if os.name != "nt":
+            self.workspace.chmod(0o777)
+            with self.assertRaises(DomainError):
+                ask_agent(self.profile,"Question",self.workspace)
+            self.workspace.chmod(0o700)
         self.assertFalse(self.trace.exists())
         self.configure(version="0.999.0")
         result = ask_agent(self.profile,"Question",self.workspace)
@@ -481,6 +489,7 @@ class NativeAgentTests(unittest.TestCase):
                 self.assertEqual(result["error"]["code"],"native_protocol")
                 self.assertNotIn(SENTINEL,json.dumps(result))
 
+    @unittest.skipIf(os.name == "nt", "POSIX os.killpg signal-denial test")
     def test_cleanup_closes_handles_without_masking_signal_denial(self):
         process = NativeProcess(["unused"],str(self.workspace),1)
         child = process.process = Mock()

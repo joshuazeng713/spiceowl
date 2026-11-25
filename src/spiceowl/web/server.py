@@ -45,19 +45,25 @@ def _live_request(body):
 
 def make_server(controller, port=0, live_client_config=None, *, codex_executable=None,
                 codex_model=None, pdk_lut_path=None, circuitgit_client_config=None,
-                circuitgit_sdk_path=None):
+                circuitgit_sdk_path=None, enable_direct_exec=False):
     token = secrets.token_urlsafe(32)
     live_client = None
     if live_client_config is not None:
         from spiceowl.integrations.live import LiveSimulationClient
         live_client = LiveSimulationClient(live_client_config)
+    from spiceowl.direct import DirectExecutionManager, DirectRecoverySupervisor
+    direct_manager = DirectExecutionManager(controller.store.directory, hosts=getattr(controller, "hosts", None))
+    direct_supervisor = DirectRecoverySupervisor(direct_manager)
+    direct_monitor = direct_supervisor.monitor
+    direct_supervisor.resume()
     from spiceowl.codex_bridge import CodexBridge
     definitions, dispatcher = [], None
     if controller.agent_mode == 'standalone':
         from spiceowl.standalone_agent import build_standalone_dispatcher
         dispatcher = build_standalone_dispatcher(controller, live_client=live_client,
             pdk_lut_path=pdk_lut_path, circuitgit_client_config=circuitgit_client_config,
-            circuitgit_sdk_path=circuitgit_sdk_path)
+            circuitgit_sdk_path=circuitgit_sdk_path,
+            direct_manager=direct_manager if enable_direct_exec else None)
         definitions = [{key: row[key] for key in ('name', 'description', 'inputSchema')}
                        for row in dispatcher.definitions()]
     controller.codex = CodexBridge(controller.store.directory / 'codex', mode=controller.agent_mode,
@@ -109,13 +115,13 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 if not secrets.compare_digest(supplied, token):
                     raise DomainError("Refresh the console before making changes.", "forbidden")
 
-        def body(self):
+        def body(self, max_bytes=16384):
             lengths = self.headers.get_all("Content-Length", [])
             if self.headers.get("Transfer-Encoding") or len(lengths) != 1 or not lengths[0].isdigit():
                 raise DomainError("A bounded Content-Length is required.")
             size = int(lengths[0])
-            if not 0 < size <= 16384:
-                raise DomainError("Request body must be between 1 and 16384 bytes.", "too_large")
+            if not 0 < size <= max_bytes:
+                raise DomainError(f"Request body must be between 1 and {max_bytes} bytes.", "too_large")
             if self.headers.get_content_type() != "application/json":
                 raise DomainError("Use application/json.")
             try:
@@ -235,6 +241,143 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 if live_client is None:
                     raise DomainError("Real simulation is not enabled by this server's operator configuration.", "live_not_configured")
                 return self.reply(live_client.lookup_submission(query["key"][0]))
+            if path == "/api/direct/runs" and self.command == "GET":
+                if url.query:
+                    raise DomainError("Direct runs read does not accept query parameters.")
+                return self.reply({
+                    "runs": direct_manager.list(),
+                    "monitor": direct_monitor.snapshot(),
+                    "recovery_reports": direct_manager.list_recovery_reports(),
+                })
+            if path == "/api/direct/prepare" and self.command == "POST":
+                if url.query:
+                    raise DomainError("Direct prepare does not accept query parameters.")
+                payload = self.body(max_bytes=1024 * 1024 + 65536)
+                allowed = {
+                    "run_key", "netlist_text", "host_id", "host_ids", "backend", "simulator",
+                    "output_format", "expected_version", "pin_version", "cpus", "memory_gib",
+                    "wall_seconds", "license_queue_seconds", "enforce_rlimit_as", "scheduler",
+                    "include_dirs", "remote_python", "remote_root", "source_commit", "recovery_policy",
+                }
+                if set(payload) - allowed or not {"run_key", "netlist_text"} <= set(payload):
+                    raise DomainError("Direct prepare requires run_key, netlist_text, and supported direct parameters only.")
+                cpus = payload.get("cpus", 1)
+                memory_gib = payload.get("memory_gib", 4.0)
+                wall_seconds = payload.get("wall_seconds", 3600)
+                lq_seconds = payload.get("license_queue_seconds", 120)
+                enforce_as = payload.get("enforce_rlimit_as", False)
+                if type(cpus) is not int or not 1 <= cpus <= 4096:
+                    raise DomainError("cpus must be an integer between 1 and 4096.")
+                if isinstance(memory_gib, bool) or not isinstance(memory_gib, (int, float)) or not 0.0625 <= float(memory_gib) <= 16384:
+                    raise DomainError("memory_gib must be a number between 0.0625 and 16384.")
+                limits = {
+                    "cpu_count": cpus,
+                    "memory_bytes": int(round(float(memory_gib) * 2**30)),
+                    "wall_seconds": wall_seconds,
+                    "license_queue_seconds": lq_seconds,
+                    "enforce_rlimit_as": enforce_as,
+                }
+                run = direct_manager.prepare(
+                    run_key=payload["run_key"],
+                    netlist_text=payload["netlist_text"],
+                    host_id=payload.get("host_id"),
+                    host_ids=payload.get("host_ids"),
+                    backend=payload.get("backend", "ssh_direct"),
+                    simulator=payload.get("simulator", "spectre"),
+                    expected_version=payload.get("expected_version"),
+                    pin_version=payload.get("pin_version", True),
+                    limits=limits,
+                    scheduler=payload.get("scheduler"),
+                    output_format=payload.get("output_format", "psfascii"),
+                    include_dirs=payload.get("include_dirs"),
+                    remote_python=payload.get("remote_python", "/usr/bin/python3"),
+                    remote_root=payload.get("remote_root", ".spiceowl-runs"),
+                    source_commit=payload.get("source_commit"),
+                    recovery_policy=payload.get("recovery_policy"),
+                )
+                return self.reply({"run": run}, 201)
+            if path == "/api/direct/recovery-reports" and self.command == "GET":
+                query = parse_qs(url.query, keep_blank_values=True)
+                if set(query) - {"q", "outcome"}:
+                    raise DomainError("Recovery report search accepts only q and outcome.")
+                q_val = query["q"][0] if "q" in query and query["q"] else None
+                outcome_val = query["outcome"][0] if "outcome" in query and query["outcome"] else None
+                return self.reply({"reports": direct_manager.list_recovery_reports(query=q_val, outcome=outcome_val)})
+            if path.startswith("/api/direct/recovery-reports/") and self.command == "GET":
+                target_id = require_id(path.removeprefix("/api/direct/recovery-reports/"), "recovery report ID")
+                return self.reply(direct_manager.get_recovery_report(target_id))
+            if path == "/api/direct/submission" and self.command == "GET":
+                query = parse_qs(url.query, keep_blank_values=True)
+                if set(query) != {"key"} or len(query["key"]) != 1:
+                    raise DomainError("An exact submission key is required.")
+                return self.reply(direct_manager.lookup_submission(query["key"][0]))
+            if path.startswith("/api/direct/runs/"):
+                sub = path.removeprefix("/api/direct/runs/").split("/")
+                if len(sub) not in (1, 2):
+                    raise DomainError("This endpoint does not exist.", "not_found")
+                run_id = require_id(sub[0], "direct run ID")
+                if len(sub) == 1 and self.command == "GET":
+                    run = direct_manager.read(run_id)
+                    try:
+                        rep = direct_manager.report(run_id)
+                    except DomainError:
+                        rep = None
+                    return self.reply({"run": run, "report": rep, "monitor": direct_monitor.snapshot(run_id)})
+                if len(sub) == 2 and self.command == "POST":
+                    op = sub[1]
+                    req = self.body()
+                    if op == "stage":
+                        if req:
+                            raise DomainError("Stage takes an empty object.")
+                        return self.reply({"run": direct_manager.stage(run_id)}, 202)
+                    if op == "launch":
+                        if set(req) - {"recheck_resources"} or ("recheck_resources" in req and type(req["recheck_resources"]) is not bool):
+                            raise DomainError("Launch accepts an empty object or boolean recheck_resources.")
+                        return self.reply({"run": direct_manager.launch(run_id, recheck_resources=req.get("recheck_resources"))}, 202)
+                    if op == "status":
+                        if req:
+                            raise DomainError("Status check takes an empty object.")
+                        return self.reply({"run": direct_manager.status(run_id)})
+                    if op == "cancel":
+                        if set(req) - {"action_key"}:
+                            raise DomainError("Cancel accepts an empty object or an explicit action_key.")
+                        return self.reply({"cancel": direct_manager.cancel(run_id, action_key=req.get("action_key")), "run": direct_manager.read(run_id)}, 202)
+                    if op == "collect":
+                        if req:
+                            raise DomainError("Collect takes an empty object.")
+                        collected = direct_manager.collect(run_id)
+                        try:
+                            rep = direct_manager.report(run_id)
+                        except DomainError:
+                            rep = None
+                        return self.reply({"run": collected, "report": rep}, 202)
+                    if op == "watch":
+                        if set(req) - {"allow_collect"} or ("allow_collect" in req and type(req["allow_collect"]) is not bool):
+                            raise DomainError("Watch accepts an empty object or boolean allow_collect.")
+                        try:
+                            receipt = direct_monitor.watch(run_id, allow_collect=req.get("allow_collect", False))
+                            direct_monitor.start()
+                        except ValueError as exc:
+                            raise DomainError(str(exc), "watch_unavailable") from None
+                        return self.reply({"monitor": receipt, "run": direct_manager.read(run_id)}, 202)
+                    if op == "unwatch":
+                        if req:
+                            raise DomainError("Unwatch takes an empty object.")
+                        try:
+                            receipt = direct_monitor.unwatch(run_id)
+                        except ValueError as exc:
+                            raise DomainError(str(exc), "watch_unavailable") from None
+                        return self.reply({"monitor": receipt, "run": direct_manager.read(run_id)})
+                    if op == "policy":
+                        return self.reply({"run": direct_manager.set_recovery_policy(run_id, req)})
+                    if op == "recover":
+                        if set(req) - {"execute"} or ("execute" in req and type(req["execute"]) is not bool):
+                            raise DomainError("Recover accepts an empty object or boolean execute.")
+                        outcome = direct_manager.evaluate_and_recover(
+                            run_id, execute=req.get("execute", True), monitor=direct_monitor,
+                        )
+                        return self.reply(outcome, 202 if outcome["decision"].get("result") == "allow" else 200)
+                raise DomainError("This endpoint does not exist.", "not_found")
             if self.command == "POST" and path == "/api/demo":
                 if self.body():
                     raise DomainError("Demo loading takes an empty object.")
@@ -329,4 +472,12 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
 
         do_GET = do_POST = do_PATCH = do_DELETE = handle_request
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    original_close = server.server_close
+    def close_with_monitor():
+        try:
+            direct_supervisor.stop(timeout=1)
+        finally:
+            original_close()
+    server.server_close = close_with_monitor
+    return server

@@ -5,7 +5,6 @@ workers, invokes SSH, owns simulator processes, or automatically retries a call.
 """
 from contextlib import contextmanager
 import copy
-import fcntl
 import hashlib
 import http.client
 import json
@@ -21,6 +20,14 @@ import time
 from urllib.parse import quote, urlencode, urlsplit
 from uuid import uuid4
 
+from spiceowl._platform import (
+    fsync_dir,
+    is_owner_private_file,
+    lock_file,
+    open_lock_nofollow,
+    open_readonly_nofollow,
+    unlock_file,
+)
 from spiceowl.domain.common import DomainError, utcnow
 from spiceowl.integrations.authority import load_key, sign
 from spiceowl.integrations.ic_workbench import decode_envelope, validate_gateway_config, validate_submission
@@ -93,11 +100,10 @@ def _json(raw):
 
 def _private_read(path, limit, *, missing=False):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = open_readonly_nofollow(path)
         with os.fdopen(fd, 'rb') as stream:
             info = os.fstat(stream.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid())
-                    or info.st_mode & 0o077 or info.st_size > limit):
+            if not is_owner_private_file(info, allow_root=True) or info.st_size > limit:
                 raise DomainError('Use an owner-private regular live-client file within the size limit.', 'live_config_invalid')
             raw = stream.read(limit + 1)
             if len(raw) > limit:
@@ -330,34 +336,37 @@ class LiveSimulationClient:
     def _journal(self):
         """Cross-process nonblocking claim, independent of the demo Controller."""
         try:
-            fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+            fd = open_lock_nofollow(self._lock_path, 0o600)
             with os.fdopen(fd, 'r+b') as lock:
                 info = os.fstat(lock.fileno())
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                if not is_owner_private_file(info):
                     raise DomainError('Live request journal lock is not private.', 'live_journal_invalid')
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_file(lock, nonblocking=True)
                 except BlockingIOError:
                     raise DomainError('Another live request is being handled. Inspect its result before repeating.', 'live_request_busy') from None
-                raw = _private_read(self._journal_path, MAX_JOURNAL_BYTES, missing=True)
-                data = _json(raw) if raw is not None else {'schema': 'spiceowl.live-journal.v1', 'scope': self._scope, 'requests': []}
-                if (not isinstance(data, dict) or set(data) != {'schema', 'scope', 'requests'}
-                        or data['schema'] != 'spiceowl.live-journal.v1' or data['scope'] != self._scope
-                        or not isinstance(data['requests'], list) or len(data['requests']) > MAX_REQUESTS):
-                    raise DomainError('Live request journal requires operator reconciliation.', 'live_journal_invalid')
-                for row in data['requests']:
-                    if (not isinstance(row, dict) or not {'fingerprint', 'operation', 'arguments', 'key', 'state', 'created_at'} <= set(row)
-                            or row['state'] not in ('pending', 'complete', 'rejected')
-                            or not isinstance(row['key'], str) or not _KEY.fullmatch(row['key'])):
-                        raise DomainError('Live request journal is invalid.', 'live_journal_invalid')
-                    if row['operation'] not in KEYED or self._arguments(row['operation'], row['arguments']) != row['arguments']:
-                        raise DomainError('Live request journal identity is invalid.', 'live_journal_invalid')
-                    if row['operation'] == 'run' and row['key'] != 'experiment-' + row['arguments']['plan_id']:
-                        raise DomainError('Live experiment journal changed its stable plan key.', 'live_journal_invalid')
-                    expected = hashlib.sha256(json.dumps([row['operation'], row['arguments']], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-                    if row['fingerprint'] != expected or (row['state'] == 'complete' and not isinstance(row.get('result'), dict)):
-                        raise DomainError('Live request journal identity is invalid.', 'live_journal_invalid')
-                yield data
+                try:
+                    raw = _private_read(self._journal_path, MAX_JOURNAL_BYTES, missing=True)
+                    data = _json(raw) if raw is not None else {'schema': 'spiceowl.live-journal.v1', 'scope': self._scope, 'requests': []}
+                    if (not isinstance(data, dict) or set(data) != {'schema', 'scope', 'requests'}
+                            or data['schema'] != 'spiceowl.live-journal.v1' or data['scope'] != self._scope
+                            or not isinstance(data['requests'], list) or len(data['requests']) > MAX_REQUESTS):
+                        raise DomainError('Live request journal requires operator reconciliation.', 'live_journal_invalid')
+                    for row in data['requests']:
+                        if (not isinstance(row, dict) or not {'fingerprint', 'operation', 'arguments', 'key', 'state', 'created_at'} <= set(row)
+                                or row['state'] not in ('pending', 'complete', 'rejected')
+                                or not isinstance(row['key'], str) or not _KEY.fullmatch(row['key'])):
+                            raise DomainError('Live request journal is invalid.', 'live_journal_invalid')
+                        if row['operation'] not in KEYED or self._arguments(row['operation'], row['arguments']) != row['arguments']:
+                            raise DomainError('Live request journal identity is invalid.', 'live_journal_invalid')
+                        if row['operation'] == 'run' and row['key'] != 'experiment-' + row['arguments']['plan_id']:
+                            raise DomainError('Live experiment journal changed its stable plan key.', 'live_journal_invalid')
+                        expected = hashlib.sha256(json.dumps([row['operation'], row['arguments']], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                        if row['fingerprint'] != expected or (row['state'] == 'complete' and not isinstance(row.get('result'), dict)):
+                            raise DomainError('Live request journal identity is invalid.', 'live_journal_invalid')
+                    yield data
+                finally:
+                    unlock_file(lock)
         except OSError:
             raise DomainError('Cannot access the private live request journal.', 'live_journal_invalid') from None
 
@@ -374,11 +383,7 @@ class LiveSimulationClient:
                 os.fsync(stream.fileno())
             os.replace(name, self._journal_path)
             name = None
-            directory = os.open(self._journal_path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            fsync_dir(self._journal_path.parent)
         finally:
             if name is not None:
                 os.unlink(name)

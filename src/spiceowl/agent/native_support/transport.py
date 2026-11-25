@@ -3,10 +3,13 @@
 from collections import deque
 import json
 import os
+import queue
 import selectors
-import signal
 import subprocess
+import threading
 import time
+
+from spiceowl._platform import IS_WINDOWS, popen_isolation_kwargs, terminate_process_tree
 
 
 MAX_FRAME = 1_048_576
@@ -48,12 +51,33 @@ class NativeProcess:
         self.argv, self.cwd = argv, cwd
         self.deadline = time.monotonic() + timeout
         self.process = None
-        self.selector = selectors.DefaultSelector()
+        self.selector = None if IS_WINDOWS else selectors.DefaultSelector()
+        self._events = queue.Queue() if IS_WINDOWS else None
+        self._stop = threading.Event()
+        self._open_streams = 0
         self.buffer = bytearray()
         self.queue = deque()
         self.stdout_bytes = self.stderr_bytes = self.messages = 0
         self.stdout_closed = False
         self.request_id = 0
+
+    def _start_reader(self, stream, name):
+        def _pump():
+            try:
+                while not self._stop.is_set():
+                    try:
+                        chunk = os.read(stream.fileno(), 65536)
+                    except OSError:
+                        self._events.put(("error", name))
+                        return
+                    if not chunk:
+                        break
+                    self._events.put((name, chunk))
+            finally:
+                self._events.put(("eof", name))
+
+        self._open_streams += 1
+        threading.Thread(target=_pump, name=f"spiceowl-native-{name}", daemon=True).start()
 
     def __enter__(self):
         try:
@@ -61,12 +85,16 @@ class NativeProcess:
             # No shell, daemon proxy, socket attach, config edit or CLI fallback.
             self.process = subprocess.Popen(
                 self.argv, cwd=self.cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, bufsize=0, start_new_session=True,
+                stderr=subprocess.PIPE, bufsize=0, **popen_isolation_kwargs(),
             )
-            for stream, name in ((self.process.stdout, "stdout"), (self.process.stderr, "stderr")):
-                os.set_blocking(stream.fileno(), False)
-                self.selector.register(stream, selectors.EVENT_READ, name)
-            os.set_blocking(self.process.stdin.fileno(), False)
+            if IS_WINDOWS:
+                self._start_reader(self.process.stdout, "stdout")
+                self._start_reader(self.process.stderr, "stderr")
+            else:
+                for stream, name in ((self.process.stdout, "stdout"), (self.process.stderr, "stderr")):
+                    os.set_blocking(stream.fileno(), False)
+                    self.selector.register(stream, selectors.EVENT_READ, name)
+                os.set_blocking(self.process.stdin.fileno(), False)
         except OSError:
             self.close()
             raise NativeFailure("native_start") from None
@@ -76,6 +104,7 @@ class NativeProcess:
         self.close()
 
     def close(self):
+        self._stop.set()
         process = self.process
         try:
             if process is not None:
@@ -86,18 +115,7 @@ class NativeProcess:
                 try:
                     process.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        process.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        process.wait(timeout=1)
+                    terminate_process_tree(process, force=False, grace_timeout=1.0)
         except (OSError, subprocess.TimeoutExpired):
             # Cleanup must not overwrite an observed terminal result or an
             # outcome_unknown error. A denied signal is not retried elsewhere.
@@ -110,7 +128,8 @@ class NativeProcess:
                             stream.close()
                         except OSError:
                             pass
-            self.selector.close()
+            if self.selector is not None:
+                self.selector.close()
             self.queue.clear()
             self.buffer.clear()
 
@@ -121,6 +140,31 @@ class NativeProcess:
         return left
 
     def _read(self):
+        if IS_WINDOWS:
+            if self._open_streams <= 0:
+                self.stdout_closed = True
+                return
+            try:
+                kind, payload = self._events.get(timeout=self._remaining())
+            except queue.Empty:
+                raise NativeFailure("native_timeout") from None
+            if kind == "error":
+                raise NativeFailure("native_disconnected")
+            if kind == "eof":
+                self._open_streams -= 1
+                if payload == "stdout":
+                    self.stdout_closed = True
+                return
+            if kind == "stderr":
+                self.stderr_bytes += len(payload)
+                if self.stderr_bytes > MAX_STDERR:
+                    raise NativeFailure("native_output_limit")
+            else:
+                self.stdout_bytes += len(payload)
+                if self.stdout_bytes > MAX_STDOUT:
+                    raise NativeFailure("native_output_limit")
+                self.buffer.extend(payload)
+            return
         ready = self.selector.select(self._remaining())
         if not ready:
             raise NativeFailure("native_timeout")
@@ -177,6 +221,26 @@ class NativeProcess:
             raise NativeFailure("native_protocol") from None
         if len(data) > MAX_FRAME:
             raise NativeFailure("native_output_limit")
+        if IS_WINDOWS:
+            done = threading.Event()
+            error = []
+
+            def write_all():
+                try:
+                    offset = 0
+                    while offset < len(data):
+                        offset += os.write(self.process.stdin.fileno(), data[offset:])
+                except (BrokenPipeError, OSError) as exc:
+                    error.append(exc)
+                finally:
+                    done.set()
+
+            threading.Thread(target=write_all, name="spiceowl-native-write", daemon=True).start()
+            if not done.wait(self._remaining()):
+                raise NativeFailure("native_timeout")
+            if error:
+                raise NativeFailure("native_disconnected") from None
+            return
         with selectors.DefaultSelector() as writable:
             writable.register(self.process.stdin, selectors.EVENT_WRITE)
             offset = 0

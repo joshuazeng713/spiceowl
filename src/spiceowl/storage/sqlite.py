@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 
+from spiceowl._platform import chmod_private
 from spiceowl.domain.common import DomainError, new_id, utcnow
 
 
@@ -28,7 +29,7 @@ class Store:
             db.execute("CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT UNIQUE NOT NULL, session_id TEXT NOT NULL, turn_id TEXT NOT NULL REFERENCES turns(id), kind TEXT NOT NULL, body TEXT NOT NULL, observed_at TEXT NOT NULL)")
             db.execute("CREATE INDEX IF NOT EXISTS events_by_session ON events(session_id,sequence)")
             db.execute("PRAGMA user_version=1")
-        os.chmod(self.path, 0o600)
+        chmod_private(self.path, 0o600)
 
     @contextmanager
     def transaction(self):

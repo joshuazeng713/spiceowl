@@ -1,4 +1,5 @@
 import concurrent.futures
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,9 +15,13 @@ class NativeQuestionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.app = Controller(self.temp.name)
         self.app.seed_demo()
-        executable = Path(self.temp.name) / "codex"
-        executable.write_text("#!/bin/sh\nexit 1\n")
-        executable.chmod(0o700)
+        if os.name == "nt":
+            executable = Path(self.temp.name) / "codex.cmd"
+            executable.write_text("@echo off\r\nexit /b 1\r\n")
+        else:
+            executable = Path(self.temp.name) / "codex"
+            executable.write_text("#!/bin/sh\nexit 1\n")
+            executable.chmod(0o700)
         self.profile = {"schema": "spiceowl.agent.v1", "agent_id": "test-agent", "label": "Test native runtime",
                         "executable": str(executable), "model": None}
         self.app.native_agents.add(self.profile)

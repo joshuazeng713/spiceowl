@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 
+from .._platform import IS_WINDOWS
 from ..domain.common import DomainError
 
 MAX_LINE = 2 * 1024 * 1024
@@ -48,12 +49,41 @@ class StdioTransport:
             try:
                 self.process = subprocess.Popen(self.argv, cwd=self.cwd, stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                os.set_blocking(self.process.stdin.fileno(), False)
+                if not IS_WINDOWS:
+                    os.set_blocking(self.process.stdin.fileno(), False)
             except (OSError, ValueError):
                 raise BridgeError('Could not start the configured Codex executable.', 'codex_start_failed') from None
             self.closed = False
             self.reader = threading.Thread(target=self._read, name='spiceowl-codex-rpc', daemon=True)
             self.reader.start()
+
+    def _send_windows(self, raw):
+        done = threading.Event()
+        error = []
+
+        def write_all():
+            try:
+                pending = memoryview(raw)
+                while pending:
+                    written = os.write(self.process.stdin.fileno(), pending)
+                    if written <= 0:
+                        raise OSError('short write')
+                    pending = pending[written:]
+            except (OSError, ValueError) as exc:
+                error.append(exc)
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=write_all, name='spiceowl-codex-write', daemon=True)
+        worker.start()
+        if not done.wait(self.timeout):
+            try:
+                self.process.stdin.close()
+            except OSError:
+                pass
+            raise BridgeError('Codex input write timed out; preserve the original request.', 'codex_outcome_unknown')
+        if error:
+            raise error[0]
 
     def send(self, message):
         raw = (encode(message) + '\n').encode('utf-8')
@@ -61,19 +91,24 @@ class StdioTransport:
             if self.closed or self.process is None:
                 raise BridgeError('Codex transport is disconnected; no request was replayed.', 'codex_disconnected')
             try:
-                pending = memoryview(raw)
-                deadline = time.monotonic() + self.timeout
-                while pending:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0 or not select.select([], [self.process.stdin], [], remaining)[1]:
-                        raise BridgeError('Codex input write timed out; preserve the original request.', 'codex_outcome_unknown')
-                    try:
-                        written = os.write(self.process.stdin.fileno(), pending)
-                    except BlockingIOError:
-                        continue
-                    if written <= 0:
-                        raise OSError('short write')
-                    pending = pending[written:]
+                if IS_WINDOWS:
+                    self._send_windows(raw)
+                else:
+                    pending = memoryview(raw)
+                    deadline = time.monotonic() + self.timeout
+                    while pending:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not select.select([], [self.process.stdin], [], remaining)[1]:
+                            raise BridgeError('Codex input write timed out; preserve the original request.', 'codex_outcome_unknown')
+                        try:
+                            written = os.write(self.process.stdin.fileno(), pending)
+                        except BlockingIOError:
+                            continue
+                        if written <= 0:
+                            raise OSError('short write')
+                        pending = pending[written:]
+            except BridgeError:
+                raise
             except (OSError, ValueError):
                 raise BridgeError('Codex transport write is uncertain; preserve the original request.', 'codex_outcome_unknown') from None
 

@@ -13,6 +13,7 @@ import re
 import sqlite3
 import time
 
+from spiceowl._platform import is_owner_private_file
 from spiceowl.domain.common import DomainError
 from .pdk_discovery import profile_suggestions
 
@@ -120,7 +121,7 @@ class PdkLut:
         if not self.path.exists():
             descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             os.close(descriptor)
-        elif self.path.stat().st_mode & 0o077:
+        elif not is_owner_private_file(self.path.stat()):
             _invalid('The PDK cache file must be owner-private (mode 0600).')
         self.connection = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, timeout=5) if read_only else sqlite3.connect(self.path, timeout=5)
         self.connection.row_factory = sqlite3.Row

@@ -2,7 +2,6 @@
 import copy
 import contextlib
 from datetime import datetime, timedelta, timezone
-import fcntl
 import json
 import math
 import os
@@ -12,6 +11,8 @@ import threading
 import time
 import uuid
 from typing import Protocol
+
+from spiceowl._platform import file_lock, lock_file, unlock_file
 
 
 class RunnerProtocol(Protocol):
@@ -48,14 +49,8 @@ def atomic(path, value):
 
 @contextlib.contextmanager
 def locked(path):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+    with file_lock(path, nonblocking=False, mode='a', create_dir=True):
+        yield
 
 
 MAX_WATCHES = 128
@@ -277,9 +272,15 @@ class RuntimeMonitor:
         path = self._run_path(run_id)
         with (path / 'monitor.lock').open('a') as gate:
             try:
-                fcntl.flock(gate, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(gate, nonblocking=True)
             except BlockingIOError:
                 return self.snapshot(run_id)
+            try:
+                return self._poll_once_locked(run_id, entry)
+            finally:
+                unlock_file(gate)
+
+    def _poll_once_locked(self, run_id, entry):
             receipt = self._receipt(run_id)
             if receipt is None or receipt.get('watch_id') != entry['watch_id'] or receipt.get('allow_collect') != entry['allow_collect']:
                 raise ValueError('Explicit watch and receipt are inconsistent; reconcile before monitoring')
@@ -378,6 +379,7 @@ class RuntimeMonitor:
         finally:
             with self._mutex:
                 if self._owner is not None:
+                    unlock_file(self._owner)
                     self._owner.close()
                     self._owner = None
 
@@ -389,7 +391,7 @@ class RuntimeMonitor:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             owner = (self.root / 'owner.lock').open('a')
             try:
-                fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(owner, nonblocking=True)
             except BlockingIOError:
                 owner.close()
                 raise ValueError('A monitor already owns this Runner storage') from None

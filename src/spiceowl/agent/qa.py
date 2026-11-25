@@ -4,8 +4,7 @@ Only the owning Controller starts inference or recovers unfinished requests.
 The native runtime owns authentication; this module never reads credentials.
 """
 
-import fcntl
-
+from spiceowl._platform import lock_file, unlock_file
 from spiceowl.domain.common import DomainError, digest, require_id, utcnow
 from spiceowl.storage.sqlite import Store
 
@@ -56,14 +55,17 @@ class NativeRegistry:
         record = self.inspect(agent_id)
         with (self.store.directory / f".native-probe-{agent_id}.lock").open("a+") as lock:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(lock, nonblocking=True)
             except BlockingIOError:
                 raise DomainError("This agent already has a readiness check in progress.", "busy") from None
-            profile = {key: record[key] for key in PROFILE_FIELDS}
-            result = probe_agent(profile, self.store.directory)
-            result = result | {"observed_at": utcnow(), "inference_access": "unverified"}
-            self.store.update("agent_profile", agent_id, lambda value: value | {"last_probe": result})
-            return result
+            try:
+                profile = {key: record[key] for key in PROFILE_FIELDS}
+                result = probe_agent(profile, self.store.directory)
+                result = result | {"observed_at": utcnow(), "inference_access": "unverified"}
+                self.store.update("agent_profile", agent_id, lambda value: value | {"last_probe": result})
+                return result
+            finally:
+                unlock_file(lock)
 
 
 class Questions:

@@ -32,7 +32,7 @@ SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，帮�
 
 [从零接入仿真](docs/onboarding-discovery.md)：通过已配置的后端解析导入电路源、探测选中的 SSH 环境和模型候选，再固定明确的实验条件。发现过程报告有限的搜索范围，不启动仿真；源文件提取、模型选择与科学有效性判定分别记录。
 
-> **早期 Alpha：在 SpiceOwl 自己的控制台或 CLI 中管理仿真。** 检查已授权的服务器池、提交已固定 Git 版本的输入、后台观察已有任务并显式收集结果。SpiceOwl 提供监控、Spectre 诊断、PSF ASCII 解析和数值分析。当前远端执行适配器使用 CircuitGit Service/Runner；使用这一后端不要求在 CircuitGit 的设计界面中工作。公开演示不执行仿真，自动重启求解器和参数修复仍待实现。见[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[Agent 配置指南](docs/dual-mode-agent.md)。
+> **早期 Alpha：在 SpiceOwl 自己的控制台或 CLI 中管理仿真。** 检查已授权的服务器池、提交已冻结的输入、后台观察已有任务并显式收集结果。SpiceOwl 提供监控、Spectre 诊断、PSF ASCII 解析和数值分析。远端执行同时支持不依赖网关的[原生直连执行后端](docs/direct-execution.md)（通过 `spiceowl direct` 或 `--enable-direct-exec` 直接经已登记 OpenSSH 路由运行 `ssh_direct` / `lsf` / `slurm`），以及可选的 CircuitGit Service/Runner 适配器。公开演示不执行仿真，自动重启求解器和参数修复仍待实现。见[原生直连执行指南](docs/direct-execution.md)、[独立仿真指南](docs/standalone-runtime.md)、[控制台指南](docs/local-console.md)和[Agent 配置指南](docs/dual-mode-agent.md)。
 
 [引导式仿真接入](docs/smart-onboarding.md)提供有源码依据的器件定义预填、模型入口与 section 推荐、远端平台 TMI 匹配及可编辑的实验预设。接入工具返回明确的下一步动作；新 intake 使用自己的网表及明确绑定来源的观测，缺失证据和提交结果不确定的状态会明确保留。
 
@@ -60,7 +60,7 @@ SpiceOwl 希望把这些情况变成一份清晰的实验记录：执行了什�
 | 观察 | 跟踪任务身份与观测的新鲜程度 | 已有任务的后台状态监控、有限查询与退避、Spectre 日志证据和主机总体资源快照 |
 | 重连 | 在客户端或控制器中断后核对并找回原任务 | 原提交 key 精确查询、固定任务状态查询与持久请求记录；结果未知的派发不重放 |
 | 验收 | 检查输入、必需信号、测量窗口和结果完整性 | 固定条件的反相器／预备瞬态配方、有限语法的用户 TB 校验及可选 ADC 算法；通用 TB 仍须明确实验目的 |
-| 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 仅提供建议性策略；自动重启、迁移和参数修复未实现 |
+| 恢复 | 对支持的故障执行有次数、资源边界且可追溯的恢复策略 | 直连后端已支持可选的 M4 有界恢复（重启恢复 watch、许可证退避重试、确认 OOM 内存扩配/主机迁移与可搜索 JSON/Markdown 恢复报告）；求解器 checkpoint 续算与数值参数修复未实现 |
 | 诊断 | 解释证据并提出处理建议 | 确定性的 Spectre 分类与五维报告；可在独立 Agent 会话或嵌入宿主的会话中读取证据 |
 | 报告 | 分别呈现执行结果、测量有效性和电路性能 | 五个独立实验维度：执行、测量、性能、工作条件检查与依赖来源 |
 
@@ -126,9 +126,10 @@ Python 开发环境、数值依赖及历史 MCP 测试依赖并自检；缺少�
 随后运行 `.venv/bin/spiceowl serve --demo`。加 `--serve-demo` 可合并安装与启动。
 环境要求、重复安装和故障处理见[开发者环境说明](docs/developer-setup.md)。
 
-在 macOS 或 Linux 上使用 Python 3.11 及以上版本：
+在 macOS、Linux 或原生 Windows 上使用 Python 3.11 及以上版本（详见[跨平台兼容指南](docs/cross-platform.md)）：
 
 ```bash
+# macOS / Linux
 git clone https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
@@ -136,7 +137,28 @@ python3 -m venv .venv
 .venv/bin/spiceowl serve --demo
 ```
 
+```powershell
+# Windows (PowerShell)
+git clone https://github.com/spiceowl-dev/spiceowl.git
+cd spiceowl
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install .
+.venv\Scripts\spiceowl.exe serve --demo
+```
+
 打开命令打印的本地网址，即可管理模拟连接、查看合成任务、推进观测并请求演示诊断。不需要模型、仿真器、Node.js 或凭据。重复使用 `--demo` 会保留已有历史；CLI、持久化和测试方式见[指南](docs/local-console.md)。
+
+新开发者或用户可在本地一键运行覆盖全功能的自动化测试工作流（支持 macOS / Linux / Windows）：
+
+```bash
+# macOS / Linux
+.venv/bin/python scripts/run_full_tests.py
+
+# Windows (PowerShell)
+.venv\Scripts\python.exe scripts\run_full_tests.py
+```
+
+仓库已配置 **macOS、Windows 与 Ubuntu** 三端自动 CI 工作流（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)），跨平台规范与后续维护清单见[跨平台兼容与测试指南](docs/cross-platform.md)。
 
 真实连接可在网页 **Simulation hosts → Add host** 中填写，或使用 `spiceowl hosts add --file PROFILE.json` 导入操作者编写的私有配置。登记只保存本地配置；**Check connection** 才显式检查所选主机。OpenSSH 复用已有别名和跳板配置。[主机接入指南](docs/host-onboarding.md)说明配置、重复保存及信任、认证、网络和资源过期的不同状态。版本查询不代表许可证可用、任务正在运行或仿真结果有效。
 

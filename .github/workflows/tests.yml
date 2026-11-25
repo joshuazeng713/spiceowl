@@ -8,11 +8,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Core suite (${{ matrix.os }} / py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +111,44 @@ jobs:
           python -m pip install --no-deps .
           python scripts/build_pages.py --output dist/pages
           node tests/pages-demo.mjs dist/pages
+          node tests/pages-browser.mjs --self-test
+          PAGES_DIR=dist/pages node tests/pages-browser.mjs --build-check
+
+  browser-e2e:
+    name: Browser E2E & layout checks (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build static Pages bundle
+        run: |
+          python -m pip install --no-deps .
+          python scripts/build_pages.py --output dist/pages
+      - name: Install Playwright Chromium for headless UI verification
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Run full desktop & mobile browser E2E checks (pages-browser + live-browser)
+        run: |
+          PAGES_DIR=dist/pages PAGES_QA_DIR=.spiceowl/pages-qa node tests/pages-browser.mjs
+          LIVE_QA_DIR=.spiceowl/live-browser-qa node tests/live-browser.mjs
+      - name: Upload browser QA report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-e2e-qa
+          path: |
+            .spiceowl/pages-qa
+            .spiceowl/live-browser-qa
+          if-no-files-found: warn
 
   mcp:
     name: Optional MCP stdio protocol (${{ matrix.os }})

@@ -719,12 +719,13 @@ function syncWaveformSelection(resetData = false) {
   const ds = currentWfDatasetMeta();
   const avail = (ds?.signals || []).map(s => s.name);
   directState.wfSignals = directState.wfSignals.filter(s => avail.includes(s));
+  const clk = avail.find(name => /clk|clock/i.test(name)) || '';
   if (!directState.wfSignals.length && avail.length) {
-    directState.wfSignals = avail.slice(0, Math.min(2, avail.length));
+    const primary = avail.find(name => name !== clk);
+    directState.wfSignals = primary ? [primary] : avail.slice(0, 1);
   }
   if (!directState.wfClock || !avail.includes(directState.wfClock)) {
-    const clk = avail.find(name => /clk|clock/i.test(name));
-    directState.wfClock = clk || '';
+    directState.wfClock = clk;
   }
   if (!directState.wfWorstSignal || !directState.wfSignals.includes(directState.wfWorstSignal)) {
     const nonClk = directState.wfSignals.find(name => name !== directState.wfClock);

@@ -154,4 +154,56 @@ await test('real operations, credentials and undeclared routes are rejected with
   assert.equal(networkCalls, 0);
 });
 
+await test('interactive browser sandbox covers waveforms, Cycle Slicer, PVT/MC batches, recovery and Agent eval with zero network calls', async () => {
+  const {demo, storage} = load();
+  const runs = await demo.request('/api/direct/runs');
+  assert.ok(Array.isArray(runs.runs) && runs.runs.length >= 2);
+  const staged = await post(demo, '/api/direct/runs/demo-sandbox-rc/stage');
+  assert.equal(staged.run.state, 'staged');
+  const launched = await post(demo, '/api/direct/runs/demo-sandbox-rc/launch');
+  assert.equal(launched.run.state, 'running_observed');
+  const status = await post(demo, '/api/direct/runs/demo-sandbox-rc/status');
+  assert.equal(status.run.state, 'simulator_complete_pending_measurements');
+  const collected = await post(demo, '/api/direct/runs/demo-sandbox-rc/collect');
+  assert.equal(collected.report?.schema, 'spiceowl.simulation-report.v1');
+  const detail = await demo.request('/api/direct/runs/demo-sandbox-rc');
+  assert.equal(detail.report?.schema, 'spiceowl.simulation-report.v1');
+
+  const wf = await post(demo, '/api/direct/demo-waveform');
+  const ds = wf.waveforms.datasets[0].dataset;
+  const preview = await post(demo, '/api/direct/runs/demo-psfbin-500c/waveforms/query', {dataset: ds, signals: ['v(out)', 'v(clk)'], max_points: 1200});
+  assert.equal(preview.exact, false);
+  assert.equal(preview.measurement_safe, false);
+  assert.ok(preview.envelopes['v(out)'].length > 0);
+  const zoomed = await post(demo, '/api/direct/runs/demo-psfbin-500c/waveforms/query', {dataset: ds, signals: ['v(out)'], x_min: 3.16e-6, x_max: 3.19e-6, max_points: 1200});
+  assert.equal(zoomed.exact, true);
+  assert.equal(zoomed.measurement_safe, true);
+  const cycles = await post(demo, '/api/direct/runs/demo-psfbin-500c/waveforms/cycles', {dataset: ds, signals: ['v(out)', 'v(clk)'], clock_signal: 'v(clk)', worst_metric: 'peak_to_peak', worst_signal: 'v(out)'});
+  assert.equal(cycles.worst_cycle_index, 317);
+  assert.ok(cycles.cycle_count >= 490);
+
+  const pvt = await post(demo, '/api/direct/batches/demo', {kind: 'pvt'});
+  assert.equal(pvt.summary.counts.total, 27);
+  assert.ok(pvt.markdown.length > 50 && pvt.csv.includes('case_id'));
+  const mc = await post(demo, '/api/direct/batches/demo', {kind: 'monte_carlo'});
+  assert.equal(mc.summary.counts.total, 40);
+  assert.equal(mc.summary.counts.execution_failed, 1);
+
+  const recs = await demo.request('/api/direct/recovery-reports');
+  assert.ok(recs.reports.length >= 1);
+  const recDetail = await demo.request('/api/direct/recovery-reports/' + recs.reports[0].root_run_id);
+  assert.ok(recDetail.markdown.includes('SHA-256'));
+
+  const ev = await post(demo, '/api/agent/eval', {baseline: 'compare', repeats: 1});
+  assert.equal(ev.deterministic.overall_pass_rate_pct, 100);
+  assert.equal(ev.deterministic.results.length, 10);
+  assert.equal(ev.deterministic.safety_counters.unauthorized_dispatches, 0);
+  assert.equal(ev.deterministic.safety_counters.duplicate_dispatches, 0);
+  assert.equal(ev.deterministic.safety_counters.false_scientific_passes, 0);
+
+  const savedKeys = [...storage.data.values()].map(raw => Object.keys(JSON.parse(raw)).sort().join(','));
+  for (const keys of savedKeys) assert.equal(keys, 'build_id,connections,cursors,diagnoses,schema,serial');
+  assert.equal(networkCalls, 0);
+});
+
 console.log(JSON.stringify({status: 'passed', checks: results, network_calls: networkCalls}, null, 2));

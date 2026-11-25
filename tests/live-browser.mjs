@@ -187,7 +187,10 @@ try {
   await new Promise((yes, no) => { server.once('error', no); server.listen(0, '127.0.0.1', yes); });
   const origin = `http://127.0.0.1:${server.address().port}`;
   const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-  browser = await chromium.launch({headless: true, ...(process.env.CHROME_PATH ? {executablePath: process.env.CHROME_PATH} : {channel: 'chrome'}), args: ['--disable-background-networking']});
+  const launchOpts = {headless: true, args: ['--disable-background-networking']};
+  if (process.env.CHROME_PATH) launchOpts.executablePath = process.env.CHROME_PATH;
+  else if (process.env.PLAYWRIGHT_CHANNEL) launchOpts.channel = process.env.PLAYWRIGHT_CHANNEL;
+  browser = await chromium.launch(launchOpts);
   const context = await browser.newContext({viewport: {width: 1440, height: 1050}, serviceWorkers: 'block'});
   const legacyPending = JSON.stringify({agent_id: 'removed-legacy-profile', question: 'Old unresolved question', request_key: 'preserve-old-key'});
   await context.addInitScript(pending => sessionStorage.setItem('spiceowl.native-pending', pending), legacyPending);

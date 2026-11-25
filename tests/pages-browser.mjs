@@ -20,7 +20,7 @@ const SECRET_PATTERNS = [
   ['api_key', /\bsk-(?:proj-)?[A-Za-z0-9_-]{30,}\b/],
 ];
 const MIME = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.scs': 'text/plain', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon'};
+  '.json': 'application/json', '.scs': 'text/plain', '.svg': 'image/svg+xml', '.png': 'image/png', '.webp': 'image/webp', '.ico': 'image/x-icon'};
 
 function routePolicy(url, method, origin) {
   if (!['GET', 'HEAD'].includes(method)) return 'non_static_method';
@@ -54,7 +54,7 @@ async function inspectBuild(directory) {
       assert.ok(!entry.name.startsWith('.') || entry.name === '.nojekyll', `Unexpected hidden build entry: ${name}`);
       if (entry.isDirectory()) { await visit(path); continue; }
       assert.ok(entry.isFile(), `Build entry is not a regular file: ${name}`);
-      assert.ok(entry.name === '.nojekyll' || ['.html', '.js', '.css', '.json', '.scs', '.svg', '.png', '.ico', '.txt'].includes(extname(path)),
+      assert.ok(entry.name === '.nojekyll' || ['.html', '.js', '.css', '.json', '.scs', '.svg', '.png', '.webp', '.ico', '.txt'].includes(extname(path)),
         `Unexpected build file type: ${name}`);
       const raw = await readFile(path);
       if (['.html', '.js', '.css', '.json', '.scs', '.svg', '.txt'].includes(extname(path))) {
@@ -66,11 +66,14 @@ async function inspectBuild(directory) {
     }
   }
   await visit(directory);
-  assert.deepEqual(inventory.map(file => file.name).sort(),
-    ['.nojekyll', 'LICENSE.txt', 'app.css', 'app.js', 'build.json', 'demo-data.js', 'demo.js', 'index.html', 'owl.svg',
-      'workflow.html', 'workflow.js', 'workflow.css', 'bootstrap-dut.publication.scs', 'inverter-dut.publication.scs',
-      'bootstrap-tb.publication.scs', 'bootstrap-evidence.publication.json', 'source-manifest.json'].sort(),
-    'Public build must contain only the explicit static asset list');
+  const actualFiles = inventory.map(file => file.name).sort();
+  const buildManifest = JSON.parse(await readFile(join(directory, 'build.json'), 'utf8'));
+  const expectedFromManifest = [...new Set([...(buildManifest.files || []), '.nojekyll'])].sort();
+  assert.deepEqual(actualFiles, expectedFromManifest, 'Public build files must match build.json manifest exactly');
+  for (const required of ['.nojekyll', 'LICENSE.txt', 'app.css', 'app.js', 'build.json', 'demo-data.js', 'demo.js', 'index.html', 'owl.svg',
+    'workflow.html', 'workflow.js', 'workflow.css', 'source-manifest.json']) {
+    assert.ok(actualFiles.includes(required), `Public build missing required asset: ${required}`);
+  }
   const serialized = (await readFile(join(directory, 'demo-data.js'), 'utf8')).trim();
   const marker = 'window.__SPICEOWL_DEMO_DATA__=';
   assert.ok(serialized.startsWith(marker) && serialized.endsWith(';'), 'Unexpected demo data wrapper');
@@ -165,6 +168,62 @@ async function remotePages(page, report, label) {
   }
 }
 
+async function interactiveTutorialAndWorkbench(page, report, label) {
+  // 1. 5-step interactive Web UI tutorial (#quickstart)
+  await page.locator('[data-nav="quickstart"]').click();
+  await page.locator('.tut-stepper').waitFor();
+  assert.equal(await page.locator('.tut-step-pill').count(), 5, 'Expected 5 interactive tutorial steps');
+  for (const stepNum of [2, 3, 4, 5, 2]) {
+    await page.locator(`.tut-step-pill[data-step="${stepNum}"]`).click();
+    assert.equal(await page.locator(`.tut-step-pill[data-step="${stepNum}"]`).getAttribute('aria-selected'), 'true');
+  }
+  await noOverflow(page, report, `${label}-quickstart`);
+  // Click Step 2 CTA directly into #direct waveforms
+  await page.locator('[data-action="wizard-goto"]').first().click();
+
+  // 2. #direct Tab 1: 500-cycle PSF Binary waveforms & Cycle Slicer #317
+  await page.locator('.direct-tabs').waitFor();
+  await page.locator('svg[data-wf-zoom-svg="1"]').waitFor({timeout: 15000});
+  await page.locator('svg[data-wf-trend-svg="1"]').waitFor({timeout: 15000});
+  assert.match(await page.locator('.wf-cycle-summary').innerText(), /#317/);
+  await noOverflow(page, report, `${label}-direct-waveforms`);
+  if (label === 'desktop') await snapshot(page, report, `${label}-direct-waveforms`);
+
+  // 3. #direct Tab 2: 27-Corner PVT & 40-Sample Monte Carlo batches
+  await page.locator('.direct-tab[data-tab="batches"]').click();
+  await page.locator('.batch-cell').first().waitFor({timeout: 15000});
+  assert.equal(await page.locator('.batch-cell').count(), 27);
+  await noOverflow(page, report, `${label}-direct-pvt`);
+  if (label === 'desktop') await snapshot(page, report, `${label}-direct-pvt`);
+  await page.locator('[data-action="direct-batch-demo"][data-kind="monte_carlo"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.batch-cell').length === 40);
+  await noOverflow(page, report, `${label}-direct-mc`);
+
+  // 4. #direct Tab 3: Interactive single run lifecycle (Stage -> Launch -> Status -> Collect)
+  await page.locator('.direct-tab[data-tab="runs"]').click();
+  await page.locator('[data-action="direct-select"][data-id="demo-sandbox-rc"]').first().click();
+  await page.locator('[data-action="direct-stage"]:not([disabled])').click();
+  await page.locator('[data-action="direct-launch"]:not([disabled])').waitFor();
+  await page.locator('[data-action="direct-launch"]').click();
+  await page.locator('[data-action="direct-status"]:not([disabled])').click();
+  await page.locator('[data-action="direct-collect"]:not([disabled])').waitFor();
+  await page.locator('[data-action="direct-collect"]').click();
+  await page.locator('.direct-report-grid').waitFor();
+  await noOverflow(page, report, `${label}-direct-runs`);
+
+  // 5. #direct Tab 4: Recovery audit reports
+  await page.locator('.direct-tab[data-tab="recovery"]').click();
+  await page.locator('.direct-rec-integrity').waitFor();
+  await noOverflow(page, report, `${label}-direct-recovery`);
+
+  // 6. #agents: 10-case online safety benchmark
+  await page.locator('[data-nav="agents"]').click();
+  await page.locator('[data-action="public-run-eval"]').click();
+  await page.waitForFunction(() => (document.querySelector('#public-eval-output')?.innerText || '').includes('100%'));
+  await noOverflow(page, report, `${label}-agents-eval`);
+  report.checks.push(`${label}: 5-step tutorial, 4-tab workbench (waveforms/PVT/MC/runs/recovery) and 10-case Agent eval`);
+}
+
 async function exercise(page, origin, report, label) {
   const initial = await ready(page, origin);
   await snapshot(page, report, `${label}-overview`);
@@ -214,6 +273,7 @@ async function exercise(page, origin, report, label) {
   assert.equal(reloaded.sessions.length, diagnosed.sessions.length, 'Refresh lost scripted session');
   report.checks.push(`${label}: same-tab refresh retains sessionStorage demo changes`);
   await remotePages(page, report, label);
+  await interactiveTutorialAndWorkbench(page, report, label);
   await page.locator('[data-action="demo-reset"]').first().click();
   await page.waitForFunction(async expected => {
     const state = await window.SpiceOwlDemo.request('/api/state');
@@ -278,8 +338,10 @@ async function main() {
     const origin = `http://127.0.0.1:${server.address().port}`;
     report.origin = origin;
     const {chromium} = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
-    browser = await chromium.launch({headless: true, ...(process.env.CHROME_PATH ? {executablePath: process.env.CHROME_PATH} : {channel: 'chrome'}),
-      args: ['--disable-background-networking']});
+    const launchOpts = {headless: true, args: ['--disable-background-networking']};
+    if (process.env.CHROME_PATH) launchOpts.executablePath = process.env.CHROME_PATH;
+    else if (process.env.PLAYWRIGHT_CHANNEL) launchOpts.channel = process.env.PLAYWRIGHT_CHANNEL;
+    browser = await chromium.launch(launchOpts);
     report.browser = await browser.version();
     async function context(viewport) {
       const value = await browser.newContext({viewport, serviceWorkers: 'block'});

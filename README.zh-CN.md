@@ -8,13 +8,14 @@
 <p align="center">面向工程师与 AI Agent 的独立仿真管理工具。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/direct-execution.md">直连执行与有界恢复</a> · <a href="docs/cross-platform.md">跨平台与自动测试</a> · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/workflow.html"><strong>查看产品展示</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/">体验交互控制台</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/#quickstart"><strong>零安装在线体验 5 步网页教程</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/#direct">在线玩 500 周期大波形与 PVT 矩阵</a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">产品展示页</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">当前 Alpha 源码</a></p>
 
 SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，**原生支持 macOS、Linux 与 Windows**。它帮助你检查服务器资源、配置 PDK 依赖、准备实验、直接提交与监督 SSH/LSF/Slurm 仿真任务、执行带可搜索报告的有界自动恢复，并解释仿真结果。工程师可以直接使用这些工具，也可以与 Agent 协作；将工具嵌入电路设计环境是可选的集成方式。
 
 ## 最新功能亮点
 
-- **一键上手向导（`spiceowl init` 与网页 `#quickstart`：30 秒沉浸式演示 + 4 步连上真实 EDA 服务器跑通首个仿真）**（[历史兼容层说明](docs/legacy-compatibility.md)）：运行 `spiceowl init --demo` 或打开网页 **快速上手 · 新手向导**（`#quickstart`），无服务器时一键生成 5 站完整沉浸式演示（五维总览 + 500 周期 PSF Binary 毛刺钻取 + 27-Corner PVT 矩阵 + 40 样本 MC 直方图 + 10 项 Agent 安全评测）；有自己的远程 Linux EDA 服务器时，自动识别本机 `~/.ssh/config` 别名（绝不读取私钥或密码）、一键验证 SSH 与 Spectre/ngspice 版本、内置零 PDK 依赖的 RC 烟雾网表并在网页端 4 步跑通首个真实仿真。历史 `spiceowl mcp` 与旧版 Q&A 已清晰归档为只读兼容层。
+- **全新新手友好网页端 UI + `github.io` 零命令行全功能在线交互沙箱**（[立即在浏览器里直接玩](https://spiceowl-dev.github.io/spiceowl/#quickstart)）：**无需安装、无需打开命令行**，打开 GitHub Pages 即可直接点击体验全部核心功能——包括 **5 步交互式网页新手教程**（`#quickstart`）、**4 标签聚焦工作台**（`#direct`）、**500 周期 PSF Binary 拖拽无损缩放与 `#317` 毛刺钻取**、**27-Corner PVT 矩阵与 40 样本 Monte Carlo 直方图（支持导出 MD/CSV）**、`Stage → Launch → Status → Collect` 沙箱全流程、**M4 OOM 恢复审计报告**以及 **10 项 Agent 安全评测**（`#agents`）。每次提交均由 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) 中的真实 Chromium Playwright（桌面端 + 390px 移动端）自动回归验证。
+- **跨平台 `spiceowl init` 与 `#quickstart` 第 5 步真实 EDA 服务器接入**（[历史兼容层说明](docs/legacy-compatibility.md)）：需要连接自己的远程 Linux EDA 服务器时，在本地运行 `spiceowl serve` 并打开 `#quickstart` 第 5 步，自动识别本机 `~/.ssh/config` 别名（绝不读取私钥或密码）、一键验证 SSH 与 Spectre/ngspice 版本、内置零 PDK 依赖的 RC 烟雾网表并在网页端跑通首个真实仿真。历史 `spiceowl mcp` 与旧版 Q&A 已清晰归档为只读兼容层。
 - **通用确定性 `next-action` 编排器、中断回合安全恢复与 10 项 Agent 端到端闭环评测**（[Agent 可复现指南](docs/agent-reproducibility.md)、[双模式 Agent 指南](docs/dual-mode-agent.md)）：纯确定性 7 阶段状态机（`spiceowl.orchestrator` / `spiceowl_next_action`）在工具层硬约束缺项拒猜、断连先对账、拒绝降采样科学量测与保留有效指标失败；`CodexBridge` 支持人工核对后显式归档并解除中断锁定（`GET /api/codex/recovery`、`POST /api/codex/recover`，有副作用调用必须二次确认且绝不静默重放）；`spiceowl eval-agent` 与 `#agents` 内置 10 项冻结闭环评测，可一键对比确定性编排器与弱模型基线（并支持接入外部真实模型回调）。
 - **PVT / Corner / Monte Carlo 批量实验管理与保守良率统计**（[原生直连执行指南](docs/direct-execution.md)）：支持确定性展开 PVT 矩阵（`工艺角 × 电压 × 温度`）、带显式随机种子（`mc_seed`）的 Monte Carlo 采样及混合 `pvt_mc` 批量任务；按并发上限 `max_concurrency` 有序派发与收集、严格基于无损波形提取指标并计算 `μ / σ / P5 / P50 / P95 / Cpk` 及保守良率（执行失败与缺失样本绝不静默剔除，完整保留样本号与种子身份）；网页 `#direct` 内置 PVT 彩色矩阵、SVG 分布直方图、一键 27-Corner PVT 与 40 样本 Monte Carlo 演示及 Markdown/CSV 导出。
 - **二进制大波形解析（PSF Binary / PSFXL）、远端原位降采样与多周期切片（Cycle Slicer）**（[原生直连执行指南](docs/direct-execution.md)）：无需将数 GB 原始波形全量下载到本地，直接通过 `seek()` 流式读取本地或远端 Linux 原位 `psfbin` / `psfxl` / `psfascii` 数据。全局概览采用 **Min-Max 包络降采样**（绝不丢毛刺与过冲），放大或单周期钻取自动切换为 **100% 原始无损点**（并严格禁止将降采样预览送入 `adctools` 科学测量）；内置 **Cycle Slicer** 逐周期趋势扫描、最差异常周期自动定位、多周期叠画（Eye Overlay）及点击钻取，并在 `#direct` 网页端提供一键 500 周期 PSF Binary 演示波形。
@@ -50,9 +51,17 @@ SpiceOwl 有自己的网页控制台、Agent 会话、CLI 和 Python SDK，**原
 
 [Agent 编写的测试平台](docs/agent-testbench.md)保留 Spectre 源码、经过审阅的相对路径 Verilog-A 辅助文件及标准头文件依赖闭包。私有[单器件 PDK 索引](docs/pdk-lut.md)让不同电路的器件组合复用同一次全库观测，保留覆盖范围和时间；执行前仍须重新核验依赖。安装 `pip install '.[adctools]'` 后，可使用十项具名[分析工具](docs/adctools.md)的 Python／CLI 接口、固定版本的真实 ADCToolbox 集成及[原生 AC/DC 解析与测量](docs/ac-dc-results.md)。增益和环路裕度须明确单位、参考信号与反馈定义，DC region 编码须来自明确模型约定。确定性步骤与限制见[Agent 可复现流程](docs/agent-reproducibility.md)。
 
-![SpiceOwl 本地控制台的合成演示任务](docs/images/local-console.png)
+![SpiceOwl 新手友好网页控制台总览](docs/images/local-console.png)
 
-*实际原型界面，使用项目编写的合成观测数据。*
+*新版控制台总览：分组侧边栏、四维运行状态卡与一键 5 步教程入口。*
+
+![SpiceOwl 5 步交互式网页新手教程](docs/images/quickstart-tutorial.png)
+
+*内置 5 步交互式网页教程（`#quickstart`），在 GitHub Pages 与本地控制台均零门槛可用。*
+
+![SpiceOwl 500 周期 PSF Binary 包络缩放与 Cycle Slicer 毛刺钻取](docs/images/waveform-slicer.png)
+
+*全新 4 标签 `#direct` 工作台：500 周期 PSF Binary Min-Max 包络预览、拖拽自动切无损与 Cycle Slicer `#317` 毛刺定位。*
 
 ## 为什么做 SpiceOwl
 

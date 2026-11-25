@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -74,6 +75,7 @@ def local_audit(selection):
     return json.loads(output.getvalue())
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class PdkScopeAdversarialTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

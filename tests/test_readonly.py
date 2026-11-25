@@ -1,5 +1,6 @@
 """ReadStore must observe an existing controller without becoming one."""
 
+import os
 from pathlib import Path
 import sqlite3
 import stat
@@ -18,7 +19,8 @@ class ReadStoreTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         # URI punctuation must be quoted, not interpreted as connection flags.
-        self.directory = Path(self.temp.name) / "state ?mode=rw#test"
+        dirname = "state #mode=rw%20test" if os.name == "nt" else "state ?mode=rw#test"
+        self.directory = Path(self.temp.name) / dirname
         self.app = Controller(self.directory)
         self.app.seed_demo()
 

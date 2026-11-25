@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import types
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
@@ -16,6 +17,7 @@ from spiceowl.integrations.model_dependencies import build_model_audit_script, v
 from spiceowl.onboarding.pdk_scope_audit import verify_scope_selection_audit
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class ScopeSelectionAuditIntegrationTests(unittest.TestCase):
     """Exercise real cached-library selection and real local synthetic audits."""
 
@@ -144,6 +146,7 @@ class ScopeSelectionAuditIntegrationTests(unittest.TestCase):
                 audit_config=selection['private']['audit_config'])
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class ScopeSelectionAuditTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

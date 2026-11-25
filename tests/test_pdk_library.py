@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +29,7 @@ def requirements(names, source='a'):
             'source_sha256': source * 64, 'required_masters': names, 'instances': []}
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK library scanner against local temp dirs")
 class PdkLibraryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)

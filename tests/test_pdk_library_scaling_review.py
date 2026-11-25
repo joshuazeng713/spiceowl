@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -78,6 +79,7 @@ def scoped_library(root):
     (root/'scoped.scs').write_text(text)
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK library scanner against local temp dirs")
 class LibraryScopeIsolationReview(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -126,6 +128,7 @@ class LibraryScopeIsolationReview(unittest.TestCase):
         for key in refs:self.assertEqual(self.library['model_contracts'][key]['name'],'shared_device')
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK library scanner against local temp dirs")
 class SharedContractIntegrityReview(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -200,6 +203,7 @@ class SharedContractIntegrityReview(unittest.TestCase):
         self.assertEqual(before,after)
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK library scanner against local temp dirs")
 class LibraryScalingBudgetReview(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)

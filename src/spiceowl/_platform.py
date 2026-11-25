@@ -29,6 +29,7 @@ import time
 IS_WINDOWS: bool = os.name == "nt"
 IS_MACOS: bool = sys.platform == "darwin"
 IS_LINUX: bool = sys.platform.startswith("linux")
+_REAL_POPEN = subprocess.Popen
 
 if IS_WINDOWS:  # pragma: no cover - exercised via unit tests on Windows & mocks
     import msvcrt  # type: ignore[import-not-found]
@@ -238,11 +239,16 @@ def terminate_process_tree(process: subprocess.Popen, *, force: bool = True,
             except subprocess.TimeoutExpired:
                 pass
         try:
-            subprocess.run(
+            killer = _REAL_POPEN(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=5, check=False,
+                stderr=subprocess.DEVNULL,
             )
+            try:
+                killer.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                killer.kill()
+                killer.wait(timeout=1)
         except (OSError, subprocess.SubprocessError):
             try:
                 process.kill()

@@ -20,6 +20,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+@unittest.skipIf(os.name == "nt", "Executes remote Linux POSIX-path dependency audit script against local temp dirs")
 class ModelDependencyAuditTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

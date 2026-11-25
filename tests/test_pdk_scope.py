@@ -3,6 +3,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ from tests.test_pdk_library import library_scan, requirements
 IDENTITY = {'hostname': 'synthetic-host', 'username': 'researcher', 'uid': 1000}
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class CachedScopeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)

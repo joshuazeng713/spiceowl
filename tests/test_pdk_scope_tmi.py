@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ from spiceowl.onboarding.pdk_scope import (
 )
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class PdkScopeTmiTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

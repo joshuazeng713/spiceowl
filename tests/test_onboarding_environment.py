@@ -46,6 +46,8 @@ class OnboardingEnvironmentTests(unittest.TestCase):
 
     def scan(self, *, python2=False):
         """Run authored scanner functions with fixture-only OS and account IO."""
+        if os.name == 'nt':
+            self.skipTest('Remote Linux environment scanner fixture requires POSIX paths')
         namespace = {'__name__': 'offline_scanner_fixture'}
         fake_pwd = types.SimpleNamespace(getpwuid=lambda _: types.SimpleNamespace(pw_name='synthetic-user', pw_shell='/bin/tcsh'))
         with patch.dict(sys.modules, {'pwd': fake_pwd}):

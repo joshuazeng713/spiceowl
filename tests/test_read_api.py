@@ -1,6 +1,7 @@
 """Neutral SDK projections with synthetic stored rows and no active adapters."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import stat
@@ -83,20 +84,25 @@ def seed(directory):
             ('connection', 'real-connection', {'kind': 'model', 'backend': 'real', 'api_key': PRIVATE}),
             ('host', 'synthetic-host', host), ('ic_gateway', GATEWAY, gateway),
             ('ic_run:' + GATEWAY, NATIVE_RUN, native)]
-    with sqlite3.connect(path) as db:
-        db.executescript('''CREATE TABLE records (kind TEXT,id TEXT,body TEXT,PRIMARY KEY(kind,id));
-            CREATE TABLE turns (turn_id TEXT,status TEXT,question TEXT);
-            CREATE TABLE events (id TEXT,body TEXT);
-            PRAGMA user_version=1;''')
-        db.executemany('INSERT INTO records VALUES (?,?,?)', [(kind, key, json.dumps(value)) for kind, key, value in rows])
-        db.execute('INSERT INTO turns VALUES (?,?,?)', ('pending-turn', 'running', PRIVATE))
+    db = sqlite3.connect(path)
+    try:
+        with db:
+            db.executescript('''CREATE TABLE records (kind TEXT,id TEXT,body TEXT,PRIMARY KEY(kind,id));
+                CREATE TABLE turns (turn_id TEXT,status TEXT,question TEXT);
+                CREATE TABLE events (id TEXT,body TEXT);
+                PRAGMA user_version=1;''')
+            db.executemany('INSERT INTO records VALUES (?,?,?)', [(kind, key, json.dumps(value)) for kind, key, value in rows])
+            db.execute('INSERT INTO turns VALUES (?,?,?)', ('pending-turn', 'running', PRIVATE))
+    finally:
+        db.close()
     return path
 
 
 class ReadApiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.directory = Path(self.temp.name) / 'state ?mode=rw#synthetic'
+        dirname = 'state #mode=rw%20synthetic' if os.name == 'nt' else 'state ?mode=rw#synthetic'
+        self.directory = Path(self.temp.name) / dirname
         self.path = seed(self.directory)
 
     def read_all(self, views):

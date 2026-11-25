@@ -70,6 +70,7 @@ class NetlistRequirementsTests(unittest.TestCase):
         self.assertIsNone(fixture["profile_suggestions"]["selected_candidate_id"])
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class PdkDiscoveryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

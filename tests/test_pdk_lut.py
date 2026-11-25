@@ -33,6 +33,7 @@ def scan(root, requirements):
                                if not line.startswith(DIRECTORY_SNAPSHOT_PREFIX)))
 
 
+@unittest.skipIf(os.name == "nt", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class PdkLutTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
@@ -285,6 +286,7 @@ class PdkLutTests(unittest.TestCase):
                 self.lut.lookup(**{**self.args, **change})
 
 
+@unittest.skipIf(os.name == "nt", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class BindingRecommendationTests(unittest.TestCase):
     setUp = PdkLutTests.setUp
 

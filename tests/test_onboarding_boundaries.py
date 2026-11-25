@@ -24,6 +24,7 @@ from spiceowl.onboarding.environment import (
 SOURCE = b'simulator lang=spectre\nM0 (OUT IN LO LO) synthetic_n w=2u l=180n\n'
 
 
+@unittest.skipIf(os.name == "nt", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class OnboardingBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

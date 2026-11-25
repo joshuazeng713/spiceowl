@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -40,6 +41,7 @@ def literal(parameter, value, *, unit='V', model=None, owner=None):
         'scope': 'global', 'required_models': []}
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class OnboardingRecommendationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

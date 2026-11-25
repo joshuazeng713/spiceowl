@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +15,7 @@ from spiceowl.onboarding.veriloga_headers import (build_veriloga_header_probe_sc
     validate_veriloga_headers, build_veriloga_header_binding)
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path Verilog-A probe script against local temp dirs")
 class VerilogaHeaderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import sys
 import unittest
 
 from spiceowl.onboarding import pdk_discovery as discovery
@@ -45,6 +46,7 @@ def entries(receipt, filename='usage.scs'):
             if Path(row['entry_path']).name == filename}
 
 
+@unittest.skipIf(sys.platform == "win32", "Executes remote Linux POSIX-path PDK scanner against local temp dirs")
 class ScanIndexTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)

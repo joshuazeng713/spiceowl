@@ -32,7 +32,8 @@ let directState = {
   selectedId: null, detail: null, report: null, lookup: null, error: null,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
   recoveryQuery: '', recoveryOutcome: '',
-  notifyProvider: 'feishu', notifyEvent: 'recovery_succeeded', notifyPreview: null,
+  watchEvents: [], watchPolicy: null, watchAgentConnected: false, watchAgentState: 'disconnected',
+  watchSimScenario: 'queue_timeout',
   wfIndex: null, wfDataset: '', wfSignals: [], wfQuery: null,
   wfWindow: {xMin: '', xMax: ''}, wfMaxPoints: 1200,
   wfToolMode: 'zoom', wfCursorA: null, wfCursorB: null, wfCursorNext: 'A',
@@ -384,6 +385,15 @@ async function refreshDirect() {
       directState.batchDetail = null;
       directState.batchMetric = '';
     }
+    try {
+      const wData = await api('/api/direct/watch-events');
+      directState.watchEvents = Array.isArray(wData.events) ? wData.events : [];
+      directState.watchPolicy = wData.policy || null;
+      directState.watchAgentConnected = Boolean(wData.agent_connected);
+      directState.watchAgentState = wData.agent_state || 'disconnected';
+    } catch {
+      directState.watchEvents = [];
+    }
   } catch (error) {
     directState.error = error.message;
   } finally {
@@ -436,9 +446,31 @@ function directRecoveryReportsPanel() {
     detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
   }
 
-  const notifyCard = `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>过夜值守通知卡片预览（飞书 / 钉钉 / Slack / Webhook）</h2>${chip('零网表外发 · PRIVACY SAFE', 'green')}</div><p class="subtle-note">兑现 <em>“You sleep. SpiceOwl keeps watch.”</em>：当过夜仿真结束、触发 OOM 自动恢复成功或预算耗尽时，可选推送脱敏结构化摘要卡片（绝不发送网表、波形或 SSH 凭据）。</p><div class="direct-rec-filters"><select id="notify-provider"><option value="feishu" ${directState.notifyProvider === 'feishu' ? 'selected' : ''}>飞书机器人 (Feishu Card)</option><option value="dingtalk" ${directState.notifyProvider === 'dingtalk' ? 'selected' : ''}>钉钉机器人 (DingTalk Markdown)</option><option value="slack" ${directState.notifyProvider === 'slack' ? 'selected' : ''}>Slack Webhook (Block Kit)</option><option value="generic" ${directState.notifyProvider === 'generic' ? 'selected' : ''}>通用 JSON Webhook</option></select><select id="notify-event"><option value="recovery_succeeded" ${directState.notifyEvent === 'recovery_succeeded' ? 'selected' : ''}>异常自动恢复成功</option><option value="completed" ${directState.notifyEvent === 'completed' ? 'selected' : ''}>仿真顺利完成</option><option value="spec_missed" ${directState.notifyEvent === 'spec_missed' ? 'selected' : ''}>有效测量但指标未达标</option><option value="recovery_exhausted" ${directState.notifyEvent === 'recovery_exhausted' ? 'selected' : ''}>恢复预算耗尽已停止</option><option value="watch_disconnected" ${directState.notifyEvent === 'watch_disconnected' ? 'selected' : ''}>后台通信中断（状态未知）</option></select><button type="button" class="button primary small" data-action="direct-notify-preview">🔔 生成通知卡片预览</button></div>${directState.notifyPreview ? `<div class="direct-rec-card"><div class="section-title"><strong>🦉 ${escape(directState.notifyPreview.event?.title || '')}</strong>${chip(String(directState.notifyPreview.provider || '').toUpperCase(), directState.notifyPreview.event?.severity || 'green')}</div><p class="subtle-note">${escape(directState.notifyPreview.event?.detail || '')}</p><details open><summary>查看脱敏 Webhook JSON 载荷（确认不含任何网表与私钥）</summary><pre class="direct-rec-md">${escape(JSON.stringify(directState.notifyPreview.payload, null, 2))}</pre></details></div>` : ''}</section>`;
+  const wp = directState.watchPolicy || {
+    enabled: false, auto_push_to_agent: true, queue_timeout_seconds: 1800,
+    allow_host_migration: true, allow_memory_scale: true, max_memory_gib: 64,
+    allow_sim_option_tuning: true, max_agent_resubmissions: 3, protect_netlist_and_spec: true,
+  };
+  const watchStateChip = s => {
+    if (s === 'resolved_resubmitted') return chip('Agent 已重提解决', 'green');
+    if (s === 'awaiting_morning_review') return chip('留待早起人工审阅', 'amber');
+    if (s === 'pushed_to_agent' || s === 'agent_investigating') return chip('已推送给用户 Agent', 'blue');
+    if (s === 'dismissed') return chip('已归档', '');
+    return chip('已记录待认领', '');
+  };
+  const watchRowsHtml = (directState.watchEvents || []).length
+    ? directState.watchEvents.map(ev => {
+      const dec = ev.agent_decision;
+      const resRows = (dec?.resource_assessment || []).map(r => `<tr><td><code>${escape(r.host_id)}</code></td><td>${escape(r.idle_cpus ?? '-')} 核</td><td>${escape(r.available_gib ?? '-')} GiB</td><td>${escape(r.verdict || '-')}</td></tr>`).join('');
+      const cfgDiff = dec?.config_changes ? Object.entries(dec.config_changes).map(([k, v]) => `<li><code>${escape(k)}</code>：${escape(typeof v === 'object' && v !== null && 'from' in v ? `${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}` : String(v))}</li>`).join('') : '';
+      const tlRows = (ev.timeline || []).map(t => `<li><strong>[${escape(t.actor)}]</strong> ${escape(t.note)} <span class="subtle-note">(${escape(String(t.at || '').slice(11, 19))})</span></li>`).join('');
+      return `<div class="direct-rec-card"><div class="section-title"><strong>🦉 ${escape(ev.anomaly_type)} · <code>${escape(ev.run_id)}</code></strong>${watchStateChip(ev.state)}</div><p class="subtle-note">${escape(ev.summary)}</p><div class="direct-rec-integrity"><span>原主机：<code>${escape(ev.host_id)}</code> (${escape(ev.backend)})</span><span>·</span><span>Agent 推送：${ev.agent_handoff?.pushed ? '已自动唤醒 ✓' : escape(ev.agent_handoff?.push_status || '待推送')}</span>${ev.new_run_id ? `<span>·</span><span>新提交：<code>${escape(ev.new_run_id)}</code></span>` : ''}</div>${dec ? `<p style="margin-top:8px"><strong>Agent 排查结论与依据：</strong>${escape(dec.rationale)}</p>` : ''}${resRows ? `<div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>主机节点</th><th>空闲 CPU</th><th>可用内存</th><th>SpiceOwl 资源评估</th></tr></thead><tbody>${resRows}</tbody></table></div>` : ''}${cfgDiff ? `<h4>配置变更与科学红线校验</h4><ul class="direct-rec-decisions">${cfgDiff}</ul>` : ''}${tlRows ? `<details><summary>查看完整夜间值守时间线（${(ev.timeline || []).length} 步）与 Agent 交接提示词</summary><ol class="direct-rec-decisions">${tlRows}</ol>${ev.agent_handoff?.prompt_preview ? `<pre class="direct-rec-md">${escape(ev.agent_handoff.prompt_preview)}</pre>` : ''}</details>` : ''}${!ev.agent_handoff?.pushed ? `<div class="direct-actions" style="margin-top:8px"><button type="button" class="button secondary small" data-action="direct-watch-push" data-id="${escape(ev.event_id)}">立即推送给已连接的 Agent</button></div>` : ''}</div>`;
+    }).join('')
+    : '<p class="subtle-note">暂无夜间值守异常记录。点上方按钮可一键演练「排队超时 / OOM → 推送给用户 Agent → 查机房资源并重提 → 早上网页验收」全流程。</p>';
 
-  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>异常自动恢复审计报告（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>${notifyCard}`;
+  const watchHandoffCard = `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>夜间值守与 Agent 自主交接中心（无外部软件打扰 · 仅网页留痕）</h2>${chip('人类安心睡眠 · AGENT HANDOFF', 'green')}</div><p class="subtle-note">兑现 <em>“你去休息，仿真我盯”</em>：不接入外部聊天催命符，所有排队超时、License 阻塞、OOM 或收敛异常只在网页端安静留痕，并自动推送给您接入的 Agent（Codex / CircuitGit 宿主），由 Agent 查 SpiceOwl 实时主机资源、在授权边界内换主机/扩内存/调配置并提交可追溯新任务；超出边界或涉及网表改动则暂停留待早起人工审阅。</p><details class="host-form-details" open><summary>睡前自治授权边界（Overnight Autonomy Policy · Agent 状态：${directState.watchAgentConnected ? '已连接' : '演示/待连接'}）</summary><div class="direct-grid" style="margin-top:8px"><label class="check-row"><input id="wp-enabled" type="checkbox" ${wp.enabled ? 'checked' : ''}> 开启夜间 Agent 自主处置（边界内免人工弹窗）</label><label class="check-row"><input id="wp-autopush" type="checkbox" ${wp.auto_push_to_agent ? 'checked' : ''}> 异常发生时自动唤醒我接入的 Agent</label><label class="check-row"><input id="wp-migrate" type="checkbox" ${wp.allow_host_migration ? 'checked' : ''}> 允许 Agent 迁移至更空闲主机</label><label class="check-row"><input id="wp-mem" type="checkbox" ${wp.allow_memory_scale ? 'checked' : ''}> 允许 Agent 扩配内存</label><label class="check-row"><input id="wp-opt" type="checkbox" ${wp.allow_sim_option_tuning ? 'checked' : ''}> 允许调整队列/线程/仿真选项</label><label>排队超时阈值（秒）<input id="wp-qtimeout" type="number" min="30" max="86400" value="${escape(wp.queue_timeout_seconds)}"></label><label>夜间内存上限（GiB）<input id="wp-maxmem" type="number" min="1" max="1024" value="${escape(wp.max_memory_gib)}"></label><label>最多自主重提次数<input id="wp-maxresub" type="number" min="0" max="10" value="${escape(wp.max_agent_resubmissions)}"></label></div><div class="direct-actions" style="margin-top:8px"><button type="button" class="button secondary small" data-action="direct-watch-policy-save">保存睡前自治边界</button><span class="subtle-note">🔒 科学红线强制锁定：严禁擅自修改原始网表、激励或验收标准。</span></div></details><div class="direct-rec-filters" style="margin-top:12px"><select id="watch-sim-scenario"><option value="queue_timeout" ${directState.watchSimScenario === 'queue_timeout' ? 'selected' : ''}>场景 1：排队超时 (PEND) → Agent 查空闲主机并迁移重提</option><option value="confirmed_oom" ${directState.watchSimScenario === 'confirmed_oom' ? 'selected' : ''}>场景 2：确认 OOM (exit 137) → Agent 选大内存节点扩配重提</option><option value="convergence_needs_review" ${directState.watchSimScenario === 'convergence_needs_review' ? 'selected' : ''}>场景 3：收敛失败需改网表 → Agent 守住红线留待早起人工审阅</option></select><button type="button" class="button primary small" data-action="direct-watch-simulate">🦉 演练夜间异常 → Agent 自主交接</button></div>${watchRowsHtml}</section>`;
+
+  return `${watchHandoffCard}<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>异常自动恢复审计报告（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
 }
 
 function directRunChip(run) {
@@ -1202,14 +1234,43 @@ async function handleDirectClick(event) {
     await refreshDirect();
     return;
   }
-  if (action === 'notify-preview') {
+  if (action === 'watch-policy-save') {
     try {
-      directState.notifyPreview = await api('/api/direct/notifications/preview', {
-        method: 'POST',
-        body: {provider: directState.notifyProvider, event_type: directState.notifyEvent},
-      });
+      const payload = {
+        enabled: Boolean($('#wp-enabled')?.checked),
+        auto_push_to_agent: Boolean($('#wp-autopush')?.checked),
+        allow_host_migration: Boolean($('#wp-migrate')?.checked),
+        allow_memory_scale: Boolean($('#wp-mem')?.checked),
+        allow_sim_option_tuning: Boolean($('#wp-opt')?.checked),
+        queue_timeout_seconds: Number($('#wp-qtimeout')?.value || 1800),
+        max_memory_gib: Number($('#wp-maxmem')?.value || 64),
+        max_agent_resubmissions: Number($('#wp-maxresub')?.value || 3),
+      };
+      const res = await api('/api/direct/watch-policy', {method: 'POST', body: payload});
+      directState.watchPolicy = res.policy;
       render();
-      toast('已生成脱敏通知卡片预览（不发送真实网络请求）。');
+      toast('已保存睡前 Agent 自治授权边界（无任何外部软件推送，全程仅在网页留痕）。');
+    } catch (error) { toast(error.message); }
+    return;
+  }
+  if (action === 'watch-simulate') {
+    try {
+      const res = await api('/api/direct/watch-events/simulate', {
+        method: 'POST',
+        body: {scenario: directState.watchSimScenario || 'queue_timeout'},
+      });
+      directState.watchEvents = Array.isArray(res.events) ? res.events : directState.watchEvents;
+      render();
+      toast('已演练夜间异常 → 自动交接给用户 Agent → 网页记录决策全流程！');
+    } catch (error) { toast(error.message); }
+    return;
+  }
+  if (action === 'watch-push') {
+    if (!id) return;
+    try {
+      await api(`/api/direct/watch-events/${encodeURIComponent(id)}/push-agent`, {method: 'POST', body: {}});
+      await refreshDirect();
+      toast('已尝试推送事件给当前连接的用户 Agent。');
     } catch (error) { toast(error.message); }
     return;
   }
@@ -2705,8 +2766,7 @@ document.addEventListener('change', event => {
   if (event.target.id === 'direct-rec-oom') directDraft.rec_retry_oom = event.target.checked;
   if (event.target.id === 'direct-rec-relocate') directDraft.rec_allow_relocate = event.target.checked;
   if (event.target.id === 'direct-rec-outcome') { directState.recoveryOutcome = event.target.value; refreshDirect(); }
-  if (event.target.id === 'notify-provider') { directState.notifyProvider = event.target.value; }
-  if (event.target.id === 'notify-event') { directState.notifyEvent = event.target.value; }
+  if (event.target.id === 'watch-sim-scenario') { directState.watchSimScenario = event.target.value; }
   if (event.target.id === 'wf-dataset') {
     directState.wfDataset = event.target.value;
     syncWaveformSelection(true);

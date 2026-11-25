@@ -698,10 +698,114 @@
     return sb.batches[bid];
   }
 
+  function sbBuildWatchHandoffEvent(scenario = 'queue_timeout') {
+    const tNow = now();
+    const tag = Math.random().toString(16).slice(2, 8);
+    if (scenario === 'confirmed_oom') {
+      const rid = `pll-postlayout-${tag}`;
+      return {
+        schema: 'spiceowl.watch-event.v1', event_id: `wev-${tag}`, dedupe_key: `demo-oom-${tag}`,
+        anomaly_type: 'confirmed_oom', severity: 'red', state: 'resolved_resubmitted',
+        run_id: rid, root_run_id: rid, host_id: 'eda-node-02', backend: 'lsf', simulator: 'spectre', attempt_number: 1,
+        summary: '后仿寄生参数网络触发确认 OOM（exit 137，原申请内存 16 GiB）。未发外部软件告警，已自动推送给用户接入的 Agent。',
+        five_dim: {execution: 'failed_oom', measurement: 'missing', performance: 'unknown', soa: 'unknown'},
+        agent_handoff: {
+          pushed: true, pushed_at: tNow, request_key: `watch-${tag}`, thread_id: 'codex-watch-thread',
+          push_status: 'pushed', push_note: '已自动唤醒用户接入的 Agent 会话（无外部打扰）。',
+          prompt_preview: `[SpiceOwl 值守事件交接 · wev-${tag}]\n异常类型: confirmed_oom | 任务 ID: ${rid}\n请调用 spiceowl_scan_resources 检查大内存主机并在授权边界内扩配内存重提。`,
+        },
+        agent_decision: {
+          outcome: 'resolved_resubmitted',
+          rationale: 'Agent 调 spiceowl_scan_resources 发现 eda-bigmem-01 有 256 GiB 空闲内存，在夜间上限 64 GiB 边界内将内存从 16 GiB 扩配至 48 GiB 并设 +mt=8 重提，原始网表 SHA-256 全程未改。',
+          resource_assessment: [
+            {host_id: 'eda-node-02', idle_cpus: 12, available_gib: 18.0, verdict: 'excluded (RAM insufficient)'},
+            {host_id: 'eda-bigmem-01', idle_cpus: 32, available_gib: 256.0, verdict: 'recommended (#1)'},
+          ],
+          config_changes: {host_id: {from: 'eda-node-02', to: 'eda-bigmem-01'}, memory_gib: {from: 16, to: 48}, netlist_sha256: 'unchanged (100% preserved)'},
+          new_run_id: `${rid}-r2`, needs_human_review: false, recorded_at: tNow,
+        },
+        new_run_id: `${rid}-r2`,
+        timeline: [
+          {at: tNow, actor: 'spiceowl_watch', step: 'anomaly_recorded', note: '检测到确认 OOM (exit 137)，仅记录在网页值守日志中。'},
+          {at: tNow, actor: 'spiceowl_watch', step: 'pushed_to_agent', note: '已自动推送结构化异常上下文给用户接入的 Codex Agent。'},
+          {at: tNow, actor: 'user_agent', step: 'resolved_resubmitted', note: 'Agent 查完机房资源后迁移至 eda-bigmem-01 并扩配内存至 48 GiB 重新提交。'},
+        ],
+        created_at: tNow, updated_at: tNow,
+      };
+    }
+    if (scenario === 'convergence_needs_review') {
+      const rid = `bandgap-startup-${tag}`;
+      return {
+        schema: 'spiceowl.watch-event.v1', event_id: `wev-${tag}`, dedupe_key: `demo-conv-${tag}`,
+        anomaly_type: 'convergence_failed', severity: 'red', state: 'awaiting_morning_review',
+        run_id: rid, root_run_id: rid, host_id: 'eda-node-01', backend: 'ssh_direct', simulator: 'spectre', attempt_number: 1,
+        summary: '瞬态仿真在 t = 12.4 ns 处出现时间步过小收敛失败；已自动交由用户接入的 Agent 诊断。',
+        five_dim: {execution: 'failed_convergence', measurement: 'invalid', performance: 'unknown', soa: 'unknown'},
+        agent_handoff: {
+          pushed: true, pushed_at: tNow, request_key: `watch-${tag}`, thread_id: 'codex-watch-thread',
+          push_status: 'pushed', push_note: '已自动唤醒用户接入的 Agent 排查诊断日志。',
+          prompt_preview: `[SpiceOwl 值守事件交接 · wev-${tag}]\n异常类型: convergence_failed | 任务 ID: ${rid}\n若修复需要修改原始网表或验收标准，请勿擅自提交，留待早起人工审阅。`,
+        },
+        agent_decision: {
+          outcome: 'awaiting_morning_review',
+          rationale: 'Agent 诊断日志发现启动节点 vstart 缺少初始条件，修复需改动网表（增加 .ic）。因夜间自治策略严禁擅自修改原始网表，Agent 已暂停提交并整理好建议留待您早起审阅。',
+          resource_assessment: [{host_id: 'eda-node-01', idle_cpus: 24, available_gib: 64.0, verdict: 'healthy (non-resource issue)'}],
+          config_changes: {proposed_only: '建议增加 .ic V(vstart)=0 或 conservative 选项（未擅自执行）', netlist_sha256: 'unchanged (scientific redline preserved)'},
+          new_run_id: null, needs_human_review: true, recorded_at: tNow,
+        },
+        new_run_id: null,
+        timeline: [
+          {at: tNow, actor: 'spiceowl_watch', step: 'anomaly_recorded', note: '检测到瞬态收敛失败，已安静留痕。'},
+          {at: tNow, actor: 'spiceowl_watch', step: 'pushed_to_agent', note: '已自动推送给用户接入的 Codex Agent。'},
+          {at: tNow, actor: 'user_agent', step: 'awaiting_morning_review', note: '需要改动原始网表，守住科学红线暂停提交，留待早起人工拍板。'},
+        ],
+        created_at: tNow, updated_at: tNow,
+      };
+    }
+    const rid = `adc-tran-q-${tag}`;
+    return {
+      schema: 'spiceowl.watch-event.v1', event_id: `wev-${tag}`, dedupe_key: `demo-queue-${tag}`,
+      anomaly_type: 'queue_timeout', severity: 'amber', state: 'resolved_resubmitted',
+      run_id: rid, root_run_id: rid, host_id: 'eda-node-01', backend: 'slurm', simulator: 'spectre', attempt_number: 1,
+      summary: '任务在 slurm medium 队列等待已达 35 分钟（超过阈值 30 分钟）；已安静记录在网页并自动推送给用户接入的 Agent。',
+      five_dim: {execution: 'queued_timeout', measurement: 'pending', performance: 'pending', soa: 'pending'},
+      agent_handoff: {
+        pushed: true, pushed_at: tNow, request_key: `watch-${tag}`, thread_id: 'codex-watch-thread',
+        push_status: 'pushed', push_note: '已自动唤醒用户接入的 Agent（不向手机发任何外部催命消息）。',
+        prompt_preview: `[SpiceOwl 值守事件交接 · wev-${tag}]\n异常类型: queue_timeout | 任务 ID: ${rid}\n请调用 spiceowl_scan_resources / spiceowl_recommend_hosts 检查空闲主机并决定是否迁移重提。`,
+      },
+      agent_decision: {
+        outcome: 'resolved_resubmitted',
+        rationale: 'Agent 扫描机房资源发现 eda-node-01 持续满载（剩余 3.2 GiB），而 eda-node-03 仍有 48 核空闲与 128 GiB 内存。在授权边界内取消原排队任务，保持网表 SHA-256 完全不变，迁移至 eda-node-03 的 fast 队列重新提交并顺利完成。',
+        resource_assessment: [
+          {host_id: 'eda-node-01', idle_cpus: 1, available_gib: 3.2, verdict: 'excluded (congested)'},
+          {host_id: 'eda-node-03', idle_cpus: 48, available_gib: 128.0, verdict: 'recommended (#1)'},
+        ],
+        config_changes: {host_id: {from: 'eda-node-01', to: 'eda-node-03'}, scheduler_queue: {from: 'medium', to: 'fast'}, netlist_sha256: 'unchanged (100% preserved)'},
+        new_run_id: `${rid}-r2`, needs_human_review: false, recorded_at: tNow,
+      },
+      new_run_id: `${rid}-r2`,
+      timeline: [
+        {at: tNow, actor: 'spiceowl_watch', step: 'anomaly_recorded', note: '检测到排队等待超过 30 分钟，仅在网页端记录，不打扰人类睡眠。'},
+        {at: tNow, actor: 'spiceowl_watch', step: 'pushed_to_agent', note: '自动将排队超时上下文推送给用户接入的 Codex Agent。'},
+        {at: tNow, actor: 'user_agent', step: 'resolved_resubmitted', note: 'Agent 查完主机余量后迁移至 eda-node-03 / fast 队列重新提交。'},
+      ],
+      created_at: tNow, updated_at: tNow,
+    };
+  }
+
   function sbEnsureSeeded() {
     if (sb.seeded) return;
     sb.seeded = true;
     const tNow = now();
+    sb.watchPolicy = {
+      schema: 'spiceowl.overnight-autonomy-policy.v1',
+      enabled: true, auto_push_to_agent: true, queue_timeout_seconds: 1800,
+      allow_host_migration: true, allow_memory_scale: true, max_memory_gib: 64,
+      allow_sim_option_tuning: true, max_agent_resubmissions: 3,
+      protect_netlist_and_spec: true, updated_at: tNow,
+    };
+    sb.watchEvents = [sbBuildWatchHandoffEvent('queue_timeout')];
     sb.runs['demo-psfbin-500c'] = {
       schema: 'spiceowl.direct-run.v1', run_id: 'demo-psfbin-500c', run_key: 'demo-psfbin-500c',
       submission_key: 'demo-psfbin-500c', root_run_id: 'demo-psfbin-500c', attempt_number: 1,
@@ -805,40 +909,53 @@
       sbEnsureSeeded();
       return {run: sb.runs['demo-psfbin-500c'], waveforms: sbWaveformIndex('demo-psfbin-500c')};
     }
-    if (path === '/api/direct/notifications' && method === 'GET') {
-      return {channels: [], history: []};
+    if (path === '/api/direct/watch-events' && method === 'GET') {
+      sbEnsureSeeded();
+      return {
+        events: sb.watchEvents || [],
+        policy: sb.watchPolicy,
+        agent_connected: true,
+        agent_state: 'idle',
+      };
     }
-    if (path === '/api/direct/notifications/preview' && method === 'POST') {
-      const provider = ['feishu', 'slack', 'dingtalk', 'generic'].includes(body.provider) ? body.provider : 'feishu';
-      const eventType = body.event_type || 'recovery_succeeded';
-      const runId = body.run_id || 'demo-oom-recover-r2';
-      const titles = {
-        completed: `仿真完成 · ${runId}`,
-        failed: `仿真失败需关注 · ${runId}`,
-        spec_missed: `有效测量但指标未达标 · ${runId}`,
-        recovery_succeeded: `异常已自动恢复并完成 · ${runId}`,
-        recovery_exhausted: `自动恢复预算耗尽已停止 · ${runId}`,
-        watch_disconnected: `后台盯守通信中断（状态未知）· ${runId}`,
+    if (path === '/api/direct/watch-policy' && method === 'GET') {
+      sbEnsureSeeded();
+      return {policy: sb.watchPolicy};
+    }
+    if (path === '/api/direct/watch-policy' && method === 'POST') {
+      sbEnsureSeeded();
+      sb.watchPolicy = {
+        ...sb.watchPolicy,
+        enabled: body.enabled !== undefined ? Boolean(body.enabled) : sb.watchPolicy.enabled,
+        auto_push_to_agent: body.auto_push_to_agent !== undefined ? Boolean(body.auto_push_to_agent) : sb.watchPolicy.auto_push_to_agent,
+        queue_timeout_seconds: Number.isFinite(Number(body.queue_timeout_seconds)) ? Math.max(30, Math.min(86400, Number(body.queue_timeout_seconds))) : sb.watchPolicy.queue_timeout_seconds,
+        allow_host_migration: body.allow_host_migration !== undefined ? Boolean(body.allow_host_migration) : sb.watchPolicy.allow_host_migration,
+        allow_memory_scale: body.allow_memory_scale !== undefined ? Boolean(body.allow_memory_scale) : sb.watchPolicy.allow_memory_scale,
+        max_memory_gib: Number.isFinite(Number(body.max_memory_gib)) ? Math.max(1, Math.min(1024, Number(body.max_memory_gib))) : sb.watchPolicy.max_memory_gib,
+        allow_sim_option_tuning: body.allow_sim_option_tuning !== undefined ? Boolean(body.allow_sim_option_tuning) : sb.watchPolicy.allow_sim_option_tuning,
+        max_agent_resubmissions: Number.isFinite(Number(body.max_agent_resubmissions)) ? Math.max(0, Math.min(10, Number(body.max_agent_resubmissions))) : sb.watchPolicy.max_agent_resubmissions,
+        protect_netlist_and_spec: true,
+        updated_at: now(),
       };
-      const titleText = titles[eventType] || titles.recovery_succeeded;
-      const ev = {
-        schema: 'spiceowl.notification.v1', event_id: 'ntf-demo-preview', event_type: eventType,
-        severity: eventType.includes('failed') || eventType.includes('exhausted') ? 'red' : eventType.includes('missed') || eventType.includes('disconnected') ? 'amber' : 'green',
-        title: titleText, run_id: runId, host_id: 'sim-node-a', backend: 'slurm', simulator: 'spectre',
-        attempt_number: eventType.includes('recovery') ? 2 : 1,
-        five_dim: {execution: 'completed', measurement: 'valid', performance: eventType === 'spec_missed' ? 'fail' : 'pass', soa: 'clean'},
-        detail: body.detail || '确认 OOM 后已自动将内存由 16 GiB 翻倍至 32 GiB 并顺利完成（网表 SHA-256 全程一致，无任何私密网表外发）。',
-        created_at: now(),
-      };
-      const md = `任务 ID: \`${ev.run_id}\` (第 #${ev.attempt_number} 次尝试)\n节点/后端: \`${ev.host_id}\` · \`${ev.backend}\` · \`${ev.simulator}\`\n四维状态: 执行=\`${ev.five_dim.execution}\` | 测量=\`${ev.five_dim.measurement}\` | 性能=\`${ev.five_dim.performance}\` | SOA=\`${ev.five_dim.soa}\`\n说明: ${ev.detail}`;
-      const payload = provider === 'feishu'
-        ? {msg_type: 'interactive', card: {header: {template: ev.severity === 'green' ? 'green' : ev.severity === 'amber' ? 'orange' : 'red', title: {tag: 'plain_text', content: `🦉 SpiceOwl · ${titleText}`}}, elements: [{tag: 'markdown', content: md}]}}
-        : provider === 'dingtalk'
-        ? {msgtype: 'markdown', markdown: {title: `SpiceOwl · ${titleText}`, text: `### 🦉 ${titleText}\n\n${md}`}}
-        : provider === 'slack'
-        ? {text: `SpiceOwl · ${titleText}`, blocks: [{type: 'header', text: {type: 'plain_text', text: `SpiceOwl · ${titleText}`}}, {type: 'section', text: {type: 'mrkdwn', text: md}}]}
-        : ev;
-      return {event: ev, provider, payload};
+      return {policy: sb.watchPolicy};
+    }
+    if (path === '/api/direct/watch-events/simulate' && method === 'POST') {
+      sbEnsureSeeded();
+      const scenario = ['queue_timeout', 'confirmed_oom', 'convergence_needs_review'].includes(body.scenario) ? body.scenario : 'queue_timeout';
+      const ev = sbBuildWatchHandoffEvent(scenario);
+      sb.watchEvents.unshift(ev);
+      return {event: ev, events: sb.watchEvents};
+    }
+    if (path.startsWith('/api/direct/watch-events/') && path.endsWith('/push-agent') && method === 'POST') {
+      sbEnsureSeeded();
+      const evId = decodeURIComponent(path.slice('/api/direct/watch-events/'.length, -'/push-agent'.length));
+      const ev = (sb.watchEvents || []).find(e => e.event_id === evId);
+      if (!ev) fail('Watch event not found.', 'not_found');
+      ev.agent_handoff.pushed = true;
+      ev.agent_handoff.pushed_at = now();
+      ev.agent_handoff.push_status = 'pushed';
+      ev.state = ev.state === 'recorded' ? 'pushed_to_agent' : ev.state;
+      return {event: ev};
     }
     if (path.startsWith('/api/direct/recovery-reports')) {
       sbEnsureSeeded();

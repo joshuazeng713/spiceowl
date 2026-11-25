@@ -1259,20 +1259,21 @@ class DirectRecoverySupervisor:
     the monitor loop.
     """
 
-    def __init__(self, manager: DirectExecutionManager, *, interval_seconds=30, max_backoff_seconds=300, notifier=None):
+    def __init__(self, manager: DirectExecutionManager, *, interval_seconds=30, max_backoff_seconds=300,
+                 handoff_manager=None, agent_pusher=None):
         self.manager = manager
         self.root = manager.root
-        self.notifier = notifier
+        self.handoff_manager = handoff_manager
+        self.agent_pusher = agent_pusher
         self._stop = threading.Event()
         self._timers: list[threading.Timer] = []
         self._lock = threading.Lock()
         self.monitor = RuntimeMonitor(self, interval_seconds=interval_seconds, max_backoff_seconds=max_backoff_seconds)
 
-    def _emit_notification(self, event_type: str, run_record: dict, detail: str = "") -> None:
-        if self.notifier is None:
+    def _handoff_anomaly(self, anomaly_type: str, run_record: dict, summary: str = "", evidence: dict | None = None) -> None:
+        if self.handoff_manager is None:
             return
         try:
-            from spiceowl.notifications import build_notification_event
             rep = None
             try:
                 rep = self.manager.report(run_record["run_id"])
@@ -1286,19 +1287,51 @@ class DirectRecoverySupervisor:
                     "performance": rep.get("functional_performance", {}).get("status"),
                     "soa": rep.get("operating_qualification", {}).get("status"),
                 }
-            ev = build_notification_event(
-                event_type=event_type,
+            self.handoff_manager.record_anomaly(
+                anomaly_type=anomaly_type,
                 run_id=run_record["run_id"],
+                root_run_id=run_record.get("root_run_id") or run_record["run_id"],
                 host_id=run_record.get("host_id", "unknown"),
                 backend=run_record.get("backend", "ssh_direct"),
                 simulator=run_record.get("simulator", "spectre"),
                 attempt_number=int(run_record.get("attempt_number") or 1),
+                summary=summary,
                 five_dim_summary=fd,
-                detail=detail,
+                evidence=evidence,
+                agent_pusher=self.agent_pusher,
             )
-            self.notifier.dispatch(ev)
         except Exception:
             pass
+
+    def _check_queue_timeout(self, run_record: dict) -> None:
+        if self.handoff_manager is None or not isinstance(run_record, dict):
+            return
+        state = str(run_record.get("state") or "")
+        remote_state = str((run_record.get("last_status") or {}).get("remote_state") or "")
+        if state != "submitted" and remote_state not in ("queued", "pending"):
+            return
+        ts_raw = run_record.get("launched_at") or run_record.get("created_at")
+        if not isinstance(ts_raw, str) or not ts_raw:
+            return
+        try:
+            started = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        except ValueError:
+            return
+        policy = self.handoff_manager.get_policy()
+        threshold = int(policy.get("queue_timeout_seconds") or 1800)
+        if elapsed >= threshold:
+            self._handoff_anomaly(
+                "queue_timeout",
+                run_record,
+                summary=f"任务 {run_record['run_id']} 已在队列等待 {int(elapsed)} 秒（超过阈值 {threshold} 秒），已记录并交由用户接入的 Agent 检查资源并决定是否迁移或调整队列。",
+                evidence={
+                    "queue_wait_seconds": int(elapsed),
+                    "queue_timeout_seconds": threshold,
+                    "scheduler_job_id": run_record.get("scheduler_job_id"),
+                    "remote_state": remote_state or state,
+                },
+            )
 
     def path(self, run_id: str) -> Path:
         return self.manager.path(run_id)
@@ -1307,17 +1340,43 @@ class DirectRecoverySupervisor:
         return self.manager.read(run_id)
 
     def status(self, run_id: str) -> dict:
-        return self.manager.status(run_id)
+        result = self.manager.status(run_id)
+        self._check_queue_timeout(result)
+        return result
 
     def collect(self, run_id: str) -> dict:
         result = self.manager.collect(run_id)
+        rep = None
+        try:
+            rep = self.manager.report(run_id)
+        except DomainError:
+            rep = None
         if result.get("state") == "simulator_complete_pending_measurements":
-            ev_type = "recovery_succeeded" if (result.get("attempt_number") or 1) > 1 else "completed"
-            self._emit_notification(ev_type, result, detail="后台盯守已自动收集产物并生成五维报告。")
+            if isinstance(rep, dict) and rep.get("schema") == "spiceowl.simulation-report.v1":
+                meas = (rep.get("measurement_validity") or {}).get("status")
+                perf = (rep.get("functional_performance") or {}).get("status")
+                if meas == "valid" and perf == "fail":
+                    self._handoff_anomaly(
+                        "spec_missed",
+                        result,
+                        summary="仿真测量有效但电路指标未达标（科学失败结果已完整保留），已交由 Agent 审阅。",
+                        evidence={"measurement_validity": meas, "functional_performance": perf},
+                    )
         else:
-            policy = validate_recovery_policy(result.get("recovery_policy"))
-            if not policy["enabled"]:
-                self._emit_notification("failed", result, detail="仿真以失败终态结束（未开启自动恢复）。")
+            cls = classify_failure(result, rep)
+            fclass = cls.get("failure_class")
+            anomaly = (
+                "confirmed_oom" if fclass == "confirmed_oom"
+                else "license_unavailable" if fclass == "license_unavailable"
+                else "convergence_failed" if fclass == "convergence_error"
+                else "simulator_failed"
+            )
+            self._handoff_anomaly(
+                anomaly,
+                result,
+                summary=f"仿真出现异常（分类：{fclass}），已写入网页值守记录并推送给用户接入的 Agent 评估资源与重提策略。",
+                evidence={"failure_class": fclass, "reason": cls.get("reason")},
+            )
         self._schedule_recovery_if_enabled(result)
         return result
 

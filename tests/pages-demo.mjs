@@ -210,11 +210,17 @@ await test('interactive browser sandbox covers waveforms, Cycle Slicer, PVT/MC b
   const ffQuery = await post(demo, '/api/direct/runs/demo-pvt-27-ff-1p32-m40/waveforms/query', {dataset: ds, signals: ['v(out)'], mode: 'exact'});
   assert.ok(ffQuery.signals['v(out)'].max > ssQuery.signals['v(out)'].max);
 
-  // Overnight webhook notification preview (Feishu / Slack / DingTalk / Generic)
-  for (const provider of ['feishu', 'slack', 'dingtalk', 'generic']) {
-    const ntf = await post(demo, '/api/direct/notifications/preview', {provider, event_type: 'recovery_succeeded'});
-    assert.equal(ntf.provider, provider);
-    assert.ok(JSON.stringify(ntf.payload).includes('demo-oom-recover-r2'));
+  // Overnight watch event inbox & Agent handoff policy (zero external chat integrations)
+  const wInitial = await demo.request('/api/direct/watch-events');
+  assert.ok(Array.isArray(wInitial.events) && wInitial.events.length >= 1);
+  assert.equal(wInitial.policy.protect_netlist_and_spec, true);
+  const wPol = await post(demo, '/api/direct/watch-policy', {enabled: true, queue_timeout_seconds: 900, max_memory_gib: 48});
+  assert.equal(wPol.policy.queue_timeout_seconds, 900);
+  assert.equal(wPol.policy.max_memory_gib, 48);
+  for (const scenario of ['queue_timeout', 'confirmed_oom', 'convergence_needs_review']) {
+    const sim = await post(demo, '/api/direct/watch-events/simulate', {scenario});
+    assert.equal(sim.event.agent_handoff.pushed, true);
+    assert.ok(sim.event.agent_decision && sim.event.agent_decision.rationale.length > 10);
   }
 
   const savedKeys = [...storage.data.values()].map(raw => Object.keys(JSON.parse(raw)).sort().join(','));

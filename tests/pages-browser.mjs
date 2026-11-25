@@ -231,11 +231,12 @@ async function interactiveTutorialAndWorkbench(page, report, label) {
   await page.locator('.direct-report-grid').waitFor();
   await noOverflow(page, report, `${label}-direct-runs`);
 
-  // 5. #direct Tab 4: Recovery audit reports & Overnight Notification Card Preview
+  // 5. #direct Tab 4: Overnight Watch & Agent Handoff timeline + Recovery audit reports
   await page.locator('.direct-tab[data-tab="recovery"]').click();
-  await page.locator('.direct-rec-integrity').waitFor();
-  await page.locator('[data-action="direct-notify-preview"]').click();
-  await page.waitForFunction(() => (document.querySelector('#main')?.innerText || '').includes('msg_type'));
+  await page.locator('.direct-rec-integrity').first().waitFor();
+  await page.locator('#watch-sim-scenario').selectOption('confirmed_oom');
+  await page.locator('[data-action="direct-watch-simulate"]').click();
+  await page.waitForFunction(() => (document.querySelector('#main')?.innerText || '').includes('eda-bigmem-01'));
   await noOverflow(page, report, `${label}-direct-recovery`);
 
   // 6. #agents: 10-case online safety benchmark

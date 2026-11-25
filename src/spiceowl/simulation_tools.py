@@ -82,11 +82,11 @@ _OWNER = [
                  'arguments': _JSON}, ('operation', 'arguments')), 'approval'),
     _definition('spiceowl_lookup_submission', 'Reconcile one original submission key through the configured owner. Lookup never authorizes replay.',
         _object({'key': {'type': 'string', 'minLength': 8, 'maxLength': 160}}, ('key',))),
-    _definition('spiceowl_direct_read', 'Read locally stored direct-execution runs, PVT/MC batch summaries, submission key mappings, collected five-dimensional reports, or local binary/ASCII waveform slices & cycle metrics without network I/O.',
-        _object({'operation': {'type': 'string', 'enum': ['list', 'inspect', 'lookup', 'report', 'waveform_index', 'waveform_query', 'waveform_cycles', 'batch_list', 'batch_inspect', 'batch_report']},
+    _definition('spiceowl_direct_read', 'Read locally stored direct-execution runs, PVT/MC batch summaries, submission key mappings, collected five-dimensional reports, lossless analog metrics, recovery reports, incremental log tails, overnight watch handoff events, or local binary/ASCII waveform slices & cycle metrics without network I/O.',
+        _object({'operation': {'type': 'string', 'enum': ['list', 'inspect', 'lookup', 'report', 'waveform_index', 'waveform_query', 'waveform_cycles', 'waveform_measure', 'recovery_reports', 'log_tail', 'watch_events', 'watch_policy', 'batch_list', 'batch_inspect', 'batch_report']},
                  'arguments': _JSON}, ('operation', 'arguments'))),
-    _definition('spiceowl_direct_control', 'Run one bounded direct SSH/LSF/Slurm run or PVT/MC batch operation after human tool review. Preserve original identity after uncertainty; never auto-resubmits.',
-        _object({'operation': {'type': 'string', 'enum': ['prepare', 'stage', 'launch', 'status', 'cancel', 'collect', 'batch_prepare', 'batch_dispatch', 'batch_refresh', 'batch_cancel']},
+    _definition('spiceowl_direct_control', 'Run one bounded direct SSH/LSF/Slurm run, PVT/MC batch operation, or record an Agent watch-handoff decision. Respects the explicit OvernightAutonomyPolicy when enabled; otherwise requires human tool review.',
+        _object({'operation': {'type': 'string', 'enum': ['prepare', 'stage', 'launch', 'status', 'cancel', 'collect', 'watch_record_decision', 'batch_prepare', 'batch_dispatch', 'batch_refresh', 'batch_cancel']},
                  'arguments': _JSON}, ('operation', 'arguments')), 'approval'),
 ]
 
@@ -150,7 +150,7 @@ def _type_matches(value, expected):
 
 class SimulationToolDispatcher:
     """Pure engine calls plus explicitly injected host capabilities, without IO at init."""
-    def __init__(self, *, mode='embedded_in_circuitgit', read_views=None, owner_handlers=None):
+    def __init__(self, *, mode='embedded_in_circuitgit', read_views=None, owner_handlers=None, policy_override=None):
         from spiceowl.agent_channel import normalize_agent_mode
         self.mode = normalize_agent_mode(mode)
         if read_views is not None:
@@ -158,6 +158,7 @@ class SimulationToolDispatcher:
             if not isinstance(read_views, ReadViews):
                 raise DomainError('Provide an already opened ReadViews, never a data directory.', 'read_views_unavailable')
         self.read_views = read_views
+        self._policy_override = policy_override
         self._handlers = dict(owner_handlers or {})
         allowed = {entry['name'] for entry in _OWNER}
         if set(self._handlers) - allowed or any(not callable(value) for value in self._handlers.values()):
@@ -179,6 +180,10 @@ class SimulationToolDispatcher:
         if name == 'spiceowl_onboarding' and isinstance(arguments, dict):
             if arguments.get('operation') in getattr(self._handlers[name], 'read_operations', ()):
                 return 'read'
+        if callable(self._policy_override):
+            override = self._policy_override(name, arguments)
+            if override in ('read', 'approval', 'deny'):
+                return override
         return 'read' if entry['annotations']['readOnlyHint'] else 'approval'
 
     def dispatch(self, name, arguments, *, context=None):

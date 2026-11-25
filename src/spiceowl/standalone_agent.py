@@ -76,16 +76,47 @@ approve, generic HTTP, shell, publication or canonical-source edit is exported.
 
 def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=None,
                                 circuitgit_client_config=None, circuitgit_sdk_path=None,
-                                direct_manager=None):
+                                direct_manager=None, handoff_manager=None):
     from spiceowl.read_api import open_read_views
     handlers = {
         'spiceowl_probe_host': lambda args, **_: controller.hosts.probe(args['host_id']),
         'spiceowl_scan_resources': lambda args, **_: controller.hosts.scan(args['host_ids']),
         'spiceowl_recommend_hosts': lambda args, **_: controller.hosts.recommend(args['requirements'], args['host_ids']),
     }
+    policy_override = None
     if direct_manager is not None:
         from spiceowl.batch import DirectBatchManager
+        from spiceowl.monitoring.log_stream import IncrementalLogWatcher
+        from spiceowl.watch_handoff import WatchHandoffManager, evaluate_autonomy_decision
         batch_manager = DirectBatchManager(direct_manager.data_dir, direct_manager)
+        watch_mgr = handoff_manager or WatchHandoffManager(direct_manager.data_dir)
+        log_watcher = IncrementalLogWatcher(direct_manager.data_dir / 'log_cursors')
+
+        def _overnight_policy_override(name, arguments):
+            policy = watch_mgr.get_policy()
+            if not policy.get('enabled'):
+                return None
+            if name == 'spiceowl_scan_resources':
+                return 'read'
+            if name == 'spiceowl_direct_control' and isinstance(arguments, dict):
+                op = arguments.get('operation')
+                params = arguments.get('arguments') if isinstance(arguments.get('arguments'), dict) else {}
+                parent_run = None
+                parent_id = params.get('parent_run_id') or params.get('root_run_id')
+                if isinstance(parent_id, str) and parent_id:
+                    try:
+                        parent_run = direct_manager.read(parent_id)
+                    except DomainError:
+                        parent_run = None
+                resub_used = watch_mgr.count_agent_resubmissions(parent_id if isinstance(parent_id, str) else None)
+                verdict = evaluate_autonomy_decision(
+                    policy, operation=str(op or ''), arguments=params,
+                    parent_run=parent_run, resubmissions_used=resub_used,
+                )
+                return 'read' if verdict['allowed'] else 'approval'
+            return None
+
+        policy_override = _overnight_policy_override
 
         def direct_read(args, **_):
             op, params = args['operation'], args['arguments']
@@ -123,6 +154,27 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     max_points_per_cycle=params.get('max_points_per_cycle', 2000),
                     allow_remote=False,
                 )
+            if op == 'waveform_measure':
+                return direct_manager.waveform_measure(
+                    params['run_id'], params['dataset'], params['signal'],
+                    x_min=params.get('x_min'), x_max=params.get('x_max'),
+                    tol_pct=float(params.get('tol_pct', 2.0)),
+                    allow_remote=False,
+                )
+            if op == 'recovery_reports':
+                return {'reports': direct_manager.list_recovery_reports(query=params.get('q'), outcome=params.get('outcome'))}
+            if op == 'log_tail':
+                run_dir = direct_manager.path(params['run_id'])
+                log_file = run_dir / 'collected' / 'psf' / 'spectre.out'
+                if not log_file.is_file():
+                    log_file = run_dir / 'collected' / 'console.log'
+                if not log_file.is_file():
+                    return {'run_id': params['run_id'], 'events': [], 'rotated': False, 'note': 'No collected local log file yet.'}
+                return log_watcher.poll(params['run_id'], log_file)
+            if op == 'watch_events':
+                return {'events': watch_mgr.list_events(state=params.get('state'), limit=int(params.get('limit', 30)))}
+            if op == 'watch_policy':
+                return watch_mgr.get_policy()
             if op == 'batch_list':
                 if params:
                     raise DomainError('batch_list takes empty arguments.', 'invalid_tool_arguments')
@@ -151,6 +203,16 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 return direct_manager.cancel(params['run_id'], action_key=action_key)
             if op == 'collect':
                 return direct_manager.collect(params['run_id'])
+            if op == 'watch_record_decision':
+                return watch_mgr.record_agent_decision(
+                    params['event_id'],
+                    outcome=params['outcome'],
+                    rationale=params['rationale'],
+                    resource_assessment=params.get('resource_assessment'),
+                    config_changes=params.get('config_changes'),
+                    new_run_id=params.get('new_run_id'),
+                    needs_human_review=bool(params.get('needs_human_review', False)),
+                )
             if op == 'batch_prepare':
                 return batch_manager.prepare(**params)
             if op == 'batch_dispatch':
@@ -200,4 +262,9 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     key = 'codex-' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
             return live_client.execute(operation, args['arguments'], idempotency_key=key)
         handlers['spiceowl_live_control'] = live
-    return SimulationToolDispatcher(mode='standalone', read_views=open_read_views(controller.store.directory), owner_handlers=handlers)
+    return SimulationToolDispatcher(
+        mode='standalone',
+        read_views=open_read_views(controller.store.directory),
+        owner_handlers=handlers,
+        policy_override=policy_override,
+    )

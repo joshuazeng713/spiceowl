@@ -53,13 +53,10 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
         live_client = LiveSimulationClient(live_client_config)
     from spiceowl.direct import DirectExecutionManager, DirectRecoverySupervisor
     from spiceowl.batch import DirectBatchManager
-    from spiceowl.notifications import NotificationManager
+    from spiceowl.watch_handoff import WatchHandoffManager, build_codex_bridge_pusher
     direct_manager = DirectExecutionManager(controller.store.directory, hosts=getattr(controller, "hosts", None))
     batch_manager = DirectBatchManager(controller.store.directory, direct_manager)
-    notification_manager = NotificationManager(controller.store.directory)
-    direct_supervisor = DirectRecoverySupervisor(direct_manager, notifier=notification_manager)
-    direct_monitor = direct_supervisor.monitor
-    direct_supervisor.resume()
+    handoff_manager = WatchHandoffManager(controller.store.directory)
     from spiceowl.codex_bridge import CodexBridge
     definitions, dispatcher = [], None
     if controller.agent_mode == 'standalone':
@@ -67,13 +64,20 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
         dispatcher = build_standalone_dispatcher(controller, live_client=live_client,
             pdk_lut_path=pdk_lut_path, circuitgit_client_config=circuitgit_client_config,
             circuitgit_sdk_path=circuitgit_sdk_path,
-            direct_manager=direct_manager if enable_direct_exec else None)
+            direct_manager=direct_manager if enable_direct_exec else None,
+            handoff_manager=handoff_manager)
         definitions = [{key: row[key] for key in ('name', 'description', 'inputSchema')}
                        for row in dispatcher.definitions()]
     controller.codex = CodexBridge(controller.store.directory / 'codex', mode=controller.agent_mode,
         dispatch_tool=dispatcher.dispatch if dispatcher else None,
         tool_policy=dispatcher.policy if dispatcher else None, tool_definitions=definitions,
         executable=codex_executable, model=codex_model)
+    agent_pusher = build_codex_bridge_pusher(controller.codex)
+    direct_supervisor = DirectRecoverySupervisor(
+        direct_manager, handoff_manager=handoff_manager, agent_pusher=agent_pusher,
+    )
+    direct_monitor = direct_supervisor.monitor
+    direct_supervisor.resume()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "SpiceOwl"
@@ -499,46 +503,49 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     {"run": run, "waveforms": direct_manager.waveform_index(run["run_id"], allow_remote=False)},
                     201,
                 )
-            if path == "/api/direct/notifications" and self.command == "GET":
+            if path == "/api/direct/watch-events" and self.command == "GET":
+                query = parse_qs(url.query, keep_blank_values=True)
+                state_filter = query["state"][0] if "state" in query and query["state"] else None
+                st = controller.codex.status()
                 return self.reply({
-                    "channels": notification_manager.list_channels(redact=True),
-                    "history": notification_manager.list_history(limit=30),
+                    "events": handoff_manager.list_events(state=state_filter, limit=50),
+                    "policy": handoff_manager.get_policy(),
+                    "agent_connected": bool(st.get("connected")),
+                    "agent_state": st.get("state") or "disconnected",
                 })
-            if path == "/api/direct/notifications/preview" and self.command == "POST":
-                from spiceowl.notifications import build_notification_event, format_provider_payload
+            if path == "/api/direct/watch-policy" and self.command == "GET":
+                return self.reply({"policy": handoff_manager.get_policy()})
+            if path == "/api/direct/watch-policy" and self.command == "POST":
                 req = self.body()
-                allowed = {"provider", "event_type", "run_id", "detail"}
+                updated = handoff_manager.update_policy(req)
+                return self.reply({"policy": updated})
+            if path == "/api/direct/watch-events/simulate" and self.command == "POST":
+                req = self.body()
+                allowed = {"scenario"}
                 if set(req) - allowed:
-                    raise DomainError("Notification preview accepts provider, event_type, run_id, and detail only.")
-                provider = req.get("provider", "feishu")
-                event_type = req.get("event_type", "recovery_succeeded")
-                ev = build_notification_event(
-                    event_type=event_type,
-                    run_id=req.get("run_id") or "demo-oom-recover-r2",
-                    host_id="sim-node-a",
-                    backend="slurm",
-                    simulator="spectre",
-                    attempt_number=2 if "recovery" in str(event_type) else 1,
-                    five_dim_summary={"execution": "completed", "measurement": "valid", "performance": "pass", "soa": "clean"},
-                    detail=req.get("detail") or "确认 OOM 后已自动将内存由 16 GiB 翻倍至 32 GiB 并顺利完成（网表 SHA-256 全程一致）。",
-                )
-                return self.reply({"event": ev, "provider": provider, "payload": format_provider_payload(provider, ev)})
-            if path == "/api/direct/notifications/channels" and self.command == "POST":
+                    raise DomainError("Watch handoff simulation accepts only scenario.")
+                ev = handoff_manager.simulate_overnight_handoff(scenario=req.get("scenario") or "queue_timeout")
+                return self.reply({"event": ev, "events": handoff_manager.list_events(limit=50)}, 201)
+            if path.startswith("/api/direct/watch-events/") and path.endswith("/push-agent") and self.command == "POST":
+                ev_id = require_id(path.removeprefix("/api/direct/watch-events/").removesuffix("/push-agent"), "watch event ID")
+                ev = handoff_manager.push_event_to_agent(ev_id, agent_pusher=agent_pusher)
+                return self.reply({"event": ev})
+            if path.startswith("/api/direct/watch-events/") and path.endswith("/decision") and self.command == "POST":
+                ev_id = require_id(path.removeprefix("/api/direct/watch-events/").removesuffix("/decision"), "watch event ID")
                 req = self.body()
-                allowed = {"label", "provider", "webhook_url", "events", "enabled"}
-                if set(req) - allowed or not {"label", "provider", "webhook_url"} <= set(req):
-                    raise DomainError("Notification channel requires label, provider, and webhook_url.")
-                ch = notification_manager.add_channel(
-                    label=req["label"],
-                    provider=req["provider"],
-                    webhook_url=req["webhook_url"],
-                    events=req.get("events"),
-                    enabled=req.get("enabled", True),
+                allowed = {"outcome", "rationale", "resource_assessment", "config_changes", "new_run_id", "needs_human_review"}
+                if set(req) - allowed or not {"outcome", "rationale"} <= set(req):
+                    raise DomainError("Watch decision requires outcome and rationale.")
+                ev = handoff_manager.record_agent_decision(
+                    ev_id,
+                    outcome=req["outcome"],
+                    rationale=req["rationale"],
+                    resource_assessment=req.get("resource_assessment"),
+                    config_changes=req.get("config_changes"),
+                    new_run_id=req.get("new_run_id"),
+                    needs_human_review=bool(req.get("needs_human_review", False)),
                 )
-                return self.reply({"channel": ch}, 201)
-            if path.startswith("/api/direct/notifications/channels/") and self.command == "DELETE":
-                ch_id = require_id(path.removeprefix("/api/direct/notifications/channels/"), "notification channel ID")
-                return self.reply(notification_manager.remove_channel(ch_id))
+                return self.reply({"event": ev})
             if path == "/api/direct/recovery-reports" and self.command == "GET":
                 query = parse_qs(url.query, keep_blank_values=True)
                 if set(query) - {"q", "outcome"}:

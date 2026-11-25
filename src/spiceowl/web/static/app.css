@@ -1486,7 +1486,201 @@ dialog .muted {
   .public-demo-actions { max-width:none; justify-content:flex-start; }
   .demo-build { flex-basis:auto; margin-left:auto; }
 }
+.nav-group-label {
+  font-size:9px;
+  letter-spacing:1.3px;
+  color:#7e98a0;
+  margin:14px 12px 6px;
+  font-weight:600;
+}
+.nav-group-label:first-child {
+  margin-top:0;
+}
+.state-hint {
+  display:block;
+  margin-top:5px;
+  font-size:10px;
+  color:var(--muted);
+}
+.direct-tabs {
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin:0 0 18px;
+  padding:8px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#fff;
+  box-shadow:var(--shadow);
+}
+.direct-tab {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:9px 14px;
+  border:1px solid transparent;
+  border-radius:7px;
+  background:transparent;
+  color:#4a6058;
+  font-size:12.5px;
+  font-weight:550;
+  transition:background .15s, color .15s, border-color .15s;
+}
+.direct-tab:hover {
+  background:#f2f6f4;
+  color:var(--ink);
+}
+.direct-tab.active {
+  background:var(--green);
+  color:#fff;
+  border-color:var(--green);
+}
+.direct-tab-badge {
+  font-size:10px;
+  padding:1px 6px;
+  border-radius:999px;
+  background:#e6efea;
+  color:#315d4e;
+}
+.direct-tab.active .direct-tab-badge {
+  background:#ffffff29;
+  color:#fff;
+}
+.tut-shell {
+  padding:20px 22px;
+  margin-bottom:18px;
+}
+.tut-stepper {
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:8px;
+  margin-bottom:18px;
+}
+.tut-step-pill {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:#f8faf9;
+  color:#4c635b;
+  font-size:12px;
+  font-weight:550;
+  text-align:left;
+  min-width:0;
+  transition:border-color .15s, background .15s;
+}
+.tut-step-pill:hover {
+  border-color:#9fc0b2;
+  background:#f0f6f3;
+}
+.tut-step-pill.active {
+  border-color:var(--green);
+  background:#e9f4ee;
+  color:#174b3a;
+  font-weight:650;
+}
+.tut-step-pill.done {
+  border-color:#c6ddd1;
+  background:#f4faf6;
+}
+.tut-step-index {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:22px;
+  height:22px;
+  border-radius:999px;
+  background:#d8e6df;
+  color:#275343;
+  font-size:11px;
+  font-weight:700;
+  flex:none;
+}
+.tut-step-pill.active .tut-step-index {
+  background:var(--green);
+  color:#fff;
+}
+.tut-step-text {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.tut-card {
+  padding:18px 20px;
+  border:1px solid #d5e4dc;
+  border-radius:9px;
+  background:#fcfefd;
+}
+.tut-card-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
+}
+.tut-card-head h2 {
+  margin:8px 0 0;
+  font-size:18px;
+}
+.tut-goal {
+  margin:0 0 12px;
+  font-size:13px;
+  color:#385249;
+  line-height:1.7;
+}
+.tut-list {
+  margin:0 0 16px;
+  padding-left:20px;
+  font-size:13px;
+  line-height:1.75;
+  color:#2b4139;
+}
+.tut-list li {
+  margin-bottom:6px;
+}
+.tut-actions {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:10px;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+.tut-nav-pair {
+  display:flex;
+  gap:8px;
+  margin-left:auto;
+}
+.tut-tip-strip {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px 10px;
+  padding:10px 13px;
+  margin-bottom:12px;
+  border:1px solid #cde0d6;
+  border-radius:7px;
+  background:#eef6f1;
+  font-size:12px;
+  color:#275343;
+  line-height:1.55;
+}
+.tut-divider {
+  border:0;
+  border-top:1px solid var(--line);
+  margin:22px 0;
+}
+@media(max-width:1050px) {
+  .tut-stepper { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
 @media(max-width:730px) {
+  .nav-group-label, #quickstart-link { display:none; }
+  .tut-stepper { grid-template-columns:minmax(0,1fr); }
+  .tut-nav-pair { margin-left:0; width:100%; justify-content:space-between; }
+  .direct-tab { flex:1 1 140px; justify-content:center; font-size:11.5px; padding:8px 10px; }
   .public-demo-banner { margin:18px 18px 0; padding:17px; }
   .public-demo-actions { gap:7px; }
   .public-demo-actions .button { font-size:11px; padding:8px 10px; }

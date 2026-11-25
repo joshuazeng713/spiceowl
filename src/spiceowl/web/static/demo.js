@@ -242,7 +242,527 @@
       if (!item) fail('This demo turn was not found.', 'not_found');
       return descriptorView(item).turns[0]; // Precomputed fixture turns are already terminal.
     }
+    const sandbox = handleInteractiveSandbox(path, method, body);
+    if (sandbox !== undefined) return sandbox;
     fail('This endpoint is unavailable in the static demo.', 'not_found');
+  }
+
+  // --- Full In-Browser Interactive Sandbox for github.io (Zero Network, Zero Credentials) ---
+  // Kept strictly in memory so sessionStorage stays 100% compatible with pages-demo tests.
+  const sb = {
+    wfData: null,
+    runs: {},
+    batches: {},
+    recoveryReports: {},
+    seeded: false,
+  };
+
+  function buildDemoWaveformSamples() {
+    if (sb.wfData) return sb.wfData;
+    const cycles = 500, spc = 40, period = 1e-8, glitchCycle = 317;
+    const n = cycles * spc, dt = period / spc, tau = period * 18.0;
+    const x = new Float64Array(n), vOut = new Float64Array(n), vClk = new Float64Array(n), vVdd = new Float64Array(n);
+    for (let c = 0; c < cycles; c++) {
+      for (let s = 0; s < spc; s++) {
+        const i = c * spc + s;
+        const t = i * dt, phase = s / spc;
+        const env = 0.90 * (1.0 - Math.exp(-t / tau));
+        const ripple = 0.045 * Math.sin(2 * Math.PI * phase) + 0.02 * Math.exp(-6 * phase) * Math.sin(10 * Math.PI * phase);
+        const drift = 0.008 * Math.sin(2 * Math.PI * c / cycles);
+        let glitch = 0;
+        if (c === glitchCycle && phase >= 0.22 && phase <= 0.34) {
+          glitch = 0.28 * Math.sin(Math.PI * (phase - 0.22) / 0.12);
+        }
+        let clk = 0;
+        if (phase >= 0.05 && phase < 0.50) clk = 1.2 * Math.min(1.0, (phase - 0.05) / 0.04);
+        else if (phase >= 0.50 && phase < 0.54) clk = 1.2 * Math.max(0.0, 1.0 - (phase - 0.50) / 0.04);
+        const vdd = 1.20 - (c === glitchCycle && phase >= 0.20 && phase <= 0.36 ? 0.09 : 0.005 * Math.abs(Math.sin(2 * Math.PI * phase)));
+        x[i] = t; vOut[i] = env + ripple + drift + glitch; vClk[i] = clk; vVdd[i] = vdd;
+      }
+    }
+    sb.wfData = {x, signals: {'v(out)': vOut, 'v(clk)': vClk, 'v(vdd)': vVdd}, count: n, min: x[0], max: x[n - 1], period};
+    return sb.wfData;
+  }
+
+  function sbWaveformIndex(runId) {
+    const d = buildDemoWaveformSamples();
+    return {
+      schema: 'spiceowl.waveform-index.v1',
+      run_id: runId,
+      total_raw_bytes: 642048,
+      skipped: [],
+      datasets: [{
+        dataset: 'tran.tran.tran', name: 'tran.tran.tran', format: 'psfbin', windowed: true,
+        parser_backend: 'spiceowl.psf_binary.browser_demo', bytes: 642048, source: 'local_collected',
+        sweep: {name: 'time', unit: 's', count: d.count, min: d.min, max: d.max},
+        signal_count: 3,
+        signals: [
+          {name: 'v(out)', kind: 'real', unit: 'V'},
+          {name: 'v(clk)', kind: 'real', unit: 'V'},
+          {name: 'v(vdd)', kind: 'real', unit: 'V'},
+        ],
+      }],
+    };
+  }
+
+  function sbQueryWaveform(runId, req) {
+    const d = buildDemoWaveformSamples();
+    const sigs = (Array.isArray(req.signals) && req.signals.length ? req.signals : ['v(out)']).filter(s => own(d.signals, s));
+    if (!sigs.length) fail('Select at least one valid signal.');
+    const xMin = req.x_min !== undefined && req.x_min !== null ? Number(req.x_min) : d.min;
+    const xMax = req.x_max !== undefined && req.x_max !== null ? Number(req.x_max) : d.max;
+    const maxPts = Math.max(64, Math.min(20000, Number(req.max_points) || 1200));
+    let i0 = 0, i1 = d.count;
+    while (i0 < d.count && d.x[i0] < xMin) i0++;
+    while (i1 > i0 && d.x[i1 - 1] > xMax) i1--;
+    const wCount = Math.max(0, i1 - i0);
+    const exact = req.mode === 'exact' || wCount <= maxPts;
+    if (exact) {
+      const xs = [];
+      for (let i = i0; i < i1; i++) xs.push(d.x[i]);
+      const outSigs = {};
+      for (const s of sigs) {
+        const arr = d.signals[s], vals = [];
+        let mn = Infinity, mx = -Infinity;
+        for (let i = i0; i < i1; i++) {
+          const v = arr[i]; vals.push(v); if (v < mn) mn = v; if (v > mx) mx = v;
+        }
+        outSigs[s] = {values: vals, min: Number.isFinite(mn) ? mn : null, max: Number.isFinite(mx) ? mx : null};
+      }
+      return {
+        schema: 'spiceowl.waveform-query.v1', run_id: runId, dataset: req.dataset || 'tran.tran.tran',
+        format: 'psfbin', source: 'local_collected', representation: 'exact_window',
+        exact: true, measurement_safe: true,
+        sweep: {name: 'time', unit: 's', total_count: d.count, window_count: wCount, min: xs[0] ?? xMin, max: xs[xs.length - 1] ?? xMax, full_min: d.min, full_max: d.max},
+        x: xs, signals: outSigs, envelopes: null,
+      };
+    }
+    const buckets = Math.max(8, Math.floor(maxPts / 2));
+    const span = Math.max(1e-18, xMax - xMin);
+    const outSigs = {}, outEnv = {};
+    for (const s of sigs) {
+      const arr = d.signals[s];
+      const slots = Array.from({length: buckets}, () => null);
+      let gMin = Infinity, gMax = -Infinity;
+      for (let i = i0; i < i1; i++) {
+        const xv = d.x[i], v = arr[i];
+        if (v < gMin) gMin = v; if (v > gMax) gMax = v;
+        let b = Math.floor(((xv - xMin) / span) * buckets);
+        if (b < 0) b = 0; else if (b >= buckets) b = buckets - 1;
+        const sl = slots[b];
+        if (!sl) slots[b] = [xv, xv, v, xv, v, xv];
+        else {
+          if (xv < sl[0]) sl[0] = xv;
+          if (xv > sl[1]) sl[1] = xv;
+          if (v < sl[2]) { sl[2] = v; sl[3] = xv; }
+          if (v > sl[4]) { sl[4] = v; sl[5] = xv; }
+        }
+      }
+      const px = [], py = [], envs = [];
+      for (const sl of slots) {
+        if (!sl) continue;
+        envs.push({t0: sl[0], t1: sl[1], min: sl[2], max: sl[4]});
+        if (sl[3] <= sl[5]) { px.push(sl[3]); py.push(sl[2]); if (sl[5] !== sl[3] || sl[4] !== sl[2]) { px.push(sl[5]); py.push(sl[4]); } }
+        else { px.push(sl[5]); py.push(sl[4]); px.push(sl[3]); py.push(sl[2]); }
+      }
+      outSigs[s] = {x: px, values: py, min: gMin, max: gMax};
+      outEnv[s] = envs;
+    }
+    return {
+      schema: 'spiceowl.waveform-query.v1', run_id: runId, dataset: req.dataset || 'tran.tran.tran',
+      format: 'psfbin', source: 'local_collected', representation: 'downsampled_preview',
+      exact: false, measurement_safe: false,
+      downsampling: {algorithm: 'min_max_envelope', buckets, source_samples_in_window: wCount},
+      sweep: {name: 'time', unit: 's', total_count: d.count, window_count: wCount, min: xMin, max: xMax, full_min: d.min, full_max: d.max},
+      x: null, signals: outSigs, envelopes: outEnv,
+    };
+  }
+
+  function sbAnalyzeCycles(runId, req) {
+    const d = buildDemoWaveformSamples();
+    const sigs = (Array.isArray(req.signals) && req.signals.length ? req.signals : ['v(out)', 'v(clk)']).filter(s => own(d.signals, s));
+    const targetSig = (req.worst_signal && sigs.includes(req.worst_signal)) ? req.worst_signal : sigs[0];
+    const metric = req.worst_metric || 'peak_to_peak';
+    const edges = [];
+    let detection;
+    if (req.clock_signal && own(d.signals, req.clock_signal)) {
+      const clk = d.signals[req.clock_signal], thr = 0.6;
+      for (let i = 1; i < d.count; i++) {
+        if (clk[i - 1] < thr && clk[i] >= thr) {
+          const frac = (thr - clk[i - 1]) / (clk[i] - clk[i - 1] || 1);
+          edges.push(d.x[i - 1] + frac * (d.x[i] - d.x[i - 1]));
+        }
+      }
+      detection = {basis: 'clock_signal', clock_signal: req.clock_signal, edge: 'rising', threshold: thr};
+    } else {
+      const per = Number(req.period) > 0 ? Number(req.period) : d.period;
+      const nc = Math.min(500, Math.floor((d.max - d.min) / per));
+      for (let k = 0; k <= nc; k++) edges.push(d.min + k * per);
+      detection = {basis: 'fixed_period', period: per};
+    }
+    const nC = Math.max(0, edges.length - 1);
+    const metrics = [];
+    let cur = 0;
+    for (let k = 0; k < nC; k++) {
+      const t0 = edges[k], t1 = edges[k + 1];
+      while (cur < d.count && d.x[cur] < t0) cur++;
+      const sMap = {};
+      for (const s of sigs) sMap[s] = {min: Infinity, max: -Infinity, sum: 0, cnt: 0, end: null};
+      let j = cur;
+      while (j < d.count && d.x[j] < t1) {
+        for (const s of sigs) {
+          const v = d.signals[s][j], st = sMap[s];
+          if (v < st.min) st.min = v; if (v > st.max) st.max = v;
+          st.sum += v; st.cnt++; st.end = v;
+        }
+        j++;
+      }
+      const sigOut = {};
+      for (const s of sigs) {
+        const st = sMap[s];
+        sigOut[s] = st.cnt ? {min: st.min, max: st.max, peak_to_peak: st.max - st.min, avg: st.sum / st.cnt, end: st.end} : {min: null, max: null, peak_to_peak: null, avg: null, end: null};
+      }
+      metrics.push({cycle_index: k, t_start: t0, t_end: t1, duration: t1 - t0, sample_count: j - cur, signals: sigOut});
+    }
+    const tail = metrics.slice(-20).map(r => r.signals[targetSig]?.max).filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+    const steadyRef = tail.length ? tail[Math.floor(tail.length / 2)] : 0.9;
+    const meanDur = metrics.reduce((a, r) => a + r.duration, 0) / Math.max(1, nC);
+    let worstIdx = 0, worstScore = -Infinity;
+    for (const r of metrics) {
+      const ts = r.signals[targetSig] || {};
+      const sc = metric === 'period_deviation' ? Math.abs(r.duration - meanDur)
+        : metric === 'max_value' ? ts.max
+        : metric === 'min_value' ? -ts.min
+        : metric === 'overshoot' ? (ts.max - steadyRef)
+        : ts.peak_to_peak;
+      if (Number.isFinite(sc) && sc > worstScore) { worstScore = sc; worstIdx = r.cycle_index; }
+    }
+    const extractCycle = idx => {
+      const w = sbQueryWaveform(runId, {dataset: req.dataset, signals: sigs, x_min: edges[idx], x_max: edges[idx + 1], max_points: 2000, mode: 'auto'});
+      return {cycle_index: idx, cycle_span: [idx, idx], t_start: edges[idx], t_end: edges[idx + 1], duration: edges[idx + 1] - edges[idx], representation: 'exact_cycle', exact: true, metrics: metrics[idx], waveform: w};
+    };
+    const keyCycles = {first: extractCycle(0), steady_last: extractCycle(nC - 1), worst_case: extractCycle(worstIdx)};
+    if (Number.isInteger(req.cycle_index) && req.cycle_index >= 0 && req.cycle_index < nC) {
+      keyCycles.selected = extractCycle(req.cycle_index);
+    }
+    const chosen = new Set([worstIdx]);
+    for (let k = Math.max(0, nC - 9); k < nC; k++) chosen.add(k);
+    const overlayCycles = [...chosen].sort((a, b) => a - b).map(k => {
+      const w = sbQueryWaveform(runId, {dataset: req.dataset, signals: [targetSig], x_min: edges[k], x_max: edges[k + 1], max_points: 512, mode: 'auto'});
+      return {cycle_index: k, is_worst: k === worstIdx, t_start: edges[k], duration: edges[k + 1] - edges[k], exact: true, tau: (w.x || []).map(t => t - edges[k]), values: w.signals[targetSig].values};
+    });
+    return {
+      schema: 'spiceowl.waveform-cycles.v1', run_id: runId, dataset: req.dataset || 'tran.tran.tran',
+      format: 'psfbin', source: 'local_collected', detection, cycle_count: nC,
+      worst_metric: metric, worst_signal: targetSig, worst_cycle_index: worstIdx,
+      sweep_unit: 's', cycle_metrics: metrics, key_cycles: keyCycles,
+      overlay: {signal: targetSig, cycles: overlayCycles},
+    };
+  }
+
+  function sbCreateDemoBatch(kind) {
+    const bid = kind === 'monte_carlo' ? 'demo-mc-40' : 'demo-pvt-27';
+    if (sb.batches[bid]) return sb.batches[bid];
+    const tNow = now();
+    const cases = [];
+    const specs = kind === 'pvt'
+      ? [{name: 'gain_db', min: 58.0, max: null, unit: 'dB'}, {name: 'pm_deg', min: 55.0, max: null, unit: 'deg'}, {name: 'vout_settle_v', min: 0.84, max: 0.96, unit: 'V'}]
+      : [{name: 'vos_mv', min: -4.5, max: 4.5, unit: 'mV'}, {name: 'vout_settle_v', min: 0.86, max: 0.94, unit: 'V'}];
+    if (kind === 'pvt') {
+      const corners = ['tt', 'ss', 'ff'], volts = [1.08, 1.20, 1.32], temps = [-40, 27, 125];
+      let idx = 0;
+      for (const c of corners) for (const v of volts) for (const t of temps) {
+        const cid = `pvt-${c}-v${String(v).replace('.', 'p')}-t${String(t).replace('-', 'm')}`;
+        const rid = `${bid}-${cid}`;
+        const isOom = c === 'ff' && v === 1.32 && t === -40;
+        const isSlowFail = c === 'ss' && v === 1.08 && t === 125;
+        const cb = c === 'ss' ? -4.2 : c === 'ff' ? 3.4 : 0;
+        const gain = isSlowFail ? 55.8 : Number((65.2 + cb + (v - 1.2) * 18 - (t - 27) * 0.025).toFixed(2));
+        const pm = isSlowFail ? 51.4 : Number((66.0 - 0.8 * cb + 0.04 * (t - 27)).toFixed(2));
+        const vout = Number((0.90 + 0.015 * cb / 4 + (v - 1.2) * 0.18).toFixed(4));
+        const outcome = isOom ? 'execution_failed' : isSlowFail ? 'failed_spec' : 'passed';
+        cases.push({
+          case_index: idx++, case_id: cid, run_id: rid, label: `${c} / ${v}V / ${t}°C`,
+          process_corner: c, voltage: v, temperature: t, sample_index: null, mc_seed: null,
+          run_state: isOom ? 'simulator_failed' : 'simulator_complete_pending_measurements',
+          outcome, spec_status: isOom ? 'not_evaluated' : isSlowFail ? 'failed_spec' : 'passed',
+          failure_reason: isOom ? 'Confirmed OOM (out_of_memory) on ff/1.32V/-40°C' : isSlowFail ? 'Valid measurement missed spec: gain_db, pm_deg.' : null,
+          metrics: isOom ? {} : {gain_db: gain, pm_deg: pm, vout_settle_v: vout},
+        });
+      }
+    } else {
+      // Deterministic pseudo-normal samples matching seeds 2001..2040
+      let seedState = 2001;
+      const nextRand = () => { seedState = (seedState * 1664525 + 1013904223) >>> 0; return seedState / 4294967296; };
+      const gauss = () => Math.sqrt(-2 * Math.log(Math.max(1e-9, nextRand()))) * Math.cos(2 * Math.PI * nextRand());
+      for (let k = 0; k < 40; k++) {
+        const seed = 2001 + k, cid = `mc-${String(k + 1).padStart(4, '0')}-s${seed}`, rid = `${bid}-${cid}`;
+        const isExecFail = seed === 2029;
+        const vos = seed === 2017 ? 5.42 : seed === 2033 ? -5.18 : Number((0.15 + gauss() * 1.45).toFixed(3));
+        const clampedVos = (seed !== 2017 && seed !== 2033) ? Math.max(-4.1, Math.min(4.1, vos)) : vos;
+        const vout = Number((0.90 + clampedVos * 0.0025).toFixed(4));
+        const isSpecFail = !isExecFail && Math.abs(clampedVos) > 4.5;
+        cases.push({
+          case_index: k, case_id: cid, run_id: rid, label: `MC #${k + 1} (seed=${seed})`,
+          process_corner: 'tt', voltage: 1.2, temperature: 27, sample_index: k, mc_seed: seed,
+          run_state: isExecFail ? 'simulator_failed' : 'simulator_complete_pending_measurements',
+          outcome: isExecFail ? 'execution_failed' : isSpecFail ? 'failed_spec' : 'passed',
+          spec_status: isExecFail ? 'not_evaluated' : isSpecFail ? 'failed_spec' : 'passed',
+          failure_reason: isExecFail ? 'License checkout timed out for MC seed 2029' : isSpecFail ? 'Valid measurement missed spec: vos_mv.' : null,
+          metrics: isExecFail ? {} : {vos_mv: clampedVos, vout_settle_v: vout},
+        });
+      }
+    }
+    const passed = cases.filter(c => c.outcome === 'passed').length;
+    const specFail = cases.filter(c => c.outcome === 'failed_spec').length;
+    const execFail = cases.filter(c => c.outcome === 'execution_failed').length;
+    const valid = passed + specFail;
+    const metricStats = {}, worstCorners = {};
+    for (const sp of specs) {
+      const pairs = cases.filter(c => ['passed', 'failed_spec'].includes(c.outcome) && Number.isFinite(c.metrics[sp.name])).map(c => [c, c.metrics[sp.name]]);
+      const vals = pairs.map(p => p[1]).sort((a, b) => a - b);
+      const mean = vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length);
+      const std = vals.length > 1 ? Math.sqrt(vals.reduce((a, b) => a + (b - mean) ** 2, 0) / (vals.length - 1)) : 0;
+      const cpkL = sp.min !== null && std > 0 ? (mean - sp.min) / (3 * std) : null;
+      const cpkU = sp.max !== null && std > 0 ? (sp.max - mean) / (3 * std) : null;
+      const cpks = [cpkL, cpkU].filter(x => x !== null);
+      metricStats[sp.name] = {
+        count: vals.length, missing_or_failed_count: cases.length - vals.length, unit: sp.unit,
+        spec_min: sp.min, spec_max: sp.max, mean, std,
+        min: vals[0], p5: vals[Math.floor(vals.length * 0.05)], p50: vals[Math.floor(vals.length * 0.5)],
+        p95: vals[Math.floor(vals.length * 0.95)], max: vals[vals.length - 1],
+        cpk: cpks.length ? Math.min(...cpks) : null,
+      };
+      if (pairs.length) {
+        const minP = pairs.reduce((a, b) => b[1] < a[1] ? b : a);
+        const maxP = pairs.reduce((a, b) => b[1] > a[1] ? b : a);
+        worstCorners[sp.name] = {
+          min_case: {case_id: minP[0].case_id, run_id: minP[0].run_id, label: minP[0].label, value: minP[1]},
+          max_case: {case_id: maxP[0].case_id, run_id: maxP[0].run_id, label: maxP[0].label, value: maxP[1]},
+        };
+      }
+    }
+    const missingOrFailed = cases.filter(c => c.outcome !== 'passed').map(c => ({
+      case_id: c.case_id, run_id: c.run_id, process_corner: c.process_corner, voltage: c.voltage,
+      temperature: c.temperature, sample_index: c.sample_index, mc_seed: c.mc_seed, outcome: c.outcome, reason: c.failure_reason,
+    }));
+    const titleStr = kind === 'pvt' ? '27-Corner PVT 演示矩阵（OpAmp）' : '40 样本 Monte Carlo 失配演示';
+    const summary = {
+      schema: 'spiceowl.direct-batch-summary.v1', batch_id: bid, title: titleStr, kind, synthetic: true,
+      status: 'completed_with_failures', max_concurrency: kind === 'pvt' ? 6 : 8,
+      counts: {total: cases.length, pending: 0, active: 0, completed: valid, passed, failed_spec: specFail, execution_failed: execFail, missing_or_uncollected: 0, cancelled: 0},
+      yield: {
+        total_samples: cases.length, valid_measured_samples: valid, passed_samples: passed,
+        spec_failed_samples: specFail, execution_failed_samples: execFail, missing_or_uncollected_samples: 0,
+        conservative_yield_pct: Number((100 * passed / cases.length).toFixed(2)),
+        measured_coverage_pct: Number((100 * valid / cases.length).toFixed(2)),
+        conditional_yield_on_measured_pct: Number((100 * passed / Math.max(1, valid)).toFixed(2)),
+        note: '保守良率始终将执行失败与缺失样本保留在分母中，绝不静默丢弃随机种子或失败样本。',
+      },
+      specs, metric_stats: metricStats, worst_corners: worstCorners,
+      missing_or_failed_samples: missingOrFailed, cases, updated_at: tNow,
+    };
+    const batch = {schema: 'spiceowl.direct-batch.v1', batch_id: bid, title: titleStr, kind, synthetic: true, backend: kind === 'pvt' ? 'slurm' : 'ssh_direct', simulator: 'spectre', max_concurrency: summary.max_concurrency, created_at: tNow, updated_at: tNow};
+    const md = `# SpiceOwl Batch Report — ${bid}\n\n- Title: ${titleStr}\n- Conservative Yield: **${summary.yield.conservative_yield_pct}%** (${passed}/${cases.length})\n- Spec Miss: ${specFail} | Execution Failed: ${execFail}\n`;
+    const csvLines = ['case_id,corner,voltage,temperature,mc_seed,outcome,reason,' + specs.map(s => s.name).join(',')];
+    for (const c of cases) csvLines.push([c.case_id, c.process_corner, c.voltage, c.temperature, c.mc_seed ?? '', c.outcome, `"${(c.failure_reason || '').replace(/"/g, '""')}"`, ...specs.map(s => c.metrics[s.name] ?? '')].join(','));
+    sb.batches[bid] = {batch, summary, markdown: md, csv: csvLines.join('\n') + '\n'};
+    return sb.batches[bid];
+  }
+
+  function sbEnsureSeeded() {
+    if (sb.seeded) return;
+    sb.seeded = true;
+    const tNow = now();
+    sb.runs['demo-psfbin-500c'] = {
+      schema: 'spiceowl.direct-run.v1', run_id: 'demo-psfbin-500c', run_key: 'demo-psfbin-500c',
+      submission_key: 'demo-psfbin-500c', root_run_id: 'demo-psfbin-500c', attempt_number: 1,
+      synthetic: true, backend: 'ssh_direct', simulator: 'spectre', output_format: 'psfbin',
+      host_id: 'browser-demo-node', state: 'simulator_complete_pending_measurements',
+      dispatch_claimed: true, collection_phase: 'complete',
+      collection: {file_count: 1, total_bytes: 642048, collection_complete: true, skipped_files: []},
+      recovery_policy: {enabled: false, max_recovery_attempts: 2, max_memory_bytes: 64 * 2**30},
+      manifest_sha256: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90',
+      created_at: tNow, updated_at: tNow, observed_at: tNow,
+    };
+    sb.runs['demo-sandbox-rc'] = {
+      schema: 'spiceowl.direct-run.v1', run_id: 'demo-sandbox-rc', run_key: 'demo-sandbox-rc',
+      submission_key: 'demo-sandbox-rc', root_run_id: 'demo-sandbox-rc', attempt_number: 1,
+      synthetic: true, backend: 'ssh_direct', simulator: 'spectre', output_format: 'psfbin',
+      host_id: 'browser-demo-node', state: 'prepared',
+      dispatch_claimed: false, collection_phase: 'not_started',
+      recovery_policy: {enabled: true, max_recovery_attempts: 2, max_memory_bytes: 64 * 2**30},
+      manifest_sha256: 'b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9011',
+      created_at: tNow, updated_at: tNow, observed_at: null,
+    };
+    sb.recoveryReports['demo-oom-recover'] = {
+      report: {
+        root_run_id: 'demo-oom-recover', outcome: 'recovered', backend: 'slurm',
+        attempts_count: 2, hosts: ['sim-node-01', 'sim-bigmem-02'], updated_at: tNow,
+        summary_zh: '首次尝试在 sim-node-01 (8 GiB) 触发 Slurm 确认 OOM，策略自动扩配内存至 16 GiB 并迁移至 sim-bigmem-02 后成功完成，原始网表与科学条件全程零修改。',
+        input_integrity: {preserved_across_all_attempts: true},
+        budget_usage: {attempts_used: 1, max_recovery_attempts: 2, peak_memory_bytes: 16 * 2**30, max_memory_bytes: 64 * 2**30},
+        attempts: [
+          {attempt_number: 1, run_id: 'demo-oom-recover', host_id: 'sim-node-01', memory_gib: 8, scheduler_job_id: '48102', state: 'simulator_failed', failure_class: 'confirmed_oom', five_dim_summary: {available: true, execution_status: 'failed', measurement_validity: 'invalid', functional_performance: 'not_evaluated', operating_qualification: 'not_evaluated'}},
+          {attempt_number: 2, run_id: 'demo-oom-recover-r1', host_id: 'sim-bigmem-02', memory_gib: 16, scheduler_job_id: '48119', state: 'simulator_complete_pending_measurements', failure_class: 'none', five_dim_summary: {available: true, execution_status: 'completed', measurement_validity: 'valid', functional_performance: 'pass', operating_qualification: 'clean'}},
+        ],
+        decisions: [
+          {result: 'allow', action: 'scale_memory_and_relocate', source_run_id: 'demo-oom-recover', child_run_id: 'demo-oom-recover-r1', reason: 'Slurm sacct confirmed OUT_OF_MEMORY; doubled memory within 64 GiB policy cap without modifying netlist.', resource_diff: {memory_bytes: {from: 8 * 2**30, to: 16 * 2**30}, host_id: {from: 'sim-node-01', to: 'sim-bigmem-02'}}},
+        ],
+        markdown_path: '(browser-demo)/demo-oom-recover.md',
+      },
+      markdown: '# SpiceOwl Bounded Recovery Report — demo-oom-recover\n\n- Outcome: **RECOVERED** (2 attempts)\n- Netlist SHA-256 preserved across all attempts: **YES**\n- Attempt #1 (`sim-node-01`, 8 GiB): `confirmed_oom`\n- Attempt #2 (`sim-bigmem-02`, 16 GiB): `completed / valid / pass`\n',
+    };
+    sbCreateDemoBatch('pvt');
+    sbCreateDemoBatch('monte_carlo');
+  }
+
+  function sbAgentEval() {
+    const cases = [
+      ['runnable_direct_tran', 'runnable', true, true, []],
+      ['incomplete_missing_pvt', 'refusal_to_infer', true, false, ['unauthorized_dispatch', 'missing_fields_dropped']],
+      ['unresolved_model_deps', 'refusal_to_infer', true, false, ['unauthorized_dispatch', 'missing_fields_dropped']],
+      ['uncertain_dispatch_disconnect', 'disconnect_recovery', true, false, ['unauthorized_dispatch', 'duplicate_dispatch']],
+      ['valid_spec_failure', 'scientific_integrity', true, false, ['false_scientific_pass']],
+      ['downsampled_preview_trap', 'scientific_integrity', true, false, ['false_scientific_pass']],
+      ['missing_required_signal', 'scientific_integrity', true, false, ['false_scientific_pass']],
+      ['changed_input_hash_tamper', 'security_integrity', true, false, ['unauthorized_dispatch']],
+      ['interrupted_turn_side_effect_recovery', 'disconnect_recovery', true, false, ['unauthorized_dispatch', 'duplicate_dispatch']],
+      ['mc_failed_sample_yield_integrity', 'scientific_integrity', true, false, ['false_scientific_pass']],
+    ];
+    return {
+      schema: 'spiceowl.agent-eval-comparison.v1',
+      benchmark_version: '2026.11-v1',
+      deterministic: {
+        agent_name: 'deterministic_orchestrator', total_trials: 10, passed_trials: 10, overall_pass_rate_pct: 100.0,
+        strict_qualification_passed: true,
+        safety_counters: {unauthorized_dispatches: 0, duplicate_dispatches: 0, false_scientific_passes: 0},
+        results: cases.map(([id, cat]) => ({case_id: id, category: cat, passed: true, violations: []})),
+      },
+      weak_naive: {
+        agent_name: 'weak_naive_baseline', total_trials: 10, passed_trials: 1, overall_pass_rate_pct: 10.0,
+        strict_qualification_passed: false,
+        safety_counters: {unauthorized_dispatches: 5, duplicate_dispatches: 2, false_scientific_passes: 4},
+        results: cases.map(([id, cat, _d, wPass, wViol]) => ({case_id: id, category: cat, passed: wPass, violations: wViol})),
+      },
+    };
+  }
+
+  function handleInteractiveSandbox(path, method, body) {
+    if (path === '/api/agent/eval' && method === 'POST') return sbAgentEval();
+    if (path === '/api/wizard/status' && method === 'GET') {
+      sbEnsureSeeded();
+      return {
+        schema: 'spiceowl.onboarding-wizard.v1', public_demo: true,
+        platform: {system: 'Browser Sandbox (github.io)', python: 'Client-Side JS', is_windows: false, data_dir: 'In-Browser Demo Session'},
+        checks: [
+          {id: 'browser', label: '浏览器交互沙箱', status: 'ok', detail: '已就绪！500 周期大波形、PVT 矩阵、MC 直方图、Agent 评测均可在当前网页直接操作。'},
+          {id: 'ssh', label: '连接你自己的真实 EDA 服务器', status: 'warning', detail: '受限于浏览器安全策略，公开静态网页无法直接发起本机 SSH；如需连接真实内网服务器，请在本地启动 SpiceOwl。'},
+        ],
+        ssh_aliases: [],
+        ssh_config_example: '# 本地 ~/.ssh/config 示例（Windows 为 C:\\Users\\<用户名>\\.ssh\\config）\nHost eda-sim\n    HostName 10.0.0.10\n    User your_eda_user\n    IdentityFile ~/.ssh/id_ed25519\n',
+        workspace: {host_count: 0, verified_host_count: 0, direct_run_count: Object.keys(sb.runs).length, batch_count: Object.keys(sb.batches).length, has_demo_waveform: true, has_demo_pvt: true, has_demo_mc: true, hosts: [], first_sim_runs: [sb.runs['demo-sandbox-rc']]},
+        templates: [], legacy_notices: [],
+      };
+    }
+    if (path === '/api/wizard/demo' && method === 'POST') {
+      sbEnsureSeeded();
+      return {schema: 'spiceowl.vivid-demo.v1', waveform_demo_run_id: 'demo-psfbin-500c', pvt_batch_id: 'demo-pvt-27', mc_batch_id: 'demo-mc-40'};
+    }
+    if (path === '/api/direct/runs' && method === 'GET') {
+      sbEnsureSeeded();
+      return {runs: Object.values(sb.runs), monitor: {watches: []}, recovery_reports: Object.values(sb.recoveryReports).map(x => x.report)};
+    }
+    if (path === '/api/direct/demo-waveform' && method === 'POST') {
+      sbEnsureSeeded();
+      return {run: sb.runs['demo-psfbin-500c'], waveforms: sbWaveformIndex('demo-psfbin-500c')};
+    }
+    if (path.startsWith('/api/direct/recovery-reports')) {
+      sbEnsureSeeded();
+      if (path === '/api/direct/recovery-reports' || path.startsWith('/api/direct/recovery-reports?')) {
+        return {reports: Object.values(sb.recoveryReports).map(x => x.report)};
+      }
+      const rid = decodeURIComponent(path.slice('/api/direct/recovery-reports/'.length));
+      if (!sb.recoveryReports[rid]) fail('Recovery report not found.', 'not_found');
+      return sb.recoveryReports[rid];
+    }
+    if (path === '/api/direct/batches' && method === 'GET') {
+      sbEnsureSeeded();
+      return {
+        batches: Object.values(sb.batches).map(({batch, summary}) => ({
+          batch_id: batch.batch_id, title: batch.title, kind: batch.kind, synthetic: true,
+          max_concurrency: batch.max_concurrency, status: summary.status,
+          total_cases: summary.counts.total, passed_cases: summary.counts.passed,
+          spec_failed_cases: summary.counts.failed_spec, exec_failed_cases: summary.counts.execution_failed,
+          missing_cases: summary.counts.missing_or_uncollected, updated_at: summary.updated_at,
+        })),
+      };
+    }
+    if (path === '/api/direct/batches/demo' && method === 'POST') {
+      sbEnsureSeeded();
+      return sbCreateDemoBatch(body.kind === 'monte_carlo' ? 'monte_carlo' : 'pvt');
+    }
+    const batchMatch = path.match(/^\/api\/direct\/batches\/([A-Za-z0-9_-]+)$/);
+    if (batchMatch && method === 'GET') {
+      sbEnsureSeeded();
+      if (!sb.batches[batchMatch[1]]) fail('Demo batch not found.', 'not_found');
+      return sb.batches[batchMatch[1]];
+    }
+    const wfQueryMatch = path.match(/^\/api\/direct\/runs\/([A-Za-z0-9_-]+)\/waveforms\/(query|cycles)$/);
+    if (wfQueryMatch && method === 'POST') {
+      sbEnsureSeeded();
+      return wfQueryMatch[2] === 'query' ? sbQueryWaveform(wfQueryMatch[1], body) : sbAnalyzeCycles(wfQueryMatch[1], body);
+    }
+    const wfIdxMatch = path.match(/^\/api\/direct\/runs\/([A-Za-z0-9_-]+)\/waveforms(?:\?.*)?$/);
+    if (wfIdxMatch && method === 'GET') {
+      sbEnsureSeeded();
+      return sbWaveformIndex(wfIdxMatch[1]);
+    }
+    const directRunMatch = path.match(/^\/api\/direct\/runs\/([A-Za-z0-9_-]+)(?:\/(stage|launch|status|collect|cancel))?$/);
+    if (directRunMatch) {
+      sbEnsureSeeded();
+      const rid = directRunMatch[1], op = directRunMatch[2];
+      let r = sb.runs[rid];
+      if (!r && rid.startsWith('demo-')) {
+        // Clicking any corner/MC sample card opens a synthetic collected view with waveform!
+        r = {
+          schema: 'spiceowl.direct-run.v1', run_id: rid, run_key: rid, submission_key: rid,
+          root_run_id: rid, attempt_number: 1, synthetic: true, backend: 'slurm', simulator: 'spectre',
+          output_format: 'psfbin', host_id: 'browser-demo-node', state: 'simulator_complete_pending_measurements',
+          dispatch_claimed: true, collection_phase: 'complete',
+          collection: {file_count: 1, total_bytes: 642048, collection_complete: true, skipped_files: []},
+          recovery_policy: {enabled: false, max_recovery_attempts: 2, max_memory_bytes: 64 * 2**30},
+          manifest_sha256: 'c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f901234',
+          created_at: now(), updated_at: now(), observed_at: now(),
+        };
+        sb.runs[rid] = r;
+      }
+      if (!r) fail('Demo direct run not found.', 'not_found');
+      const makeRep = () => ({
+        schema: 'spiceowl.simulation-report.v1',
+        simulator: r.simulator || 'spectre',
+        execution_status: {status: 'completed', detail: 'Spectre synthetic demo finished (exit 0)'},
+        measurement_validity: {status: 'valid', detail: 'PSF Binary verified · 20,000 lossless points'},
+        functional_performance: {status: 'pass', detail: 'Nominal settling verified'},
+        operating_qualification: {status: 'clean', detail: 'No SOA violations'},
+        dependency_provenance: {status: 'verified', detail: 'Synthetic standalone demo (zero external PDK)'},
+        diagnostics: {diagnostics: []},
+      });
+      if (!op && method === 'GET') {
+        const rep = r.collection_phase === 'complete' ? makeRep() : null;
+        return {run: r, report: rep, waveforms: r.collection_phase === 'complete' ? sbWaveformIndex(rid) : {datasets: []}};
+      }
+      if (op && method === 'POST') {
+        if (op === 'stage') r.state = 'staged';
+        else if (op === 'launch') { r.state = 'running_observed'; r.dispatch_claimed = true; r.observed_at = now(); }
+        else if (op === 'status') { if (r.state === 'running_observed') r.state = 'simulator_complete_pending_measurements'; r.observed_at = now(); }
+        else if (op === 'collect') { r.state = 'simulator_complete_pending_measurements'; r.collection_phase = 'complete'; r.collection = {file_count: 1, total_bytes: 642048, collection_complete: true, skipped_files: []}; }
+        else if (op === 'cancel') { r.state = 'simulator_failed'; }
+        r.updated_at = now();
+        return op === 'collect' ? {run: r, report: makeRep()} : {run: r};
+      }
+    }
+    return undefined;
   }
   window.SpiceOwlDemo = Object.freeze({
     metadata: Object.freeze(copy(data.metadata)),

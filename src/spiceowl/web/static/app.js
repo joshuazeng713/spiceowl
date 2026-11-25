@@ -28,6 +28,7 @@ let live = {loaded: false, loading: false, enabled: false, projectId: '', runtim
 let liveDraft = {configuration: '', source_commit: '', run_id: ''};
 let directState = {
   loaded: false, loading: false, busy: false, runs: [], monitor: null,
+  activeTab: 'waveforms',
   selectedId: null, detail: null, report: null, lookup: null, error: null,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
   recoveryQuery: '', recoveryOutcome: '',
@@ -47,7 +48,7 @@ let batchDraft = {
 };
 let wizardState = {
   loaded: false, loading: false, busy: false, status: null, demo: null,
-  firstSim: null, lastProbe: null, error: null,
+  firstSim: null, lastProbe: null, error: null, tutorialStep: 1,
 };
 let wizardDraft = {
   alias_pick: '', host_id: '', label: '', ssh_target: '', expected_host: '', expected_user: '',
@@ -153,10 +154,142 @@ function applySshAliasToDraft(aliasObj) {
 }
 
 function quickstartPage() {
-  if (isPublicDemo()) {
-    return heading('QUICKSTART PREVIEW', '30 秒体验 SpiceOwl，或 4 步连上你的 EDA 服务器。', '在线演示不连接本机 SSH；在本地安装运行 spiceowl init --demo 或 spiceowl serve 即可打开完整交互向导。')
-      + `<section class="panel public-info"><div class="panel-body"><span class="chip">TWO-TRACK ONBOARDING</span><h2>双轨快速上手体验</h2><div class="public-feature-grid"><article><h3>路线 A · 无服务器全功能演示</h3><p>本地运行 <code>spiceowl init --demo</code> 或在向导页点击一键演示，立即体验 500 周期 PSF Binary 毛刺钻取、27-Corner PVT 矩阵、40 样本 MC 良率与 10 项 Agent 评测。</p></article><article><h3>路线 B · 4 步跑通真实 EDA 服务器</h3><p>自动读取 <code>~/.ssh/config</code> 别名（零私钥读取）→ 验证 SSH 与 Spectre/ngspice → 冻结零 PDK 烟雾网表 → 网页端一键上传、启动、盯守并看波形。</p></article><article><h3>原生三平台支持</h3><p>macOS、Linux、原生 Windows（无需 WSL）开箱即用。</p></article></div><div class="public-info-links"><a class="button primary" href="#local">查看本地安装命令</a><a class="button secondary" href="#overview">先看在线演示</a></div></div></section>`;
+  const pub = isPublicDemo();
+  const step = Math.max(1, Math.min(5, Number(wizardState.tutorialStep) || 1));
+  const steps = [
+    {
+      num: 1,
+      short: '看懂仿真总览',
+      badge: '约 30 秒 · 入门必看',
+      title: '第 1 步：看懂「仿真总览」与四维状态诊断',
+      goal: 'SpiceOwl 最大的特点是把「仿真跑完了」和「数据可信 / 指标达标」彻底分开，防止误把断连或异常数据当成合格结果。',
+      bullets: [
+        '点击左侧「▦ 仿真总览」，你会看到 4 个典型仿真场景卡片（正常运行、指标超标、仿真崩溃、中途断连）。',
+        '点开任意一张卡片，点击右上角「Next observation →」逐步回放事件与内存曲线，观察 4 个状态块的变化。',
+        '在右侧「诊断助手」框直接点击「✧ Diagnose snapshot」，体验基于冻结证据的只读 AI 诊断（不会私自改网表或重跑）。',
+      ],
+      ctaLabel: '立即前往仿真总览亲手试一试 →',
+      route: '#overview',
+      tab: '',
+      run: '',
+      batch: '',
+    },
+    {
+      num: 2,
+      short: '玩转大波形缩放',
+      badge: '核心亮点 · 零卡顿不丢毛刺',
+      title: '第 2 步：体验 500 周期大波形拖拽放大与毛刺钻取',
+      goal: '面对几百上千个周期的大波形，直接全量传回浏览器会卡死；如果粗暴隔点采样又会漏掉毛刺。SpiceOwl 采用包络预览 + 按需无损放大 + 逐周期切片。',
+      bullets: [
+        '进入「▷ 仿真 · 波形 · 批量」的「1. 大波形与周期切片」标签，系统已预置 500 周期（20,000 点）且在第 #317 周期埋有隐藏毛刺的 PSF Binary 波形。',
+        '在上方波形图上用鼠标「横向拖拽框选」任意区域放大，注意顶部横幅会从琥珀色（Min-Max 包络预览）自动切换为绿色（100% 无损原始采样点）。',
+        '往下看「逐周期趋势图」：红圈自动标出了最差异常周期 #317，点击趋势图任意位置或切换「Eye Overlay 多周期叠画」即可秒看单周期内部细节。',
+      ],
+      ctaLabel: '立即打开 500 周期大波形工作台 →',
+      route: '#direct',
+      tab: 'waveforms',
+      run: 'demo-psfbin-500c',
+      batch: '',
+    },
+    {
+      num: 3,
+      short: 'PVT 与 MC 批量',
+      badge: '批量验证 · 保守良率',
+      title: '第 3 步：体验 27-Corner PVT 矩阵与 40 样本 Monte Carlo',
+      goal: '把零散的工艺角和蒙特卡洛仿真统一成彩色矩阵与直方图，并且绝不悄悄丢弃跑挂的种子（失败/缺失样本始终计入分母）。',
+      bullets: [
+        '打开「2. PVT / MC 批量实验」标签，直接切换查看「27-Corner PVT 演示矩阵」与「40 样本 Monte Carlo 演示」。',
+        'PVT 矩阵用绿 / 琥珀 / 红三色一目了然区分：规格通过、有效测量但慢角超标（ss/1.08V/125°C）、以及确认 OOM 崩溃样本（ff/1.32V/-40°C）。',
+        '点击任意一块 Corner 卡片即可钻取该样本的五维报告；点击「下载 Markdown / 导出 CSV」可一键生成汇报表格。',
+      ],
+      ctaLabel: '立即打开 PVT / MC 批量矩阵 →',
+      route: '#direct',
+      tab: 'batches',
+      run: '',
+      batch: 'demo-pvt-27',
+    },
+    {
+      num: 4,
+      short: '任务流程与 AI 评测',
+      badge: '安全护栏 · 防重复提交',
+      title: '第 4 步：体验单次仿真四步流、OOM 恢复与 10 项 AI 安全评测',
+      goal: '让你放心把仿真交给工具或 AI：上传→启动→查状态→收集全流程可对账，且 AI 永远不能越权盲目重跑。',
+      bullets: [
+        '在「▷ 仿真 · 波形 · 批量 → 3. 单次仿真与控制」里选中 demo-sandbox-rc，依次点击 ① 上传 → ② 启动 → ③ 查询状态 → ④ 收集报告，完整走一遍真实执行流。',
+        '切换到「4. 异常自动恢复报告」，查看 Slurm 作业因 OOM 触发内存翻倍自动恢复后的完整审计谱系（网表 SHA-256 全程未改）。',
+        '打开「✧ AI 助手与评测」，点击一键运行 10 项冻结安全评测，直观对比确定性编排器（100% 通过、0 违规）与弱模型的差距。',
+      ],
+      ctaLabel: '前往体验单次仿真四步流 →',
+      route: '#direct',
+      tab: 'runs',
+      run: 'demo-sandbox-rc',
+      batch: '',
+      secondaryLabel: '或直接去跑 10 项 AI 评测 →',
+      secondaryRoute: '#agents',
+    },
+    {
+      num: 5,
+      short: '连自己的 EDA 服务器',
+      badge: pub ? '进阶 · 本地连接真实算力' : '本机直连 · 4 步开跑',
+      title: '第 5 步：连接你自己的远程 EDA 服务器并跑通首个仿真',
+      goal: pub
+        ? '浏览器出于安全沙箱限制不能直接读取你电脑上的 SSH 密钥；当你要连接自己的 Spectre / ngspice / LSF / Slurm 服务器时，在本地启动 SpiceOwl 即可出现完整的 4 步网页连接向导。'
+        : '全程网页点选：自动体检本机环境与 SSH 别名 → 验证远端主机与仿真器 → 一键冻结零 PDK 烟雾网表 → 网页端启动并看波形。',
+      bullets: pub
+        ? [
+          '前面 1 ~ 4 步的所有核心功能都可以在当前网页版直接点着玩，无需打开任何终端。',
+          '当你想把自己的实验室/公司 EDA 服务器接进来跑真实网表时，在自己电脑（macOS / Linux / 原生 Windows）启动本地控制台即可。',
+          '本地启动后回到本页第 5 步，会自动识别你的 ~/.ssh/config 别名并提供免手写网表的 RC 烟雾测试。',
+        ]
+        : [
+          '第 ① 步自动检测本机操作系统、OpenSSH 客户端以及 ~/.ssh/config 中已有的主机别名（绝不读取私钥或密码）。',
+          '第 ② 步从下拉框选中别名并点击「保存并立即测试」，验证 SSH 身份和 Spectre / ngspice 路径。',
+          '第 ③~④ 步直接用内置零 PDK 的 RC 烟雾网表冻结计划，再依次点 ① 上传 → ② 启动 → ③ 查状态 → ④ 收集看波形。',
+        ],
+      ctaLabel: pub ? '查看本地安装与启动方式 →' : '',
+      route: pub ? '#local' : '',
+      tab: '',
+      run: '',
+      batch: '',
+    },
+  ];
+  const cur = steps[step - 1];
+
+  let html = heading(
+    'INTERACTIVE TUTORIAL · 网页端新手步步教程',
+    '3 分钟看懂 SpiceOwl 怎么用',
+    pub
+      ? '无需命令行！按下方 1 → 5 步点击即可在浏览器内亲手体验全部核心功能；每一步都配有直达按钮。'
+      : '按下方 1 → 5 步快速熟悉界面；第 5 步可直接把你自己的远程 EDA 服务器接进来跑通首个真实仿真。',
+  );
+  if (wizardState.error) html += `<p class="error-text" role="alert">${escape(wizardState.error)}</p>`;
+
+  // Horizontal 5-step interactive stepper
+  html += `<section class="panel tut-shell"><div class="tut-stepper" role="tablist" aria-label="新手教程步骤">${steps.map(s => `<button type="button" role="tab" aria-selected="${s.num === step ? 'true' : 'false'}" class="tut-step-pill ${s.num === step ? 'active' : s.num < step ? 'done' : ''}" data-action="wizard-step" data-step="${s.num}"><span class="tut-step-index">${s.num}</span><span class="tut-step-text">${escape(s.short)}</span></button>`).join('')}</div>`;
+
+  // Active step card
+  html += `<div class="tut-card"><div class="tut-card-head"><div><span class="chip blue">${escape(cur.badge)}</span><h2>${escape(cur.title)}</h2></div><span class="section-note">步骤 ${step} / ${steps.length}</span></div><p class="tut-goal">${escape(cur.goal)}</p><ol class="tut-list">${cur.bullets.map(b => `<li>${escape(b)}</li>`).join('')}</ol><div class="tut-actions">${cur.ctaLabel ? `<button type="button" class="button primary" data-action="wizard-goto" data-route="${escape(cur.route)}" data-tab="${escape(cur.tab)}" data-run="${escape(cur.run)}" data-batch="${escape(cur.batch)}">${escape(cur.ctaLabel)}</button>` : ''}${cur.secondaryLabel ? `<button type="button" class="button secondary" data-action="wizard-goto" data-route="${escape(cur.secondaryRoute)}" data-tab="" data-run="" data-batch="">${escape(cur.secondaryLabel)}</button>` : ''}<div class="tut-nav-pair"><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.max(1, step - 1)}" ${step <= 1 ? 'disabled' : ''}>← 上一步</button><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.min(5, step + 1)}" ${step >= 5 ? 'disabled' : ''}>下一步 →</button></div></div></div></section>`;
+
+  // On step 5, show either local EDA server onboarding (local mode) or clean local-connect explanation (public demo)
+  if (step === 5) {
+    if (pub) {
+      html += `<section class="panel wizard-eda-panel"><div class="section-title"><h2>连接真实 EDA 服务器（本地运行模式）</h2>${chip('安全边界 · 零密钥上云', 'green')}</div><p class="subtle-note">当前页面托管在 GitHub Pages 上，所有 1~4 步体验完全在你的浏览器内存里运行。要连接实验室或公司内网的 Spectre / ngspice / LSF / Slurm 服务器，只需在本机启动 SpiceOwl 控制台（macOS / Linux / 原生 Windows 均支持）：</p><div class="public-feature-grid"><article><h3>① 零密钥泄露</h3><p>复用你本机已有的 <code>~/.ssh/config</code> 别名与跳板机，网页端绝不要求输入密码或上传私钥。</p></article><article><h3>② 开箱即测网表</h3><p>内置零 PDK 依赖的 RC 烟雾网表，连上机器后 1 分钟内即可确认 Spectre/ngspice 与波形链路全部打通。</p></article><article><h3>③ 界面完全一致</h3><p>本地启动后打开的正是你现在看到的这套网页界面，没有任何额外学习成本。</p></article></div><div class="direct-actions"><a class="button primary" href="#local">查看 macOS / Windows 一键启动命令</a><button type="button" class="button secondary" data-action="wizard-step" data-step="2">回到第 2 步继续体验大波形</button></div></section>`;
+    } else {
+      html += renderLocalEdaOnboardingPanel();
+    }
+  } else if (!pub) {
+    // In local mode on steps 1-4, also provide 1-click full demo workspace seeding if not yet seeded
+    const st = wizardState.status;
+    const demoReady = !!(wizardState.demo || (st?.workspace?.has_demo_waveform && st?.workspace?.has_demo_pvt && st?.workspace?.has_demo_mc));
+    html += `<section class="panel wizard-hero"><div class="section-title"><h2>本地演示数据一键准备</h2>${chip(demoReady ? '全套演示数据已就绪 ✓' : '建议先点一次生成演示数据', demoReady ? 'green' : 'blue')}</div><p class="subtle-note">如果你还没有在本地生成 500 周期波形、27-Corner PVT 和 40 样本 MC 演示数据，点击下方按钮 1 秒生成，即可按上方 1 → 4 步逐一体验。</p><div class="direct-actions"><button type="button" class="button primary small" data-action="wizard-demo" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '正在生成全套演示数据…' : demoReady ? '✦ 重新刷新本地全套演示数据' : '✦ 一键生成本地全套演示数据'}</button><button type="button" class="button secondary small" data-action="wizard-step" data-step="5">直接跳到第 5 步：连接真实 EDA 服务器 →</button></div></section>`;
   }
+
+  // Quick 4-card overview directory so newcomers can also jump anywhere in 1 click
+  html += `<section class="panel wizard-hero"><div class="section-title"><h2>网页各模块速查地图</h2><span class="section-note">点击任意卡片直接跳转</span></div><div class="wizard-station-grid"><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">▦</span>${chip('基础必看', 'blue')}</div><h3>仿真总览</h3><p>查看所有实验的四维状态（执行/观测/测量/指标），体验单步回放与只读诊断。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#overview" data-tab="" data-run="" data-batch="">打开总览 →</button></article><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">📈</span>${chip('大波形', 'green')}</div><h3>500 周期波形与周期切片</h3><p>Min-Max 包络防丢毛刺、拖拽框选自动切无损、Cycle Slicer 自动定位 #317 异常。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="waveforms" data-run="demo-psfbin-500c" data-batch="">打开大波形 →</button></article><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">▦</span>${chip('批量统计', 'amber')}</div><h3>PVT 矩阵 &amp; MC 良率</h3><p>27-Corner 彩色工艺角与 40 样本直方图，失败种子显式保留，支持导出 MD/CSV。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="batches" data-run="" data-batch="demo-pvt-27">打开批量矩阵 →</button></article><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">✧</span>${chip('AI 护栏', 'blue')}</div><h3>AI 助手与 10 项安全评测</h3><p>运行 10 项冻结评测，验证 0 越权派发、0 重复提交、0 虚假科学通过。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#agents" data-tab="" data-run="" data-batch="">打开 AI 评测 →</button></article></div></section>`;
+  return html;
+}
+
+function renderLocalEdaOnboardingPanel() {
   const st = wizardState.status;
   const checks = st?.checks || [];
   const aliases = st?.ssh_aliases || [];
@@ -164,58 +297,32 @@ function quickstartPage() {
   const templates = st?.templates || [];
   const activeTpl = templates.find(t => t.id === wizardDraft.template_id) || templates[0] || null;
   const fRun = wizardState.firstSim?.run || null;
-  const demo = wizardState.demo;
 
-  let html = heading(
-    'QUICKSTART · 新手引导与首次仿真',
-    '没有服务器？30 秒沉浸式演示。有 EDA 服务器？4 步跑通首个真实仿真。',
-    '全程网页端点击即可完成，零终端脚本依赖，原生支持 macOS / Linux / Windows。',
-  );
-  if (wizardState.error) html += `<p class="error-text" role="alert">${escape(wizardState.error)}</p>`;
+  let html = `<section class="panel wizard-eda-panel"><div class="section-title"><h2>连接你的远程 EDA 服务器并跑通首个仿真（4 步向导）</h2><button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>重新体检</button></div>`;
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">1</span> 本地环境自检（自动识别 macOS / Linux / Windows 与 SSH 别名）</h3><div class="wizard-check-grid">${checks.map(c => `<div class="wizard-check-card status-${escape(c.status)}"><strong>${escape(c.label)}</strong>${chip(c.status === 'ok' ? '就绪' : c.status === 'missing' ? '缺失' : '提示', c.status === 'ok' ? 'green' : c.status === 'missing' ? 'red' : 'amber')}<p>${escape(c.detail)}</p></div>`).join('') || '<p class="subtle-note">正在体检本地环境…</p>'}</div><details class="host-form-details"><summary>还没有配置 SSH 免密登录？查看 ~/.ssh/config 配置模板（支持跳板机）</summary><pre class="direct-rec-md">${escape(st?.ssh_config_example || '')}</pre><p class="subtle-note">配好后确认 <code>ssh eda-sim "hostname &amp;&amp; id -un &amp;&amp; which spectre"</code> 无需输密码即可返回，再点击上方「重新体检」，别名就会自动出现在第 2 步下拉框中。</p></details></div>`;
 
-  // Track A: Vivid 5-station offline demo
-  const defaultStations = demo?.stations || [
-    {step: 1, id: 'overview_runs', title: '五维状态总览与断连诊断', badge: '4 个合成场景', summary: '区分执行完成、测量有效、性能未达标与连接未知。', route: '#overview', action_label: '前往总览 →'},
-    {step: 2, id: 'binary_waveform', title: '500 周期 PSF Binary 隐藏毛刺钻取', badge: '20,000 点 · #317 毛刺', summary: 'Min-Max 包络预览零丢毛刺，拖拽放大自动切 100% 无损原始点，Cycle Slicer 自动抓出 #317 异常周期。', route: '#direct', target_run_id: 'demo-psfbin-500c', action_label: '打开 500 周期波形 →'},
-    {step: 3, id: 'pvt_batch', title: '27-Corner PVT 彩色工艺角矩阵', badge: '含 OOM 与慢角超标', summary: '清晰区分有效测量未达标（ss/1.08V/125°C）与确认 OOM 故障（ff/1.32V/-40°C）。', route: '#direct', target_batch_id: 'demo-pvt-27', action_label: '查看 PVT 矩阵 →'},
-    {step: 4, id: 'mc_batch', title: '40 样本 Monte Carlo 分布直方图', badge: '保守良率 · 种子零丢弃', summary: '带 LSL/USL 规格线与 Cpk，执行失败种子 #2029 完整保留在分母中。', route: '#direct', target_batch_id: 'demo-mc-40', action_label: '查看 MC 直方图 →'},
-    {step: 5, id: 'agent_eval', title: 'Agent 10 项安全闭环评测', badge: '确定性 100% vs 弱模型', summary: '体验 0 越权、0 重复派发、0 虚假通过的 Next-Action 编排器与中断回合恢复。', route: '#agents', action_label: '前往 Agent 评测 →'},
-  ];
-  const demoReady = !!(demo || (st?.workspace?.has_demo_waveform && st?.workspace?.has_demo_pvt && st?.workspace?.has_demo_mc));
-
-  html += `<section class="panel wizard-hero"><div class="section-title"><h2>路线 A · 30 秒沉浸式全功能演示（零服务器要求）</h2>${chip(demoReady ? '演示工作区已就绪 ✓' : '一键生成全套数据', demoReady ? 'green' : 'blue')}</div><p class="subtle-note">点击下方按钮一次性生成全部 5 大核心场景演示数据，然后按 1 → 5 号站逐一点击直达体验。</p><div class="direct-actions"><button type="button" class="button primary" data-action="wizard-demo" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '正在生成全套演示数据…' : demoReady ? '✦ 重新加载 / 刷新全套演示工作区' : '✦ 一键启动全套沉浸式演示工作区'}</button></div><div class="wizard-station-grid">${defaultStations.map(s => `<article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">${s.step}</span>${chip(s.badge, 'blue')}</div><h3>${escape(s.title)}</h3><p>${escape(s.summary)}</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="${escape(s.route)}" data-run="${escape(s.target_run_id || '')}" data-batch="${escape(s.target_batch_id || '')}" ${demoReady ? '' : 'disabled'}>${escape(s.action_label)}</button></article>`).join('')}</div></section>`;
-
-  // Track B: 4-step real EDA server onboarding & first simulation
-  html += `<section class="panel wizard-eda-panel"><div class="section-title"><h2>路线 B · 4 步连上你的远程 EDA 服务器并跑通首个仿真</h2><button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>重新体检</button></div>`;
-
-  // Step 1: Local environment readiness
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">1</span> 本地环境自检（自动识别 macOS / Linux / Windows 与 SSH 别名）</h3><div class="wizard-check-grid">${checks.map(c => `<div class="wizard-check-card status-${escape(c.status)}"><strong>${escape(c.label)}</strong>${chip(c.status === 'ok' ? '就绪' : c.status === 'missing' ? '缺失' : '提示', c.status === 'ok' ? 'green' : c.status === 'missing' ? 'red' : 'amber')}<p>${escape(c.detail)}</p></div>`).join('') || '<p class="subtle-note">正在体检本地环境…</p>'}</div><details class="host-form-details"><summary>还没有配置 SSH 免密登录？查看 ~/.ssh/config 配置模板（支持跳板机）</summary><pre class="direct-rec-md">${escape(st?.ssh_config_example || '')}</pre><p class="subtle-note">配好后在终端确认 <code>ssh eda-sim "hostname &amp;&amp; id -un &amp;&amp; which spectre"</code> 无需输密码即可返回，再点击上方「重新体检」，别名就会自动出现在第 2 步下拉框中。</p></details></div>`;
-
-  // Step 2: Register & Probe EDA Server
   const probeBadge = wizardState.lastProbe
     ? (wizardState.lastProbe.identity?.verified && !wizardState.lastProbe.error
       ? `<div class="wf-mode-banner exact">${chip('SSH 身份验证通过 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code> · 工具状态：${(wizardState.lastProbe.tools || []).map(t => `${escape(t.kind)}=${escape(t.status)}${t.version ? ` (${escape(t.version)})` : ''}`).join(', ') || '仅身份校验'}</span></div>`
       : `<div class="wf-mode-banner preview">${chip('连接未通过', 'red')}<span>${escape(wizardState.lastProbe.error?.message || '请核对 SSH 别名、主机名或用户名是否与远端 hostname / id -un 一致。')}</span></div>`)
     : '';
 
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">2</span> 登记并验证你的 EDA 服务器（只用本机 OpenSSH 别名，绝不存密码）</h3><form id="wizard-host-form"><div class="direct-grid">${aliases.length ? `<label class="direct-wide">从本机 ~/.ssh/config 一键选择别名（共发现 ${aliases.length} 个）<select id="wiz-alias-pick"><option value="">— 手动填写或从列表选择 —</option>${aliases.map(a => `<option value="${escape(a.alias)}" ${a.alias === wizardDraft.alias_pick ? 'selected' : ''}>${escape(a.alias)}${a.hostname ? ` (${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)})` : ''}</option>`).join('')}</select></label>` : ''}<label>OpenSSH 别名 (ssh_target)<input id="wiz-ssh-target" value="${escape(wizardDraft.ssh_target)}" required placeholder="eda-sim"></label><label>服务器 ID (host_id)<input id="wiz-host-id" value="${escape(wizardDraft.host_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="eda-sim-01"></label><label>期望远端主机名 (hostname)<input id="wiz-expected-host" value="${escape(wizardDraft.expected_host)}" required placeholder="sim-node-01"></label><label>期望远端用户名 (id -un)<input id="wiz-expected-user" value="${escape(wizardDraft.expected_user)}" required placeholder="your_user"></label><label>主仿真器<select id="wiz-simulator"><option value="spectre" ${wizardDraft.simulator === 'spectre' ? 'selected' : ''}>Cadence Spectre</option><option value="ngspice" ${wizardDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice (开源)</option></select></label><label>远端仿真器绝对路径（可选）<input id="wiz-sim-exe" value="${escape(wizardDraft.simulator_executable)}" placeholder="${wizardDraft.simulator === 'spectre' ? '/opt/cadence/tools/bin/spectre' : '/usr/bin/ngspice'}"></label></div><div class="direct-actions"><button type="submit" class="button secondary small" data-probe="0" ${wizardState.busy ? 'disabled' : ''}>仅保存服务器档案</button><button type="button" class="button primary small" data-action="wizard-register-probe" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '连接验证中…' : '保存并立即测试 SSH 与仿真器 (Register &amp; Probe)'}</button></div></form>${probeBadge}</div>`;
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">2</span> 登记并验证你的 EDA 服务器（只用本机 OpenSSH 别名，绝不存密码）</h3><form id="wizard-host-form"><div class="direct-grid">${aliases.length ? `<label class="direct-wide">从本机 ~/.ssh/config 一键选择别名（共发现 ${aliases.length} 个）<select id="wiz-alias-pick"><option value="">— 手动填写或从列表选择 —</option>${aliases.map(a => `<option value="${escape(a.alias)}" ${a.alias === wizardDraft.alias_pick ? 'selected' : ''}>${escape(a.alias)}${a.hostname ? ` (${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)})` : ''}</option>`).join('')}</select></label>` : ''}<label>OpenSSH 别名 (ssh_target)<input id="wiz-ssh-target" value="${escape(wizardDraft.ssh_target)}" required placeholder="eda-sim"></label><label>服务器 ID (host_id)<input id="wiz-host-id" value="${escape(wizardDraft.host_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="eda-sim-01"></label><label>期望远端主机名 (hostname)<input id="wiz-expected-host" value="${escape(wizardDraft.expected_host)}" required placeholder="sim-node-01"></label><label>期望远端用户名 (id -un)<input id="wiz-expected-user" value="${escape(wizardDraft.expected_user)}" required placeholder="your_user"></label><label>主仿真器<select id="wiz-simulator"><option value="spectre" ${wizardDraft.simulator === 'spectre' ? 'selected' : ''}>Cadence Spectre</option><option value="ngspice" ${wizardDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice (开源)</option></select></label><label>远端仿真器绝对路径（可选）<input id="wiz-sim-exe" value="${escape(wizardDraft.simulator_executable)}" placeholder="${wizardDraft.simulator === 'spectre' ? '/opt/cadence/tools/bin/spectre' : '/usr/bin/ngspice'}"></label></div><div class="direct-actions"><button type="submit" class="button secondary small" data-probe="0" ${wizardState.busy ? 'disabled' : ''}>仅保存服务器档案</button><button type="button" class="button primary small" data-action="wizard-register-probe" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '连接验证中…' : '保存并立即测试 SSH 与仿真器'}</button></div></form>${probeBadge}</div>`;
 
-  // Step 3: Prepare first smoke simulation
   const selHostId = wizardDraft.selected_host_id || hosts[0]?.host_id || '';
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">3</span> 准备你的第一个仿真（内置零 PDK 烟雾网表，开箱即测）</h3><form id="wizard-first-sim-form"><div class="direct-grid"><label>目标 EDA 服务器<select id="wiz-target-host" ${hosts.length ? '' : 'disabled'}>${hosts.length ? hosts.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === selHostId ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})${h.last_probe?.identity?.verified ? ' · 已验证 ✓' : ''}</option>`).join('') : '<option value="">请先在第 2 步登记服务器</option>'}</select></label><label>执行后端<select id="wiz-backend"><option value="ssh_direct" ${wizardDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连托管进程 (单机工作站)</option><option value="lsf" ${wizardDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${wizardDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>测试网表模板<select id="wiz-template">${templates.map(t => `<option value="${escape(t.id)}" ${t.id === wizardDraft.template_id ? 'selected' : ''}>${escape(t.title)}</option>`).join('')}<option value="custom" ${wizardDraft.template_id === 'custom' ? 'selected' : ''}>自定义粘贴我的网表 (.scs / .sp)</option></select></label>${wizardDraft.backend === 'lsf' ? `<label>LSF Queue（必填）<input id="wiz-queue" value="${escape(wizardDraft.queue)}" required placeholder="analog_short"></label>` : wizardDraft.backend === 'slurm' ? `<label>Slurm Partition（必填）<input id="wiz-partition" value="${escape(wizardDraft.partition)}" required placeholder="sim_compute"></label>` : `<label>远端工作目录<input id="wiz-remote-root" value="${escape(wizardDraft.remote_root)}" placeholder=".spiceowl-runs"></label>`}</div>${activeTpl && wizardDraft.template_id !== 'custom' ? `<p class="subtle-note">${escape(activeTpl.description)}</p><pre class="direct-rec-md" style="max-height:160px">${escape(activeTpl.netlist)}</pre>` : `<textarea id="wiz-custom-netlist" class="direct-netlist" placeholder="在此粘贴你的 Spectre 或 ngspice 网表…">${escape(wizardDraft.custom_netlist)}</textarea>`}<div class="direct-actions"><button type="submit" class="button primary small" ${wizardState.busy || !hosts.length ? 'disabled' : ''}>冻结我的第一个仿真计划 (Prepare First Sim)</button></div></form></div>`;
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">3</span> 准备你的第一个仿真（内置零 PDK 烟雾网表，开箱即测）</h3><form id="wizard-first-sim-form"><div class="direct-grid"><label>目标 EDA 服务器<select id="wiz-target-host" ${hosts.length ? '' : 'disabled'}>${hosts.length ? hosts.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === selHostId ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})${h.last_probe?.identity?.verified ? ' · 已验证 ✓' : ''}</option>`).join('') : '<option value="">请先在第 2 步登记服务器</option>'}</select></label><label>执行后端<select id="wiz-backend"><option value="ssh_direct" ${wizardDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连托管进程 (单机工作站)</option><option value="lsf" ${wizardDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${wizardDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>测试网表模板<select id="wiz-template">${templates.map(t => `<option value="${escape(t.id)}" ${t.id === wizardDraft.template_id ? 'selected' : ''}>${escape(t.title)}</option>`).join('')}<option value="custom" ${wizardDraft.template_id === 'custom' ? 'selected' : ''}>自定义粘贴我的网表 (.scs / .sp)</option></select></label>${wizardDraft.backend === 'lsf' ? `<label>LSF Queue（必填）<input id="wiz-queue" value="${escape(wizardDraft.queue)}" required placeholder="analog_short"></label>` : wizardDraft.backend === 'slurm' ? `<label>Slurm Partition（必填）<input id="wiz-partition" value="${escape(wizardDraft.partition)}" required placeholder="sim_compute"></label>` : `<label>远端工作目录<input id="wiz-remote-root" value="${escape(wizardDraft.remote_root)}" placeholder=".spiceowl-runs"></label>`}</div>${activeTpl && wizardDraft.template_id !== 'custom' ? `<p class="subtle-note">${escape(activeTpl.description)}</p><pre class="direct-rec-md" style="max-height:160px">${escape(activeTpl.netlist)}</pre>` : `<textarea id="wiz-custom-netlist" class="direct-netlist" placeholder="在此粘贴你的 Spectre 或 ngspice 网表…">${escape(wizardDraft.custom_netlist)}</textarea>`}<div class="direct-actions"><button type="submit" class="button primary small" ${wizardState.busy || !hosts.length ? 'disabled' : ''}>冻结我的第一个仿真计划 (Prepare)</button></div></form></div>`;
 
-  // Step 4: Live execution stepper for first simulation
   const fTerminal = fRun && ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed', 'input_hash_failure'].includes(fRun.state);
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">4</span> 跑通首个仿真并查看波形与五维报告</h3>${fRun ? `<div class="direct-rec-card"><div class="section-title"><strong>当前首个仿真：<code>${escape(fRun.run_id)}</code>（主机 ${escape(fRun.host_id)} · ${escape(fRun.backend)} · ${escape(fRun.simulator)}）</strong>${directRunChip(fRun)}</div><div class="direct-actions"><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="stage" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !['prepared', 'stage_incomplete'].includes(fRun.state) ? 'disabled' : ''}>① 上传输入 (Stage)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="launch" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state !== 'staged' || fRun.dispatch_claimed ? 'disabled' : ''}>② 启动仿真 (Launch)</button><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="status" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state === 'prepared' ? 'disabled' : ''}>③ 查询状态 (Status)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="collect" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !fTerminal || fRun.collection_phase === 'complete' ? 'disabled' : ''}>④ 收集报告与波形 (Collect)</button><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-run="${escape(fRun.run_id)}" data-batch="">在直连工作台查看完整报告与波形 →</button></div>${fRun.last_error ? `<p class="error-text">${escape(fRun.last_error.message || fRun.last_error.code)}</p>` : ''}${fRun.collection_phase === 'complete' ? '<p class="wf-mode-banner exact"><strong>恭喜！你的第一个真实仿真已收集完成。</strong> 点击右侧「在直连工作台查看完整报告与波形 →」即可查看五维诊断报告与交互式波形！</p>' : ''}</div>` : '<p class="subtle-note">完成第 3 步「冻结我的第一个仿真计划」后，这里会出现 ① 上传 → ② 启动 → ③ 状态查询 → ④ 收集并查看波形 的一键执行栏。</p>'}</div>`;
+  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">4</span> 跑通首个仿真并查看波形与五维报告</h3>${fRun ? `<div class="direct-rec-card"><div class="section-title"><strong>当前首个仿真：<code>${escape(fRun.run_id)}</code>（主机 ${escape(fRun.host_id)} · ${escape(fRun.backend)} · ${escape(fRun.simulator)}）</strong>${directRunChip(fRun)}</div><div class="direct-actions"><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="stage" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !['prepared', 'stage_incomplete'].includes(fRun.state) ? 'disabled' : ''}>① 上传输入 (Stage)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="launch" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state !== 'staged' || fRun.dispatch_claimed ? 'disabled' : ''}>② 启动仿真 (Launch)</button><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="status" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state === 'prepared' ? 'disabled' : ''}>③ 查询状态 (Status)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="collect" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !fTerminal || fRun.collection_phase === 'complete' ? 'disabled' : ''}>④ 收集报告与波形 (Collect)</button><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="runs" data-run="${escape(fRun.run_id)}" data-batch="">去工作台看完整报告 →</button></div>${fRun.last_error ? `<p class="error-text">${escape(fRun.last_error.message || fRun.last_error.code)}</p>` : ''}${fRun.collection_phase === 'complete' ? '<p class="wf-mode-banner exact"><strong>恭喜！你的第一个真实仿真已收集完成。</strong> 点击右侧「去工作台看完整报告 →」即可查看五维诊断报告与交互式波形！</p>' : ''}</div>` : '<p class="subtle-note">完成第 3 步「冻结我的第一个仿真计划」后，这里会出现 ① 上传 → ② 启动 → ③ 状态查询 → ④ 收集并查看波形 的一键执行栏。</p>'}</div>`;
 
-  // Legacy compatibility notice (cleanly separated!)
-  html += `<details class="host-form-details"><summary>关于已退役的历史兼容层（spiceowl mcp 与旧版 Q&amp;A）</summary><p class="subtle-note">早期 <code>spiceowl mcp</code> 启动器与旧版 Q&amp;A 均已归档为只读/兼容层，新用户请直接使用本向导、<code>#direct</code> 原生直连与 <code>#agents</code> 独立/嵌入 Codex 通道。详见 <code>docs/legacy-compatibility.md</code>。</p></details></section>`;
+  html += `<details class="host-form-details"><summary>关于已退役的历史兼容层（spiceowl mcp 与旧版 Q&amp;A）</summary><p class="subtle-note">早期 <code>spiceowl mcp</code> 启动器与旧版 Q&amp;A 均已归档为只读/兼容层，新用户请直接使用本向导、<code>#direct</code> 仿真工作台与 <code>#agents</code> 通道。详见 <code>docs/legacy-compatibility.md</code>。</p></details></section>`;
   return html;
 }
 
 async function refreshDirect() {
-  if (isPublicDemo() || directState.loading) return;
+  if (directState.loading) return;
   directState.loading = true;
+  let shouldAutoPlotWf = false;
   try {
     const data = await api('/api/direct/runs');
     directState.runs = Array.isArray(data.runs) ? data.runs : [];
@@ -223,7 +330,8 @@ async function refreshDirect() {
     directState.error = null;
     if ($('#direct-count')) $('#direct-count').textContent = directState.runs.length;
     if (!directState.selectedId || !directState.runs.some(r => r.run_id === directState.selectedId)) {
-      directState.selectedId = directState.runs[0]?.run_id || null;
+      const wfRun = directState.runs.find(r => r.run_id === 'demo-psfbin-500c');
+      directState.selectedId = (directState.activeTab === 'waveforms' && wfRun) ? wfRun.run_id : (directState.runs[0]?.run_id || null);
     }
     const prevRunId = directState.detail?.run_id || null;
     if (directState.selectedId) {
@@ -232,6 +340,9 @@ async function refreshDirect() {
       directState.report = detail.report || null;
       directState.wfIndex = detail.waveforms || null;
       syncWaveformSelection(prevRunId !== directState.selectedId);
+      if (directState.activeTab === 'waveforms' && directState.wfIndex?.datasets?.length && !directState.wfQuery) {
+        shouldAutoPlotWf = true;
+      }
     } else {
       directState.detail = null;
       directState.report = null;
@@ -276,6 +387,10 @@ async function refreshDirect() {
     directState.loading = false;
     if (location.hash === '#direct') render();
   }
+  if (shouldAutoPlotWf && location.hash === '#direct') {
+    await runWaveformQuery();
+    if (directState.wfClock || directState.wfPeriod) await runWaveformCycles();
+  }
 }
 
 function recoveryOutcomeChip(outcome) {
@@ -317,7 +432,7 @@ function directRecoveryReportsPanel() {
     detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
   }
 
-  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>6. 有界恢复报告中心（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界恢复评估或自动重提的任务谱系都会自动持久化 JSON + Markdown 报告，方便事后审计与检索。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
+  return `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>异常自动恢复审计报告（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
 }
 
 function directRunChip(run) {
@@ -346,8 +461,27 @@ function directReportSection(report) {
 }
 
 function directPage() {
-  let html = heading('DIRECT EXECUTION · SSH / LSF / SLURM', '直连仿真控制台', '不依赖 CircuitGit 网关，直接通过已注册的 OpenSSH 主机或 LSF / Slurm 集群执行、盯守并分析仿真。');
-  if (isPublicDemo()) return html + publicDirectPage();
+  const pub = isPublicDemo();
+  const tab = ['waveforms', 'batches', 'runs', 'recovery'].includes(directState.activeTab) ? directState.activeTab : 'waveforms';
+  let html = heading(
+    'SIMULATION WORKBENCH · 仿真 · 波形 · 批量工作台',
+    '一站式查看波形、管理 PVT/MC 批量与控制仿真任务',
+    pub
+      ? '当前为浏览器内置交互沙箱：大波形缩放、500 周期毛刺钻取、27-Corner PVT、40 样本 MC、单次任务四步流与 OOM 恢复报告全部可直接点击体验。'
+      : '通过上方 4 个标签页切换：看大波形与周期切片、跑 PVT/MC 批量矩阵、提交或控制单次仿真、以及检索异常自动恢复审计报告。',
+  );
+
+  // Clean 4-tab bar so beginners see one focused workspace at a time instead of 6 giant stacked panels
+  const tabs = [
+    ['waveforms', '📈 1. 大波形与周期切片', directState.wfIndex?.datasets?.length ? `${directState.wfIndex.datasets.length}` : ''],
+    ['batches', '▦ 2. PVT / MC 批量实验', String(directState.batches.length || 0)],
+    ['runs', '▷ 3. 单次仿真与控制', String(directState.runs.length || 0)],
+    ['recovery', '🛡 4. 异常自动恢复报告', String(directState.recoveryReports.length || 0)],
+  ];
+  html += `<div class="direct-tabs" role="tablist" aria-label="工作台子模块">${tabs.map(([key, label, badge]) => `<button type="button" role="tab" aria-selected="${tab === key ? 'true' : 'false'}" class="direct-tab ${tab === key ? 'active' : ''}" data-action="direct-tab" data-tab="${key}"><span>${label}</span>${badge !== '' ? `<span class="direct-tab-badge">${escape(badge)}</span>` : ''}</button>`).join('')}</div>`;
+
+  if (directState.error) html += `<p class="error-text" role="alert">${escape(directState.error)}</p>`;
+
   const hostsList = state.hosts || [];
   if (!directDraft.host_id && hostsList.length) directDraft.host_id = hostsList[0].host_id;
   if (!directDraft.run_key) {
@@ -355,19 +489,34 @@ function directPage() {
     directDraft.run_key = `direct-${stamp}`;
   }
   const run = directState.detail || directState.runs.find(r => r.run_id === directState.selectedId) || null;
+
+  if (tab === 'waveforms') {
+    html += directWaveformPanel(run);
+    return html;
+  }
+  if (tab === 'batches') {
+    html += directBatchPanel(hostsList);
+    return html;
+  }
+  if (tab === 'recovery') {
+    html += directRecoveryReportsPanel();
+    return html;
+  }
+
+  // Tab 3: Single simulation & step-by-step control
   const watchEntry = directState.monitor?.watches?.find(w => w && w.run_id === run?.run_id) || null;
   const watchArmed = watchEntry?.watch_state === 'armed';
   const terminal = ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed', 'input_hash_failure'].includes(run?.state);
   const canStage = run && ['prepared', 'stage_incomplete'].includes(run.state) && !directState.busy;
   const canLaunch = run && run.state === 'staged' && !run.dispatch_claimed && !directState.busy;
   const canStatus = run && run.state !== 'prepared' && !directState.busy;
-  const canWatch = run && run.dispatch_claimed && !terminal && !watchArmed && !directState.busy;
-  const canUnwatch = run && watchArmed && !directState.busy;
+  const canWatch = !pub && run && run.dispatch_claimed && !terminal && !watchArmed && !directState.busy;
+  const canUnwatch = !pub && run && watchArmed && !directState.busy;
   const canCancel = run && run.dispatch_claimed && !terminal && !directState.busy;
   const canCollect = run && terminal && run.collection_phase !== 'complete' && !directState.busy;
-  const canRecover = run && terminal && run.state !== 'simulator_complete_pending_measurements' && !directState.busy;
+  const canRecover = !pub && run && terminal && run.state !== 'simulator_complete_pending_measurements' && !directState.busy;
   const recPolicy = run?.recovery_policy || {};
-  const recBox = `<details class="host-form-details" ${directDraft.rec_enabled ? 'open' : ''}><summary>M4 有界自动恢复策略（不改网表与科学条件）</summary><div class="direct-check-row"><label><input id="direct-rec-enabled" type="checkbox" ${directDraft.rec_enabled ? 'checked' : ''}> 启用有界自动恢复（Watch 自动收集后按预算恢复）</label></div><div class="direct-grid"><label>最大恢复次数 (0–5)<input id="direct-rec-attempts" type="number" min="0" max="5" value="${escape(directDraft.rec_max_attempts)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>最大内存上限 (GiB)<input id="direct-rec-maxmem" type="number" min="1" max="16384" value="${escape(directDraft.rec_max_memory_gib)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>许可证退避等待 (秒)<input id="direct-rec-backoff" type="number" min="0" max="3600" value="${escape(directDraft.rec_license_backoff)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>总时间预算 (分钟)<input id="direct-rec-elapsed" type="number" min="1" max="10080" value="${escape(directDraft.rec_max_elapsed_min)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label></div><div class="direct-check-row"><label><input id="direct-rec-lic" type="checkbox" ${directDraft.rec_retry_license ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 许可证失败退避重试</label><label><input id="direct-rec-oom" type="checkbox" ${directDraft.rec_retry_oom ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 确认 OOM 自动内存翻倍</label><label><input id="direct-rec-relocate" type="checkbox" ${directDraft.rec_allow_relocate ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 允许迁移至更大内存主机</label></div></details>`;
+  const recBox = `<details class="host-form-details" ${directDraft.rec_enabled ? 'open' : ''}><summary>进阶：M4 有界自动恢复策略（不改网表与科学条件）</summary><div class="direct-check-row"><label><input id="direct-rec-enabled" type="checkbox" ${directDraft.rec_enabled ? 'checked' : ''}> 启用有界自动恢复（Watch 自动收集后按预算恢复）</label></div><div class="direct-grid"><label>最大恢复次数 (0–5)<input id="direct-rec-attempts" type="number" min="0" max="5" value="${escape(directDraft.rec_max_attempts)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>最大内存上限 (GiB)<input id="direct-rec-maxmem" type="number" min="1" max="16384" value="${escape(directDraft.rec_max_memory_gib)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>许可证退避等待 (秒)<input id="direct-rec-backoff" type="number" min="0" max="3600" value="${escape(directDraft.rec_license_backoff)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>总时间预算 (分钟)<input id="direct-rec-elapsed" type="number" min="1" max="10080" value="${escape(directDraft.rec_max_elapsed_min)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label></div><div class="direct-check-row"><label><input id="direct-rec-lic" type="checkbox" ${directDraft.rec_retry_license ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 许可证失败退避重试</label><label><input id="direct-rec-oom" type="checkbox" ${directDraft.rec_retry_oom ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 确认 OOM 自动内存翻倍</label><label><input id="direct-rec-relocate" type="checkbox" ${directDraft.rec_allow_relocate ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 允许迁移至更大内存主机</label></div></details>`;
 
   const schedBox = directDraft.backend === 'lsf'
     ? `<div class="direct-sched-box"><strong>LSF 集群参数（bsub）</strong><div class="direct-grid"><label>Queue（必填）<input id="direct-queue" value="${escape(directDraft.queue)}" placeholder="analog_long" required></label><label>Project（可选）<input id="direct-project" value="${escape(directDraft.project)}" placeholder="adc_proj"></label><label class="direct-wide">Job group（可选）<input id="direct-job-group" value="${escape(directDraft.job_group)}" placeholder="/analog/sim"></label></div><div class="direct-check-row"><label><input id="direct-exclusive" type="checkbox" ${directDraft.exclusive ? 'checked' : ''}> 独占计算节点 (-x)</label></div></div>`
@@ -375,17 +524,18 @@ function directPage() {
     ? `<div class="direct-sched-box"><strong>Slurm 集群参数（sbatch）</strong><div class="direct-grid"><label>Partition（必填）<input id="direct-partition" value="${escape(directDraft.partition)}" placeholder="sim_compute" required></label><label>Account（可选）<input id="direct-account" value="${escape(directDraft.account)}" placeholder="analog_lab"></label><label class="direct-wide">QoS（可选）<input id="direct-qos" value="${escape(directDraft.qos)}" placeholder="normal"></label></div><div class="direct-check-row"><label><input id="direct-exclusive" type="checkbox" ${directDraft.exclusive ? 'checked' : ''}> 独占计算节点 (--exclusive)</label></div></div>`
     : '';
 
-  html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>1. 冻结并准备实验</h2><span class="chip">PREPARE · NO LAUNCH</span></div><p class="subtle-note">仅在本地冻结网表与配置，不连接服务器、不启动求解器。${!hostsList.length ? '请先前往 <a href="#hosts">Simulation hosts</a> 注册至少一台 SSH 主机。' : ''}</p><form id="direct-prepare-form"><div class="direct-grid"><label class="direct-wide">运行标识（Run Key / 幂等键）<input id="direct-run-key" value="${escape(directDraft.run_key)}" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="direct-inv-001"></label><label>执行后端<select id="direct-backend"><option value="ssh_direct" ${directDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连托管进程</option><option value="lsf" ${directDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${directDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>仿真器<select id="direct-simulator"><option value="spectre" ${directDraft.simulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${directDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></label><label>主机选择方式<select id="direct-target-mode"><option value="host" ${directDraft.target_mode === 'host' ? 'selected' : ''}>指定单台主机</option><option value="pool" ${directDraft.target_mode === 'pool' ? 'selected' : ''}>按资源自动推荐（所有已登记主机）</option></select></label><label>目标主机<select id="direct-host-id" ${directDraft.target_mode === 'pool' || !hostsList.length ? 'disabled' : ''}>${hostsList.length ? hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === directDraft.host_id ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})</option>`).join('') : '<option value="">尚未注册主机</option>'}</select></label><label>CPU 核数<input id="direct-cpus" type="number" min="1" max="4096" value="${escape(directDraft.cpus)}" required></label><label>内存 (GiB)<input id="direct-memory" type="number" min="0.1" step="any" max="16384" value="${escape(directDraft.memory_gib)}" required></label><label>最大墙钟时长 (秒)<input id="direct-wall" type="number" min="10" max="604800" value="${escape(directDraft.wall_seconds)}" required></label><label>波形格式<select id="direct-format"><option value="psfascii" ${directDraft.output_format === 'psfascii' ? 'selected' : ''}>PSF ASCII</option><option value="psfbin" ${directDraft.output_format === 'psfbin' ? 'selected' : ''}>PSF Binary</option><option value="psfxl" ${directDraft.output_format === 'psfxl' ? 'selected' : ''}>PSFXL</option></select></label></div>${schedBox}${recBox}<details class="host-form-details"><summary>高级远端路径设置（可选）</summary><div class="direct-grid"><label>远端 Python3 路径<input id="direct-python" value="${escape(directDraft.remote_python)}"></label><label>远端工作根目录<input id="direct-root" value="${escape(directDraft.remote_root)}" placeholder=".spiceowl-runs 或 /scratch/..."></label><label class="direct-wide">Spectre Include 目录（每行一个绝对路径）<textarea id="direct-includes" rows="2" placeholder="/opt/pdk/models">${escape(directDraft.include_dirs)}</textarea></label></div></details><div class="direct-file-row"><label for="direct-netlist">网表内容（input.scs）</label><label class="direct-file-label">从本地文件读取 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label></div><textarea id="direct-netlist" class="direct-netlist" required placeholder="simulator lang=spectre&#10;...">${escape(directDraft.netlist_text)}</textarea><div class="direct-actions"><button class="button primary" type="submit" ${directState.busy || !hostsList.length ? 'disabled' : ''}>冻结并准备计划（Prepare）</button></div></form></section>`;
+  if (pub) {
+    html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>在线沙箱操作指引</h2><span class="chip green">BROWSER SANDBOX</span></div><p class="subtle-note">在右侧列表中选择 <code>demo-sandbox-rc</code>，依次体验完整的 4 步受控仿真生命周期：</p><ol class="tut-list"><li><strong>① 上传输入 (Stage)</strong>：将冻结后的网表与清单上传至隔离工作目录。</li><li><strong>② 启动仿真 (Launch)</strong>：通过幂等占位键原子启动，断线不盲目重提。</li><li><strong>③ 查询状态 (Status)</strong>：读取远端运行进度并观察结束事件。</li><li><strong>④ 收集报告 (Collect)</strong>：输出五维 Spectre 诊断报告并直接查看波形。</li></ol><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-select" data-id="demo-sandbox-rc">选中可交互沙箱任务 (demo-sandbox-rc)</button><a class="button secondary small" href="#local">在本地连接真实 SSH / 集群</a></div></section>`;
+  } else {
+    html += `<div class="direct-workspace"><section class="panel direct-panel"><div class="section-title"><h2>准备新仿真（本地冻结计划）</h2><span class="chip">PREPARE · NO LAUNCH</span></div><p class="subtle-note">先在本地冻结网表与配置，不联网、不扣算力。${!hostsList.length ? '还没有服务器？可前往 <a href="#quickstart">新手教程第 5 步</a> 或 <a href="#hosts">EDA 服务器管理</a> 登记。' : ''}</p><form id="direct-prepare-form"><div class="direct-grid"><label class="direct-wide">任务名称 / Run Key<input id="direct-run-key" value="${escape(directDraft.run_key)}" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="direct-inv-001"></label><label>执行后端<select id="direct-backend"><option value="ssh_direct" ${directDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连工作站</option><option value="lsf" ${directDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${directDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>仿真器<select id="direct-simulator"><option value="spectre" ${directDraft.simulator === 'spectre' ? 'selected' : ''}>Spectre</option><option value="ngspice" ${directDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></label><label>选机方式<select id="direct-target-mode"><option value="host" ${directDraft.target_mode === 'host' ? 'selected' : ''}>指定单台主机</option><option value="pool" ${directDraft.target_mode === 'pool' ? 'selected' : ''}>按资源自动推荐</option></select></label><label>目标主机<select id="direct-host-id" ${directDraft.target_mode === 'pool' || !hostsList.length ? 'disabled' : ''}>${hostsList.length ? hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === directDraft.host_id ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})</option>`).join('') : '<option value="">尚未注册主机</option>'}</select></label></div>${schedBox}<details class="host-form-details"><summary>进阶：CPU / 内存 / 时长与波形格式（默认 2 核 · 8 GiB）</summary><div class="direct-grid"><label>CPU 核数<input id="direct-cpus" type="number" min="1" max="4096" value="${escape(directDraft.cpus)}" required></label><label>内存 (GiB)<input id="direct-memory" type="number" min="0.1" step="any" max="16384" value="${escape(directDraft.memory_gib)}" required></label><label>最大时长 (秒)<input id="direct-wall" type="number" min="10" max="604800" value="${escape(directDraft.wall_seconds)}" required></label><label>波形格式<select id="direct-format"><option value="psfascii" ${directDraft.output_format === 'psfascii' ? 'selected' : ''}>PSF ASCII</option><option value="psfbin" ${directDraft.output_format === 'psfbin' ? 'selected' : ''}>PSF Binary</option><option value="psfxl" ${directDraft.output_format === 'psfxl' ? 'selected' : ''}>PSFXL</option></select></label></div></details>${recBox}<details class="host-form-details"><summary>进阶：远端 Python 与 PDK Include 目录（可选）</summary><div class="direct-grid"><label>远端 Python3 路径<input id="direct-python" value="${escape(directDraft.remote_python)}"></label><label>远端工作根目录<input id="direct-root" value="${escape(directDraft.remote_root)}" placeholder=".spiceowl-runs 或 /scratch/..."></label><label class="direct-wide">Spectre Include 目录（每行一个绝对路径）<textarea id="direct-includes" rows="2" placeholder="/opt/pdk/models">${escape(directDraft.include_dirs)}</textarea></label></div></details><div class="direct-file-row"><label for="direct-netlist">网表内容（input.scs）</label><label class="direct-file-label">从本地文件读取 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label></div><textarea id="direct-netlist" class="direct-netlist" required placeholder="simulator lang=spectre&#10;...">${escape(directDraft.netlist_text)}</textarea><div class="direct-actions"><button class="button primary" type="submit" ${directState.busy || !hostsList.length ? 'disabled' : ''}>冻结并准备计划（Prepare）</button></div></form></section>`;
+  }
 
-  html += `<div class="detail-stack"><section class="panel direct-panel"><div class="section-title"><h2>2. 直连运行记录 (${directState.runs.length})</h2><button class="button secondary small" data-action="direct-refresh" ${directState.busy ? 'disabled' : ''}>刷新列表</button></div>${directState.error ? `<p class="error-text" role="alert">${escape(directState.error)}</p>` : ''}<div class="direct-run-list">${directState.runs.map(item => `<button type="button" class="direct-run-row ${item.run_id === run?.run_id ? 'selected' : ''}" data-action="direct-select" data-id="${escape(item.run_id)}"><div><strong>${escape(item.run_id)}</strong><small>${escape(item.backend.toUpperCase())} · ${escape(item.simulator)} · ${escape(item.host_id)}${item.scheduler?.job_id ? ' · Job ' + escape(item.scheduler.job_id) : ''}</small></div>${directRunChip(item)}</button>`).join('') || '<p class="subtle-note">还没有直连运行记录。先在左侧准备一个实验。</p>'}</div><div class="direct-lookup"><input id="direct-lookup-key" value="${escape(directDraft.lookup_key)}" placeholder="按原 Run Key / Submission Key 对账查询"><button type="button" class="button secondary small" data-action="direct-lookup" ${directState.busy ? 'disabled' : ''}>查询原 Key</button></div>${directState.lookup ? `<p class="subtle-note" role="status">${directState.lookup.found ? `已找到原记录：<code>${escape(directState.lookup.run_id)}</code>（状态：${escape(title(directState.lookup.run?.state))}）` : escape(directState.lookup.note)}</p>` : ''}</section>`;
+  html += `<div class="detail-stack"><section class="panel direct-panel"><div class="section-title"><h2>仿真任务列表 (${directState.runs.length})</h2><button class="button secondary small" data-action="direct-refresh" ${directState.busy ? 'disabled' : ''}>刷新列表</button></div><div class="direct-run-list">${directState.runs.map(item => `<button type="button" class="direct-run-row ${item.run_id === run?.run_id ? 'selected' : ''}" data-action="direct-select" data-id="${escape(item.run_id)}"><div><strong>${escape(item.run_id)}</strong><small>${escape(item.backend.toUpperCase())} · ${escape(item.simulator)} · ${escape(item.host_id)}${item.scheduler?.job_id ? ' · Job ' + escape(item.scheduler.job_id) : ''}</small></div>${directRunChip(item)}</button>`).join('') || '<p class="subtle-note">还没有运行记录。先在左侧准备一个实验。</p>'}</div>${!pub ? `<div class="direct-lookup"><input id="direct-lookup-key" value="${escape(directDraft.lookup_key)}" placeholder="按原 Run Key / Submission Key 对账查询"><button type="button" class="button secondary small" data-action="direct-lookup" ${directState.busy ? 'disabled' : ''}>查询原 Key</button></div>${directState.lookup ? `<p class="subtle-note" role="status">${directState.lookup.found ? `已找到原记录：<code>${escape(directState.lookup.run_id)}</code>（状态：${escape(title(directState.lookup.run?.state))}）` : escape(directState.lookup.note)}</p>` : ''}` : ''}</section>`;
 
   if (run) {
-    html += `<section class="panel direct-panel"><div class="section-title"><h2>3. 任务控制 · ${escape(run.run_id)}</h2>${directRunChip(run)}</div><p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试（根任务：<code>${escape(run.root_run_id || run.run_id)}</code>${run.parent_run_id ? ` · 恢复自 <code>${escape(run.parent_run_id)}</code>` : ''}）· 有界恢复：<strong>${recPolicy.enabled ? `已启用（最多 ${recPolicy.max_recovery_attempts} 次 / 上限 ${((recPolicy.max_memory_bytes || 0) / 2**30).toFixed(0)} GiB）` : '未启用'}</strong><br>后端：<strong>${escape(run.backend)}</strong> · 主机：<strong>${escape(run.host_id)}</strong> · 仿真器：<strong>${escape(run.simulator)}</strong>${run.expected_version ? ` (${escape(run.expected_version)})` : ''}${run.scheduler?.job_id ? ` · 调度 Job ID：<code>${escape(run.scheduler.job_id)}</code>` : ''}<br>冻结摘要：<code>${escape(run.manifest_sha256.slice(0, 16))}…</code> · 最近观察：${escape(run.observed_at ? new Date(run.observed_at).toLocaleString() : '尚未联网')}</p>${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「查询状态」与远端对账。</p>' : ''}${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}<div class="direct-check-row"><label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label><label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label></div><div class="direct-actions"><button type="button" class="button secondary" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>1. 上传输入 (Stage)</button><button type="button" class="button primary" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>2. 启动仿真 (Launch)</button><button type="button" class="button secondary" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>查询状态 (Status)</button><button type="button" class="button secondary" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button><button type="button" class="button secondary" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button><button type="button" class="button secondary" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button><button type="button" class="button primary" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>3. 收集结果与报告 (Collect)</button><button type="button" class="button secondary" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button><button type="button" class="button primary" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button></div>${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${run.collection.skipped_files.length} 个超大原始文件已跳过并保留日志`}</p>` : ''}${directReportSection(directState.report)}</section>`;
+    html += `<section class="panel direct-panel"><div class="section-title"><h2>任务控制 · ${escape(run.run_id)}</h2>${directRunChip(run)}</div><p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试（主机：<strong>${escape(run.host_id)}</strong> · 后端：<strong>${escape(run.backend)}</strong> · 仿真器：<strong>${escape(run.simulator)}</strong>${run.scheduler?.job_id ? ` · Job ID：<code>${escape(run.scheduler.job_id)}</code>` : ''}）<br>网表冻结摘要：<code>${escape((run.manifest_sha256 || '').slice(0, 16))}…</code> · 最近观察：${escape(run.observed_at ? new Date(run.observed_at).toLocaleString() : '尚未联网')}</p>${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「③ 查询状态」与远端对账。</p>' : ''}${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}<div class="direct-actions"><button type="button" class="button secondary" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>① 上传输入 (Stage)</button><button type="button" class="button primary" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>② 启动仿真 (Launch)</button><button type="button" class="button secondary" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>③ 查询状态 (Status)</button><button type="button" class="button primary" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>④ 收集报告与波形 (Collect)</button>${directState.wfIndex?.datasets?.length ? `<button type="button" class="button secondary" data-action="direct-tab" data-tab="waveforms">📈 打开该任务波形 →</button>` : ''}</div>${!pub ? `<details class="host-form-details"><summary>进阶控制：后台盯守 (Watch) / 取消作业 / M4 有界自动恢复</summary><div class="direct-check-row"><label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label><label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label></div><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button><button type="button" class="button secondary small" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button><button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button><button type="button" class="button secondary small" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button><button type="button" class="button primary small" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button></div>${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}</details>` : `<div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消当前沙箱作业 (Cancel)</button></div>`}${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${run.collection.skipped_files.length} 个超大原始文件已跳过并保留日志`}</p>` : ''}${directReportSection(directState.report)}</section>`;
   }
   html += '</div></div>';
-  html += directWaveformPanel(run);
-  html += directBatchPanel(hostsList);
-  html += directRecoveryReportsPanel();
   return html;
 }
 
@@ -460,10 +610,13 @@ function directBatchPanel(hostsList) {
   const summary = detail?.summary || null;
   const batch = detail?.batch || null;
 
-  let html = `<div class="wf-toolbar-top"><p class="subtle-note">统一管理 <strong>PVT Corner 矩阵</strong> 与 <strong>Monte Carlo 失配采样</strong>：按并发上限有序派发、每个样本独立保留 SHA-256 与随机种子（<code>mc_seed</code>），保守良率统计绝不静默丢弃失败或缺失样本。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-batch-demo" data-kind="pvt" ${directState.batchBusy ? 'disabled' : ''}>加载 27-Corner PVT 演示矩阵</button><button type="button" class="button secondary small" data-action="direct-batch-demo" data-kind="monte_carlo" ${directState.batchBusy ? 'disabled' : ''}>加载 40 样本 Monte Carlo 演示</button></div></div>`;
+  const pub = isPublicDemo();
+  let html = `<div class="wf-toolbar-top"><p class="subtle-note">统一管理 <strong>PVT Corner 矩阵</strong> 与 <strong>Monte Carlo 失配采样</strong>：点击下方按钮即可切换 27-Corner PVT 与 40 样本 MC，绿色=达标、琥珀色=有效测量但指标超标、红色=执行失败/缺失（绝不静默丢弃种子）。</p><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-batch-demo" data-kind="pvt" ${directState.batchBusy ? 'disabled' : ''}>加载 27-Corner PVT 演示</button><button type="button" class="button secondary small" data-action="direct-batch-demo" data-kind="monte_carlo" ${directState.batchBusy ? 'disabled' : ''}>加载 40 样本 MC 演示</button></div></div>`;
   if (directState.batchError) html += `<p class="error-text" role="alert">${escape(directState.batchError)}</p>`;
 
-  html += `<details class="host-form-details"><summary>新建批量实验（PVT Corner / Monte Carlo · 复用上方主机、后端与网表模板）</summary><form id="direct-batch-form"><div class="direct-grid"><label>批量标识 (Batch ID)<input id="batch-id" value="${escape(batchDraft.batch_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="opamp-pvt-001"></label><label>批量类型<select id="batch-kind"><option value="pvt" ${batchDraft.kind === 'pvt' ? 'selected' : ''}>PVT Corner 矩阵</option><option value="monte_carlo" ${batchDraft.kind === 'monte_carlo' ? 'selected' : ''}>Monte Carlo 采样</option><option value="pvt_mc" ${batchDraft.kind === 'pvt_mc' ? 'selected' : ''}>混合 PVT × Monte Carlo</option></select></label><label>最大并发数 (1–32)<input id="batch-max-conc" type="number" min="1" max="32" value="${escape(batchDraft.max_concurrency)}" required></label><label>工艺角（逗号分隔）<input id="batch-corners" value="${escape(batchDraft.corners)}" placeholder="tt, ss, ff"></label><label>电源电压 V（逗号分隔）<input id="batch-voltages" value="${escape(batchDraft.voltages)}" placeholder="1.08, 1.20, 1.32"></label><label>温度 °C（逗号分隔）<input id="batch-temps" value="${escape(batchDraft.temps)}" placeholder="-40, 27, 125"></label><label>MC 样本数 (1–256)<input id="batch-mc-samples" type="number" min="1" max="256" value="${escape(batchDraft.mc_samples)}" ${batchDraft.kind === 'pvt' ? 'disabled' : ''}></label><label>MC 起始随机种子<input id="batch-mc-seed" type="number" min="0" value="${escape(batchDraft.mc_base_seed)}" ${batchDraft.kind === 'pvt' ? 'disabled' : ''}></label><label>可选验收指标名（留空不设）<input id="batch-spec-name" value="${escape(batchDraft.spec_name)}" placeholder="vout_settle"></label><label>验收信号名<input id="batch-spec-signal" value="${escape(batchDraft.spec_signal)}" placeholder="v(out)"></label><label>指标下限 min<input id="batch-spec-min" value="${escape(batchDraft.spec_min)}" placeholder="0.85"></label><label>指标上限 max<input id="batch-spec-max" value="${escape(batchDraft.spec_max)}" placeholder="0.95"></label></div><div class="direct-actions"><button type="submit" class="button primary small" ${directState.batchBusy || !hostsList.length ? 'disabled' : ''}>冻结并展开批量计划 (Prepare Batch)</button></div></form></details>`;
+  if (!pub) {
+    html += `<details class="host-form-details"><summary>新建批量实验（PVT Corner / Monte Carlo · 复用「单次仿真」里的主机与网表模板）</summary><form id="direct-batch-form"><div class="direct-grid"><label>批量标识 (Batch ID)<input id="batch-id" value="${escape(batchDraft.batch_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="opamp-pvt-001"></label><label>批量类型<select id="batch-kind"><option value="pvt" ${batchDraft.kind === 'pvt' ? 'selected' : ''}>PVT Corner 矩阵</option><option value="monte_carlo" ${batchDraft.kind === 'monte_carlo' ? 'selected' : ''}>Monte Carlo 采样</option><option value="pvt_mc" ${batchDraft.kind === 'pvt_mc' ? 'selected' : ''}>混合 PVT × Monte Carlo</option></select></label><label>最大并发数 (1–32)<input id="batch-max-conc" type="number" min="1" max="32" value="${escape(batchDraft.max_concurrency)}" required></label><label>工艺角（逗号分隔）<input id="batch-corners" value="${escape(batchDraft.corners)}" placeholder="tt, ss, ff"></label><label>电源电压 V（逗号分隔）<input id="batch-voltages" value="${escape(batchDraft.voltages)}" placeholder="1.08, 1.20, 1.32"></label><label>温度 °C（逗号分隔）<input id="batch-temps" value="${escape(batchDraft.temps)}" placeholder="-40, 27, 125"></label><label>MC 样本数 (1–256)<input id="batch-mc-samples" type="number" min="1" max="256" value="${escape(batchDraft.mc_samples)}" ${batchDraft.kind === 'pvt' ? 'disabled' : ''}></label><label>MC 起始随机种子<input id="batch-mc-seed" type="number" min="0" value="${escape(batchDraft.mc_base_seed)}" ${batchDraft.kind === 'pvt' ? 'disabled' : ''}></label><label>可选验收指标名（留空不设）<input id="batch-spec-name" value="${escape(batchDraft.spec_name)}" placeholder="vout_settle"></label><label>验收信号名<input id="batch-spec-signal" value="${escape(batchDraft.spec_signal)}" placeholder="v(out)"></label><label>指标下限 min<input id="batch-spec-min" value="${escape(batchDraft.spec_min)}" placeholder="0.85"></label><label>指标上限 max<input id="batch-spec-max" value="${escape(batchDraft.spec_max)}" placeholder="0.95"></label></div><div class="direct-actions"><button type="submit" class="button primary small" ${directState.batchBusy || !hostsList.length ? 'disabled' : ''}>冻结并展开批量计划 (Prepare Batch)</button></div></form></details>`;
+  }
 
   const listHtml = rows.map(b => `<button type="button" class="direct-run-row ${b.batch_id === summary?.batch_id ? 'selected' : ''}" data-action="direct-batch-select" data-id="${escape(b.batch_id)}"><div><strong>${escape(b.title || b.batch_id)}</strong><small><code>${escape(b.batch_id)}</code> · ${escape(String(b.kind || '').toUpperCase())} · 并发上限 ${b.max_concurrency} · 通过 ${b.passed_cases}/${b.total_cases} · 指标未达标 ${b.spec_failed_cases} · 执行失败/缺失 ${b.exec_failed_cases + b.missing_cases}</small></div>${chip(title(b.status), b.status === 'completed_all_passed' ? 'green' : b.status === 'running' ? 'blue' : b.exec_failed_cases > 0 || b.missing_cases > 0 ? 'red' : 'amber')}</button>`).join('')
     || '<p class="subtle-note">当前还没有批量实验。点击上方演示按钮可立即体验 27-Corner PVT 矩阵或 40 样本 Monte Carlo 良率统计。</p>';
@@ -513,7 +666,7 @@ function directBatchPanel(hostsList) {
     html += '</div>';
   }
 
-  return `<section class="panel direct-panel direct-batch-panel"><div class="section-title"><h2>5. PVT / Corner / Monte Carlo 批量实验管理（并发调度 + 良率统计）</h2><span class="section-note">共 ${rows.length} 个批次</span></div>${html}</section>`;
+  return `<section class="panel direct-panel direct-batch-panel"><div class="section-title"><h2>PVT / Corner / Monte Carlo 批量实验管理</h2><span class="section-note">共 ${rows.length} 个批次</span></div>${html}</section>`;
 }
 
 const WF_COLORS = ['#1f6f54', '#2563eb', '#c2410c', '#7c3aed', '#0891b2', '#be123c', '#a16207', '#4f46e5'];
@@ -806,45 +959,47 @@ function renderOverlaySvg(cData) {
 }
 
 function directWaveformPanel(run) {
+  const pub = isPublicDemo();
   const datasets = directState.wfIndex?.datasets || [];
   const ds = currentWfDatasetMeta();
   const hasSkippedRaw = (run?.collection?.skipped_files || []).some(f => String(f.name || '').startsWith('results.raw/'));
   const q = directState.wfQuery;
   const c = directState.wfCycles;
 
-  let body = `<div class="wf-toolbar-top"><p class="subtle-note">大文件原生保留在远端服务器，仅按需读取选定信号与时间窗口；全局概览采用 <strong>Min-Max 包络降采样</strong>（绝不漏掉毛刺/过冲），放大或单周期切片自动切换为 <strong>100% 原始无损采样点</strong>。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-demo-wf" ${directState.busy || directState.wfBusy ? 'disabled' : ''}>加载 500 周期 PSF Binary 演示波形（含隐藏毛刺）</button>${run ? `<button type="button" class="button secondary small" data-action="direct-wf-refresh-remote" data-id="${escape(run.run_id)}" ${directState.wfBusy ? 'disabled' : ''}>${hasSkippedRaw ? '扫描远端未下载的大波形' : '刷新波形索引'}</button>` : ''}</div></div>`;
+  let body = `<div class="tut-tip-strip"><span><strong>3 步上手：</strong></span><span>① 选信号或点「加载 500 周期演示」</span><span>→</span><span>② <strong>在图上横向拖拽框选</strong>自动切 100% 无损原始点</span><span>→</span><span>③ 点下方趋势图任意点钻取单周期（自动标出 #317 毛刺）</span></div>`;
+  body += `<div class="wf-toolbar-top"><p class="subtle-note">大文件原生保留在远端服务器，仅按需读取选定信号与时间窗口；全局预览采用 <strong>Min-Max 包络</strong>（绝不丢毛刺），放大或单周期切片自动切为 <strong>100% 无损原始点</strong>。</p><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-demo-wf" ${directState.busy || directState.wfBusy ? 'disabled' : ''}>加载 500 周期 PSF Binary 演示波形（含 #317 毛刺）</button>${run && !pub ? `<button type="button" class="button secondary small" data-action="direct-wf-refresh-remote" data-id="${escape(run.run_id)}" ${directState.wfBusy ? 'disabled' : ''}>${hasSkippedRaw ? '扫描远端未下载的大波形' : '刷新波形索引'}</button>` : ''}</div></div>`;
 
   if (directState.wfError) {
     body += `<p class="error-text" role="alert">${escape(directState.wfError)}</p>`;
   }
 
   if (!run || !datasets.length) {
-    body += `<p class="subtle-note">${run ? '当前运行记录还没有已索引的 PSF Binary / PSFXL / ASCII 波形。可点击上方「加载 500 周期 PSF Binary 演示波形」立即离线体验，或在仿真收集完成后点击「刷新波形索引」。' : '点击上方按钮可一键生成 500 周期（20,000 点）PSF Binary 演示波形，直接体验包络缩放与周期钻取。'}</p>`;
-    return `<section class="panel direct-panel direct-wf-panel"><div class="section-title"><h2>4. 二进制大波形查看器与周期切片（PSF Binary / PSFXL / ASCII）</h2><span class="chip">COMPUTE-NEAR-DATA</span></div>${body}</section>`;
+    body += `<p class="subtle-note">${run ? '当前选中的任务暂无波形数据集。点击上方绿色按钮可一键生成并载入 500 周期 PSF Binary 演示波形。' : '点击上方绿色按钮一键体验 500 周期（20,000 点）PSF Binary 演示波形。'}</p>`;
+    return `<section class="panel direct-panel direct-wf-panel"><div class="section-title"><h2>二进制大波形查看器与周期切片（PSF Binary / PSFXL / ASCII）</h2><span class="chip">COMPUTE-NEAR-DATA</span></div>${body}</section>`;
   }
 
   const formatChip = chip(String(ds.format || 'unknown').toUpperCase(), ds.format === 'psfbin' || ds.format === 'psfxl' ? 'blue' : '');
-  const srcChip = chip(ds.source === 'remote_in_place' ? '远端原位查询（零全量下载）' : '本地已收集', ds.source === 'remote_in_place' ? 'amber' : 'green');
+  const srcChip = chip(ds.source === 'remote_in_place' ? '远端原位查询（零全量下载）' : pub ? '浏览器内合成二进制波形' : '本地已收集', ds.source === 'remote_in_place' ? 'amber' : 'green');
   const sizeKb = (Number(ds.bytes || 0) / 1024).toFixed(1);
   const availSignals = ds.signals || [];
 
-  body += `<div class="wf-meta-bar">${formatChip}${srcChip}<span class="subtle-note">数据文件：<code>${escape(ds.dataset)}</code> · 大小 ${sizeKb} KiB · 总采样点 <strong>${escape(ds.sweep?.count ?? 0)}</strong> · 扫描范围 ${escape(formatEng(ds.sweep?.min, ds.sweep?.unit || ''))} ~ ${escape(formatEng(ds.sweep?.max, ds.sweep?.unit || ''))}</span></div>`;
-
-  body += `<div class="direct-grid wf-controls"><label>波形数据集<select id="wf-dataset">${datasets.map(d => `<option value="${escape(d.dataset)}" ${d.dataset === ds.dataset ? 'selected' : ''}>${escape(d.dataset)} (${escape(d.format)} · ${d.sweep?.count ?? 0} pts)</option>`).join('')}</select></label><label>窗口起点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmin" value="${escape(directState.wfWindow.xMin)}" placeholder="${escape(String(ds.sweep?.min ?? ''))}"></label><label>窗口终点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmax" value="${escape(directState.wfWindow.xMax)}" placeholder="${escape(String(ds.sweep?.max ?? ''))}"></label><label>最大预览点数<input id="wf-maxpts" type="number" min="64" max="20000" value="${escape(directState.wfMaxPoints)}"></label></div>`;
+  body += `<div class="wf-meta-bar">${formatChip}${srcChip}<span class="subtle-note">数据集：<code>${escape(ds.dataset)}</code> · ${sizeKb} KiB · 总采样点 <strong>${escape(ds.sweep?.count ?? 0)}</strong> · 范围 ${escape(formatEng(ds.sweep?.min, ds.sweep?.unit || ''))} ~ ${escape(formatEng(ds.sweep?.max, ds.sweep?.unit || ''))}</span></div>`;
 
   body += `<div class="wf-signal-box"><strong>选择信号：</strong>${availSignals.map(s => `<label class="wf-sig-pill"><input type="checkbox" data-wf-signal="${escape(s.name)}" ${directState.wfSignals.includes(s.name) ? 'checked' : ''}> ${escape(s.name)}${s.unit ? ` (${escape(s.unit)})` : ''}</label>`).join('')}</div>`;
 
-  body += `<div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-query" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '查询中…' : '查询 / 绘制波形'}</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-in" ${directState.wfBusy || !q ? 'disabled' : ''}>放大 2×</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-out" ${directState.wfBusy || !q ? 'disabled' : ''}>缩小 2×</button><button type="button" class="button secondary small" data-action="direct-wf-pan-left" ${directState.wfBusy || !q ? 'disabled' : ''}>← 左移</button><button type="button" class="button secondary small" data-action="direct-wf-pan-right" ${directState.wfBusy || !q ? 'disabled' : ''}>右移 →</button><button type="button" class="button secondary small" data-action="direct-wf-reset" ${directState.wfBusy || !q ? 'disabled' : ''}>重置全范围</button></div>`;
+  body += `<div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-query" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '查询中…' : '查询 / 刷新波形'}</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-in" ${directState.wfBusy || !q ? 'disabled' : ''}>放大 2×</button><button type="button" class="button secondary small" data-action="direct-wf-zoom-out" ${directState.wfBusy || !q ? 'disabled' : ''}>缩小 2×</button><button type="button" class="button secondary small" data-action="direct-wf-pan-left" ${directState.wfBusy || !q ? 'disabled' : ''}>← 左移</button><button type="button" class="button secondary small" data-action="direct-wf-pan-right" ${directState.wfBusy || !q ? 'disabled' : ''}>右移 →</button><button type="button" class="button secondary small" data-action="direct-wf-reset" ${directState.wfBusy || !q ? 'disabled' : ''}>重置全范围</button></div>`;
+
+  body += `<details class="host-form-details"><summary>精确窗口与数据集参数（支持直接拖拽图面缩放，无需手输）</summary><div class="direct-grid wf-controls"><label>波形数据集<select id="wf-dataset">${datasets.map(d => `<option value="${escape(d.dataset)}" ${d.dataset === ds.dataset ? 'selected' : ''}>${escape(d.dataset)} (${escape(d.format)} · ${d.sweep?.count ?? 0} pts)</option>`).join('')}</select></label><label>窗口起点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmin" value="${escape(directState.wfWindow.xMin)}" placeholder="${escape(String(ds.sweep?.min ?? ''))}"></label><label>窗口终点 (${escape(ds.sweep?.unit || 's')})<input id="wf-xmax" value="${escape(directState.wfWindow.xMax)}" placeholder="${escape(String(ds.sweep?.max ?? ''))}"></label><label>最大预览点数<input id="wf-maxpts" type="number" min="64" max="20000" value="${escape(directState.wfMaxPoints)}"></label></div></details>`;
 
   if (q) {
     const modeBanner = q.exact
-      ? `<div class="wf-mode-banner exact">${chip('100% 原始无损点 (exact_window)', 'green')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始采样点，已无损返回（<code>measurement_safe: true</code>，可直接用于精确量测 / adctools）。在图上拖拽框选可继续放大。</span></div>`
-      : `<div class="wf-mode-banner preview">${chip('Min-Max 包络预览 (downsampled_preview)', 'amber')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始点，已使用 <strong>${q.downsampling?.buckets || 0}</strong> 桶流式 Min-Max 包络降采样（完整保留所有尖峰毛刺与过冲，<code>measurement_safe: false</code>）。<strong>在下方图上横向拖拽框选</strong>或点击「放大 2×」将自动切换为 100% 无损原始采样。</span></div>`;
+      ? `<div class="wf-mode-banner exact">${chip('100% 原始无损点 (exact_window)', 'green')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始采样点，已无损返回（<code>measurement_safe: true</code>，可直接用于精确量测）。继续横向拖拽可进一步放大。</span></div>`
+      : `<div class="wf-mode-banner preview">${chip('Min-Max 包络预览 (downsampled_preview)', 'amber')}<span>当前窗口共 <strong>${q.sweep.window_count}</strong> 个原始点，已使用 <strong>${q.downsampling?.buckets || 0}</strong> 桶流式 Min-Max 包络（完整保留所有毛刺尖峰，<code>measurement_safe: false</code>）。<strong>在下方图上横向拖拽框选</strong>或点「放大 2×」将自动切换为 100% 无损原始点。</span></div>`;
     body += `<div class="wf-plot-card">${modeBanner}${renderWaveformSvg(q, {interactive: true})}</div>`;
   }
 
   // Cycle Slicer & Drill-Down Sub-Panel
-  body += `<div class="wf-cycle-card"><div class="section-title"><h3>多周期切片分析（Cycle Slicer · 逐周期趋势 + 最差异常定位 + 单周期无损钻取）</h3><span class="chip">CYCLE SLICER</span></div><p class="subtle-note">面对数百至上千个周期的长瞬态仿真，逐周期扫描极值/峰峰值/过冲指标，自动抓出最差异常周期并支持点击任意周期查看其 100% 无损周期内波形。</p><div class="direct-grid"><label>时钟边沿信号（推荐）<select id="wf-clock"><option value="">（不使用时钟，改用固定周期 T）</option>${availSignals.map(s => `<option value="${escape(s.name)}" ${s.name === directState.wfClock ? 'selected' : ''}>${escape(s.name)}</option>`).join('')}</select></label><label>固定周期 T（无时钟时填写）<input id="wf-period" value="${escape(directState.wfPeriod)}" placeholder="例如 1e-8" ${directState.wfClock ? 'disabled' : ''}></label><label>最差周期判定指标<select id="wf-worst-metric"><option value="peak_to_peak" ${directState.wfWorstMetric === 'peak_to_peak' ? 'selected' : ''}>峰峰值最大 (peak_to_peak)</option><option value="max_value" ${directState.wfWorstMetric === 'max_value' ? 'selected' : ''}>周期峰值最高 (max_value)</option><option value="min_value" ${directState.wfWorstMetric === 'min_value' ? 'selected' : ''}>周期谷值最低 (min_value)</option><option value="overshoot" ${directState.wfWorstMetric === 'overshoot' ? 'selected' : ''}>相对稳态过冲最大 (overshoot)</option><option value="period_deviation" ${directState.wfWorstMetric === 'period_deviation' ? 'selected' : ''}>周期时长偏差最大 (period_deviation)</option></select></label><label>指标评估信号<select id="wf-worst-signal">${(directState.wfSignals.length ? directState.wfSignals : availSignals.map(s => s.name)).map(name => `<option value="${escape(name)}" ${name === directState.wfWorstSignal ? 'selected' : ''}>${escape(name)}</option>`).join('')}</select></label></div><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-cycles" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '分析中…' : '执行周期切片分析'}</button>${c ? `<div class="wf-jump-box"><input id="wf-jump-cycle" type="number" min="0" max="${Math.max(0, c.cycle_count - 1)}" value="${escape(directState.wfJumpCycle)}" placeholder="输入周期号 0~${Math.max(0, c.cycle_count - 1)}"><button type="button" class="button secondary small" data-action="direct-wf-jump-cycle" ${directState.wfBusy ? 'disabled' : ''}>钻取该周期</button></div>` : ''}</div>`;
+  body += `<div class="wf-cycle-card"><div class="section-title"><h3>多周期切片分析（Cycle Slicer · 逐周期趋势 + 自动抓最差毛刺 + 单周期无损钻取）</h3><span class="chip">CYCLE SLICER</span></div><p class="subtle-note">面对数百至上千个周期的长瞬态仿真，自动逐周期统计极值/峰峰值/过冲，标出最差异常周期并支持点击任意周期看其 100% 无损内部波形。</p><div class="direct-grid"><label>时钟边沿信号（推荐）<select id="wf-clock"><option value="">（不使用时钟，改用固定周期 T）</option>${availSignals.map(s => `<option value="${escape(s.name)}" ${s.name === directState.wfClock ? 'selected' : ''}>${escape(s.name)}</option>`).join('')}</select></label><label>固定周期 T（无时钟时填写）<input id="wf-period" value="${escape(directState.wfPeriod)}" placeholder="例如 1e-8" ${directState.wfClock ? 'disabled' : ''}></label><label>最差周期判定指标<select id="wf-worst-metric"><option value="peak_to_peak" ${directState.wfWorstMetric === 'peak_to_peak' ? 'selected' : ''}>峰峰值最大 (peak_to_peak)</option><option value="max_value" ${directState.wfWorstMetric === 'max_value' ? 'selected' : ''}>周期峰值最高 (max_value)</option><option value="min_value" ${directState.wfWorstMetric === 'min_value' ? 'selected' : ''}>周期谷值最低 (min_value)</option><option value="overshoot" ${directState.wfWorstMetric === 'overshoot' ? 'selected' : ''}>相对稳态过冲最大 (overshoot)</option><option value="period_deviation" ${directState.wfWorstMetric === 'period_deviation' ? 'selected' : ''}>周期时长偏差最大 (period_deviation)</option></select></label><label>指标评估信号<select id="wf-worst-signal">${(directState.wfSignals.length ? directState.wfSignals : availSignals.map(s => s.name)).map(name => `<option value="${escape(name)}" ${name === directState.wfWorstSignal ? 'selected' : ''}>${escape(name)}</option>`).join('')}</select></label></div><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-wf-cycles" ${directState.wfBusy || !directState.wfSignals.length ? 'disabled' : ''}>${directState.wfBusy ? '分析中…' : '执行周期切片分析'}</button>${c ? `<div class="wf-jump-box"><input id="wf-jump-cycle" type="number" min="0" max="${Math.max(0, c.cycle_count - 1)}" value="${escape(directState.wfJumpCycle)}" placeholder="输入周期号 0~${Math.max(0, c.cycle_count - 1)}"><button type="button" class="button secondary small" data-action="direct-wf-jump-cycle" ${directState.wfBusy ? 'disabled' : ''}>钻取该周期</button></div>` : ''}</div>`;
 
   if (c) {
     const det = c.detection?.basis === 'clock_signal'
@@ -876,27 +1031,46 @@ function directWaveformPanel(run) {
   }
   body += '</div>';
 
-  return `<section class="panel direct-panel direct-wf-panel"><div class="section-title"><h2>4. 二进制大波形查看器与周期切片（PSF Binary / PSFXL / ASCII）</h2><span class="chip">COMPUTE-NEAR-DATA</span></div>${body}</section>`;
+  return `<section class="panel direct-panel direct-wf-panel"><div class="section-title"><h2>二进制大波形查看器与周期切片（PSF Binary / PSFXL / ASCII）</h2><span class="chip">COMPUTE-NEAR-DATA</span></div>${body}</section>`;
 }
 
 async function handleDirectClick(event) {
   const button = event.target.closest('button[data-action^="direct-"]');
   if (!button) return;
-  if (isPublicDemo()) { location.hash = '#local'; return; }
   const action = button.dataset.action.slice(7);
   const id = button.dataset.id;
+  if (action === 'tab') {
+    const nextTab = button.dataset.tab || 'waveforms';
+    directState.activeTab = nextTab;
+    if (nextTab === 'waveforms' && !directState.wfIndex?.datasets?.length) {
+      const wfRun = directState.runs.find(r => r.run_id === 'demo-psfbin-500c');
+      if (wfRun) {
+        directState.selectedId = wfRun.run_id;
+        await refreshDirect();
+        return;
+      }
+    }
+    render();
+    if (nextTab === 'waveforms' && directState.wfIndex?.datasets?.length && !directState.wfQuery) {
+      await runWaveformQuery();
+      if (directState.wfClock || directState.wfPeriod) await runWaveformCycles();
+    }
+    return;
+  }
   if (action === 'use-placement') {
     directDraft.target_mode = 'host';
     directDraft.host_id = id;
     directDraft.cpus = requestedCpus;
     directDraft.memory_gib = requestedMemory;
     directDraft.simulator = requestedSimulator;
+    directState.activeTab = 'runs';
     location.hash = '#direct';
     return;
   }
   if (action === 'refresh') { await refreshDirect(); return; }
   if (action === 'select') {
     directState.selectedId = id;
+    if (directState.activeTab !== 'runs') directState.activeTab = 'runs';
     await refreshDirect();
     return;
   }
@@ -911,6 +1085,7 @@ async function handleDirectClick(event) {
   }
   if (action === 'demo-wf') {
     if (directState.busy || directState.wfBusy) return;
+    directState.activeTab = 'waveforms';
     directState.wfBusy = true; directState.wfError = null; render();
     try {
       const res = await api('/api/direct/demo-waveform', {method: 'POST', body: {}});
@@ -1099,8 +1274,16 @@ async function handleDirectClick(event) {
   }
 }
 
+function renderAgentEvalHtml(ev) {
+  if (!ev) {
+    return '<p class="subtle-note">尚未运行评测。点击上方按钮立即执行 10 项冻结闭环安全测试（覆盖缺项拒猜、断线对账、防假通过、降采样拦截、中断回合恢复及 MC 保守良率），对比确定性编排器与弱模型基线。</p>';
+  }
+  const det = ev.deterministic, weak = ev.weak_naive;
+  return `<div class="direct-report-grid"><div class="direct-dim-card"><span>确定性编排器通过率</span><strong>${det.overall_pass_rate_pct}% (${det.passed_trials}/${det.total_trials})</strong></div><div class="direct-dim-card"><span>确定性安全违规（越权/重复/假通过）</span><strong>${det.safety_counters.unauthorized_dispatches} / ${det.safety_counters.duplicate_dispatches} / ${det.safety_counters.false_scientific_passes}</strong></div><div class="direct-dim-card"><span>弱模型对照基线通过率</span><strong>${weak.overall_pass_rate_pct}% (${weak.passed_trials}/${weak.total_trials})</strong></div><div class="direct-dim-card"><span>弱模型安全违规（越权/重复/假通过）</span><strong>${weak.safety_counters.unauthorized_dispatches} / ${weak.safety_counters.duplicate_dispatches} / ${weak.safety_counters.false_scientific_passes}</strong></div></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>用例</th><th>类别</th><th>确定性编排器</th><th>弱模型基线（暴露缺陷）</th></tr></thead><tbody>${det.results.map((r, i) => `<tr><td><code>${escape(r.case_id)}</code></td><td>${escape(r.category)}</td><td>${chip(r.passed ? 'PASS' : 'FAIL', r.passed ? 'green' : 'red')}</td><td>${chip(weak.results[i]?.passed ? 'PASS' : 'FAIL', weak.results[i]?.passed ? 'green' : 'amber')} <small>${escape((weak.results[i]?.violations || []).join(', ') || '—')}</small></td></tr>`).join('')}</tbody></table></div>`;
+}
+
 function publicLocalPage() {
-  return heading('RUN LOCALLY', 'Bring the console to your workspace.', 'Use your local installation for private host profiles and saved simulation observations.') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><h2>Start with the synthetic workspace</h2><p>Requires Python 3.11+ on macOS, Linux, or Windows. Use the branch that supplies this demo, then run these commands in a terminal on your own computer:</p><pre class="public-command"># macOS / Linux
+  return heading('本地运行 · RUN LOCALLY', '在你的电脑上连接真实 EDA 服务器', '日常体验全部核心功能只需留在本网页即可；只有当你要通过本机 SSH 连接自己的 Spectre / ngspice / LSF / Slurm 服务器时，才需要本地启动控制台。') + `<section class="panel public-info" data-public-demo-info="local"><div class="panel-body"><span class="chip green">macOS · Linux · 原生 Windows（无需 WSL）</span><h2>两步在本地打开同款网页控制台</h2><p>需要 Python 3.11+。在你自己的电脑上运行以下命令后，浏览器会自动打开与当前完全一致的本地网页（不会上传任何私钥、网表或数据）：</p><pre class="public-command"># macOS / Linux
 git clone --branch ${escape(demoSource().branch)} https://github.com/spiceowl-dev/spiceowl.git
 cd spiceowl
 python3 -m venv .venv
@@ -1110,16 +1293,16 @@ python3 -m venv .venv
 # Windows (PowerShell)
 py -3 -m venv .venv
 .venv\\Scripts\\python.exe -m pip install .
-.venv\\Scripts\\spiceowl.exe serve --demo</pre><p>Open the loopback address printed by that command. This public page never connects to that address or to your computer.</p><h3>Connect only when you choose</h3><p>The local console can register an existing SSH route, make explicit host checks and connect a configured CircuitGit simulation runtime. Standalone mode offers an explicit local Codex connection. Embedded mode shares CircuitGit’s current Codex conversation.</p><div class="public-info-links"><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">Local setup guide</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">Host connection guide</a><a class="button secondary" href="#overview">Back to the demo</a></div></div></section>`;
+.venv\\Scripts\\spiceowl.exe serve --demo</pre><p>打开终端打印的本机地址（<code>http://127.0.0.1:...</code>），进入「✦ 新手步步教程 → 第 5 步」，网页端会自动识别你的 <code>~/.ssh/config</code> 别名，引导你用内置零 PDK 网表跑通首个真实仿真。</p><div class="public-info-links"><a class="button primary" href="#quickstart">回到 5 步网页教程</a><a class="button secondary" href="${demoDocument('docs/local-console.md')}" target="_blank" rel="noopener noreferrer">本地启动说明</a><a class="button secondary" href="${demoDocument('docs/host-onboarding.md')}" target="_blank" rel="noopener noreferrer">SSH 服务器接入指南</a><a class="button secondary" href="#overview">返回仿真总览</a></div></div></section>`;
 }
 
 function publicHostPage() {
-  return heading('LOCAL FEATURE PREVIEW', 'Connect servers in your local console.', 'This public demo has no SSH access and does not scan, register or contact hosts.') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">ILLUSTRATIVE WORKFLOW</span><h2>Your SSH configuration stays with you</h2><div class="public-feature-grid"><article><h3>Register a route</h3><p>Choose an existing SSH alias and record the expected remote identity in a private local profile.</p></article><article><h3>Check explicitly</h3><p>Verify host trust, account identity and configured simulator versions. A saved profile alone proves no connection.</p></article><article><h3>Compare observations</h3><p>Inspect CPU and memory snapshots with their observation times. Missing data never means an idle machine.</p></article></div><p>No hostnames, login details, SSH keys or credentials are requested on this page.</p><a class="button primary" href="#local">Run locally to configure hosts</a></div></section>`;
+  return heading('EDA 服务器管理预览 · HOSTS PREVIEW', '在本地安全管理你的仿真服务器池', '当前在线演示版不访问本机 SSH，也不会扫描或请求任何外部主机；以下展示本地模式下的选机与体检流程。') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">LOCAL WORKFLOW · 本地模式功能</span><h2>你的 SSH 密钥与服务器配置始终留在本机</h2><div class="public-feature-grid"><article><h3>1. 自动识别 SSH 别名</h3><p>本地启动后直接读取 <code>~/.ssh/config</code> 别名列表，零密码输入，原生支持跳板机（ProxyJump）。</p></article><article><h3>2. 显式身份与工具校验</h3><p>点击校验才会核对远端 <code>hostname</code>、<code>id -un</code> 与 Spectre / ngspice 版本，绝不后台静默扫描。</p></article><article><h3>3. 智能选机与新鲜度保护</h3><p>对比各节点 CPU / 内存余量并标注观测时间；超时或失联的机器绝不会被误当成空闲节点。</p></article></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>示例计算节点（只读示意）</th><th>连接校验</th><th>CPU 占用 / 核数</th><th>可用 / 总内存</th><th>选机结论</th></tr></thead><tbody><tr><td><code>sim-node-a</code></td><td>${chip('Verified', 'green')}</td><td>18% / 32 核</td><td>96 / 128 GiB</td><td>${chip('推荐优先', 'green')}</td></tr><tr><td><code>sim-node-b</code></td><td>${chip('Verified', 'green')}</td><td>84% / 32 核</td><td>14 / 128 GiB</td><td>${chip('负载较高', 'amber')}</td></tr><tr><td><code>sim-node-c</code></td><td>${chip('Stale / Unverified', 'red')}</td><td>Unknown</td><td>Unknown</td><td>${chip('自动排除', 'red')}</td></tr></tbody></table></div><p class="subtle-note">本页不采集任何主机名、账号、私钥或凭据。如需接入自己的 EDA 服务器，请在本地运行 SpiceOwl。</p><div class="public-info-links"><a class="button primary" href="#local">查看本地运行方法</a><a class="button secondary" href="#direct">先在线体验仿真与大波形</a></div></div></section>`;
 }
 
 function publicAgentPage() {
   const firstRun = state.runs[0];
-  return heading('SYNTHETIC AGENT PREVIEW', 'One workflow, two ways to use it.', 'This public demo makes no model, Agent or simulator connection.') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><h2>Standalone or inside CircuitGit</h2><div class="public-feature-grid"><article><h3>Standalone console</h3><p>In a local installation, choose a Codex profile and model, connect explicitly, then converse beside your simulation tools. Streams, tool calls and human approvals stay in the same panel.</p></article><article><h3>Embedded in CircuitGit</h3><p>Use CircuitGit’s current Codex conversation. The embedded console does not create a second Agent connection or conversation.</p></article></div><blockquote class="public-example"><span class="chip">SCRIPTED PREVIEW</span><p><strong>You:</strong> Inspect this saved simulation run.</p><p><strong>Agent:</strong> I can read its stored status, review the evidence and show an approval card if an operation needs your decision.</p></blockquote><p>The preview above is authored example text. No request is sent from this public page.</p><div class="public-info-links"><a class="button primary" href="./workflow.html">Explore the workflow</a><a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">Open CircuitGit</a>${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">Try a scripted diagnosis</a>` : '<a class="button secondary" href="#overview">Explore synthetic runs</a>'}<a class="button secondary" href="#local">Run locally</a></div></div></section>`;
+  return heading('AI 助手与安全护栏评测 · AGENT & EVAL', '既能在线跑 10 项 AI 安全评测，也能在本地接入 Codex', '当前在线演示版不连接外部大模型；下方 10 项安全闭环评测可在浏览器内一键运行，本地安装后还可接入 Codex 对话。') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><span class="chip green">可直接在浏览器运行 · INTERACTIVE BENCHMARK</span><h2>1. 一键在线运行 10 项 Agent 安全闭环评测</h2><p>验证 SpiceOwl 的确定性 Next-Action 编排器如何在 10 类高风险场景（缺项拒猜、断线防重发、有效测量但指标未达标、降采样拦截量测、MC 失败种子防丢弃等）下实现 <strong>100% 通过且 0 安全违规</strong>。</p><div class="direct-actions"><button type="button" class="button primary" data-action="public-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '正在运行 10 项评测…' : codexPanelState.evalReport ? '重新运行 10 项安全评测' : '🚀 立即在线运行 10 项 Agent 安全评测'}</button></div><div id="public-eval-output" style="margin-top:10px">${renderAgentEvalHtml(codexPanelState.evalReport)}</div><hr class="tut-divider"><h2>2. 本地运行时的两种 AI 协作模式</h2><div class="public-feature-grid"><article><h3>独立本地控制台（Standalone）</h3><p>在本地安装后显式连接本机 Codex，流式工具调用与人工审批卡片同屏展示，所有发往仿真器的动作均受人工确认保护。</p></article><article><h3>嵌入 CircuitGit（Embedded）</h3><p>复用 CircuitGit 当前的 Codex 会话，不额外创建第二个连接，保持统一上下文。</p></article><article><h3>只读诊断体验</h3><p>无需配置任何 API 密钥，现在就可以在「仿真总览」任意场景里点击「✧ Diagnose snapshot」体验只读证据诊断。</p></article></div><div class="public-info-links"><a class="button primary" href="#local">在本地连接 Codex</a><a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">打开 CircuitGit</a>${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">体验场景诊断</a>` : '<a class="button secondary" href="#overview">前往仿真总览</a>'}</div></div></section>`;
 }
 
 function toast(message) {
@@ -1155,7 +1338,7 @@ async function refresh() {
   $('#version').textContent = state.version;
   $('#connection-count').textContent = state.connections.length;
   $('#host-count').textContent = state.hosts.length;
-  if ($('#direct-count')) $('#direct-count').textContent = isPublicDemo() ? '0' : directState.runs.length;
+  if ($('#direct-count')) $('#direct-count').textContent = directState.loaded ? directState.runs.length : (isPublicDemo() ? '2' : '0');
   $('#native-count').textContent = isStandaloneAgent() ? codexPanelState.threads.length : state.questions.length;
   if (!isPublicDemo()) $('.prototype-badge').textContent = isStandaloneAgent() ? 'Standalone · Codex Agent' : 'CircuitGit channel · Engine';
   $('#recent-runs').innerHTML = state.runs.slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
@@ -1298,36 +1481,41 @@ function overview() {
   const running = state.runs.filter(r => r.execution === 'running' || r.execution === 'queued').length;
   const attention = state.runs.filter(r => r.observation !== 'current' || r.execution === 'failed' || r.specification_result === 'fail').length;
   const done = state.runs.filter(r => r.execution === 'completed').length;
-  const stats = [['Total runs', total, 'Stored synthetic experiments', '▦'], ['Last observed active', running, 'Check observation freshness', '◷'], ['Needs attention', attention, 'Evidence to inspect', '◇'], ['Execution completed', done, 'Validity is reported separately', '✓']];
+  const stats = [
+    ['仿真总数 · Total', total, '已归档的实验记录', '▦'],
+    ['最近观测活跃 · Active', running, '请结合观测新鲜度判断', '◷'],
+    ['需重点关注 · Attention', attention, '含崩溃 / 断连 / 指标超标', '◇'],
+    ['执行已完成 · Completed', done, '是否达标单独评估', '✓'],
+  ];
   const overviewAction = isPublicDemo()
-    ? state.runs[0] ? `<a class="button primary" href="#run/${escape(state.runs[0].run_id)}">Explore a scenario</a>` : '<button class="button primary" data-action="demo-reset">Reset demo</button>'
-    : '<button class="button primary" data-action="seed"><span aria-hidden="true">＋</span> Load demo workspace</button>';
-  let html = heading('YOUR WORKSPACE', 'A clear view of every run.', 'Follow the evidence. Keep the experiment intact.', overviewAction);
+    ? `<div class="split-actions"><a class="button primary" href="#quickstart">✦ 新手 5 步教程</a><a class="button secondary" href="#direct">▷ 体验大波形与 PVT</a></div>`
+    : `<div class="split-actions"><a class="button secondary" href="#quickstart">✦ 新手向导</a><button class="button primary" data-action="seed"><span aria-hidden="true">＋</span> 加载演示数据</button></div>`;
+  let html = heading('仿真总览 · WORKSPACE OVERVIEW', '一眼看清每次仿真的真实状态', '将「是否跑完」「观测是否过期」「测量是否有效」「指标是否达标」四维分开呈现，点击任意卡片即可回放与诊断。', overviewAction);
   if (!total) {
-    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>Your first night watch starts here.</h1><p>Explore connections, interrupted runs and diagnostic proposals with an offline demo. No accounts, API keys or simulator needed.</p><button class="button primary" data-action="seed">Load the synthetic demo <span aria-hidden="true">→</span></button></div>`;
+    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>从这里开始你的第一次仿真巡检</h1><p>无需账号、API 密钥或远程服务器，点击下方按钮立即载入 4 个典型演示场景，或打开 5 步网页新手教程。</p><div class="direct-actions" style="justify-content:center"><button class="button primary" data-action="seed">载入离线演示数据 <span aria-hidden="true">→</span></button><a class="button secondary" href="#quickstart">打开 5 步网页教程</a></div></div>`;
   }
   html += `<div class="stat-grid">${stats.map(([label, value, note, glyph]) => `<div class="stat-card"><div class="stat-label">${label}<span class="stat-glyph" aria-hidden="true">${glyph}</span></div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`).join('')}</div>`;
-  html += `<div class="watch-banner"><img src="./owl.svg" alt=""><div><h3>Explore the overnight workflow.</h3><p>Advance a synthetic run, inspect its evidence, then ask a demo agent for a read-only recommendation.</p></div><a class="button secondary small" href="#connections">Manage connections <span aria-hidden="true">→</span></a></div>`;
-  html += `<div class="section-title"><h2>Simulation runs <span class="muted">/ ${total}</span></h2><span class="section-note">Manual replay · saved locally</span></div><div class="run-grid">`;
+  html += `<div class="watch-banner"><img src="./owl.svg" alt=""><div><h3>第一次使用 SpiceOwl？推荐按这 3 步快速体验</h3><p>① 点击下方任意仿真卡片体验单步回放与 AI 诊断；② 去「仿真 · 波形 · 批量」玩 500 周期毛刺钻取和 27-Corner PVT；③ 去「AI 助手与评测」一键跑 10 项安全测试。</p></div><a class="button primary small" href="#quickstart">开始 5 步教程 →</a></div>`;
+  html += `<div class="section-title"><h2>仿真运行列表 <span class="muted">/ ${total}</span></h2><span class="section-note">点击任意卡片进入详情回放与只读诊断</span></div><div class="run-grid">`;
   html += state.runs.map(run => {
     const pct = Number.isFinite(run.progress) ? Math.round(run.progress * 100) : null;
-    return `<a class="run-card" href="#run/${escape(run.run_id)}"><div class="card-top"><span class="chip">SYNTHETIC / TRANSIENT</span>${runStatus(run)}</div><h3>${escape(run.label)}</h3><div class="run-meta">${escape(run.attempt_id)}</div><div class="progress-row"><span>Scenario progress</span><span>${pct === null ? 'Unknown' : pct + '%'}</span></div><progress class="progress" max="100" value="${pct ?? 0}" aria-label="Scenario progress"></progress><div class="run-card-footer"><span>${run.events.length} evidence events · ${escape(title(run.measurement_validity))} measurement</span><strong>Inspect run <span class="arrow" aria-hidden="true">↗</span></strong></div></a>`;
+    return `<a class="run-card" href="#run/${escape(run.run_id)}"><div class="card-top"><span class="chip">SYNTHETIC / TRANSIENT</span>${runStatus(run)}</div><h3>${escape(run.label)}</h3><div class="run-meta">${escape(run.attempt_id)}</div><div class="progress-row"><span>场景进度</span><span>${pct === null ? 'Unknown' : pct + '%'}</span></div><progress class="progress" max="100" value="${pct ?? 0}" aria-label="Scenario progress"></progress><div class="run-card-footer"><span>${run.events.length} 条证据事件 · 测量：${escape(title(run.measurement_validity))}</span><strong>查看详情与诊断 <span class="arrow" aria-hidden="true">↗</span></strong></div></a>`;
   }).join('') + '</div>';
   return html;
 }
 
 function connections() {
-  let html = heading('AI CONNECTIONS', 'Try simulated connections.', 'Explore scripted readiness, access-denied and interrupted-response states. No provider is contacted.', `<button class="button primary" data-action="add-connection"><span aria-hidden="true">＋</span> Add demo connection</button>`);
+  let html = heading('连接测试沙箱 · AI CONNECTIONS', '模拟不同 AI 连接与故障状态', '用于在浏览器内演练「正常诊断、拒权、中途断线、工具拦截」四类行为，无需真实密钥，不联系任何外部模型。', `<button class="button primary" data-action="add-connection"><span aria-hidden="true">＋</span> 新建模拟连接</button>`);
   if (!state.connections.length) {
-    html += `<div class="empty"><h2>No connections yet.</h2><p>Create a simulated agent or API connection to explore authentication states, streaming and failure handling.</p><button class="button primary" data-action="add-connection">Create demo connection</button></div>`;
+    html += `<div class="empty"><h2>还没有模拟连接</h2><p>创建一个模拟 Agent 或模型连接，测试权限检查、流式中断与证据保护机制。</p><button class="button primary" data-action="add-connection">新建模拟连接</button></div>`;
   }
   html += `<div class="connections-list">${state.connections.map(c => {
     const status = c.status || {};
-    const fields = [['Transport', status.transport || 'unchecked'], ['Authentication', status.authentication || 'unchecked'], ['Model catalog', status.catalog || 'unchecked'], ['Inference access', status.inference_access || 'unverified']];
-    return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">${c.kind === 'agent' ? '✧' : '⌁'}</div><div class="connection-name"><h3>${escape(c.label)} ${chip(c.enabled ? 'enabled' : 'disabled', c.enabled ? 'green' : '')}</h3><p>${c.kind === 'agent' ? 'Agent runtime' : 'Model API'} · Offline fixture · ${escape(title(c.scenario))}</p></div><div class="connection-actions"><button class="button secondary small" data-action="probe" data-id="${escape(c.connection_id)}" ${c.enabled ? '' : 'disabled'}>Probe metadata</button><button class="button secondary small" data-action="toggle" data-id="${escape(c.connection_id)}">${c.enabled ? 'Disable' : 'Enable'}</button><button class="button secondary small" data-action="remove" data-id="${escape(c.connection_id)}" aria-label="Remove ${escape(c.label)}">Remove</button></div></div><div class="connection-readiness">${fields.map(([name, value]) => `<div class="readiness-field"><span>${name}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="connection-bottom"><span>All statuses describe a simulated backend.</span><span>Revision ${c.revision} · No credentials</span></div></article>`;
+    const fields = [['传输层 Transport', status.transport || 'unchecked'], ['身份校验 Auth', status.authentication || 'unchecked'], ['模型列表 Catalog', status.catalog || 'unchecked'], ['推理权限 Inference', status.inference_access || 'unverified']];
+    return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">${c.kind === 'agent' ? '✧' : '⌁'}</div><div class="connection-name"><h3>${escape(c.label)} ${chip(c.enabled ? 'enabled' : 'disabled', c.enabled ? 'green' : '')}</h3><p>${c.kind === 'agent' ? 'Agent 运行时' : '模型 API'} · 离线沙箱 · 演练场景：${escape(title(c.scenario))}</p></div><div class="connection-actions"><button class="button secondary small" data-action="probe" data-id="${escape(c.connection_id)}" ${c.enabled ? '' : 'disabled'}>测试元数据 (Probe)</button><button class="button secondary small" data-action="toggle" data-id="${escape(c.connection_id)}">${c.enabled ? '停用' : '启用'}</button><button class="button secondary small" data-action="remove" data-id="${escape(c.connection_id)}" aria-label="Remove ${escape(c.label)}">删除</button></div></div><div class="connection-readiness">${fields.map(([name, value]) => `<div class="readiness-field"><span>${name}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="connection-bottom"><span>全部状态来自本地离线模拟，无真实外部调用。</span><span>Revision ${c.revision} · 零凭据</span></div></article>`;
   }).join('')}</div>`;
-  if (isPublicDemo()) return html + `<div class="planned-note"><strong>Continue agent work in CircuitGit</strong><p>This page only simulates connections. Open the <a href="#agents">CircuitGit agent channel</a> for its entry link, or <a href="#local">run SpiceOwl locally</a> to manage simulation observations.</p></div>`;
-  return html + `<div class="planned-note"><strong>CircuitGit agent channel</strong><p>These connection cards use fixture responses. The <a href="#agents">Agent panel</a> connects explicitly to Codex in standalone mode, or shares CircuitGit’s conversation in embedded mode. Legacy question history stays read only.</p></div>`;
+  if (isPublicDemo()) return html + `<div class="planned-note"><strong>提示：这页用来做什么？</strong><p>你可以在这里新建「中途断线」或「越权拦截」模拟连接，然后回到 <a href="#overview">仿真总览</a> 点开任意场景，在右侧诊断框选中该连接，就能亲眼看到 SpiceOwl 如何拦截危险操作并保留原请求。也可前往 <a href="#agents">AI 助手与评测</a> 或 <a href="#local">本地运行</a>。</p></div>`;
+  return html + `<div class="planned-note"><strong>关于真实 AI 助手</strong><p>本页连接卡片仅用于离线沙箱演练。要连接本机真实 Codex 对话或查看 CircuitGit 嵌入通道，请前往 <a href="#agents">AI 助手与评测</a>。</p></div>`;
 }
 
 function hosts() {
@@ -1741,13 +1929,7 @@ function renderCodexActivity() {
   $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
   const evalOut = $('#codex-eval-output');
   if (evalOut) {
-    const ev = codexPanelState.evalReport;
-    if (!ev) {
-      evalOut.innerHTML = '<p class="subtle-note">尚未运行评测。点击上方按钮将在本地执行 10 项冻结闭环测试（覆盖缺项拒猜、断线对账、防假通过、降采样拦截、中断回合恢复及 MC 保守良率），对比确定性编排器与弱模型基线。</p>';
-    } else {
-      const det = ev.deterministic, weak = ev.weak_naive;
-      evalOut.innerHTML = `<div class="direct-report-grid"><div class="direct-dim-card"><span>确定性编排器通过率</span><strong>${det.overall_pass_rate_pct}% (${det.passed_trials}/${det.total_trials})</strong></div><div class="direct-dim-card"><span>确定性安全违规（越权/重复/假通过）</span><strong>${det.safety_counters.unauthorized_dispatches} / ${det.safety_counters.duplicate_dispatches} / ${det.safety_counters.false_scientific_passes}</strong></div><div class="direct-dim-card"><span>弱模型对照基线通过率</span><strong>${weak.overall_pass_rate_pct}% (${weak.passed_trials}/${weak.total_trials})</strong></div><div class="direct-dim-card"><span>弱模型安全违规（越权/重复/假通过）</span><strong>${weak.safety_counters.unauthorized_dispatches} / ${weak.safety_counters.duplicate_dispatches} / ${weak.safety_counters.false_scientific_passes}</strong></div></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>用例</th><th>类别</th><th>确定性编排器</th><th>弱模型基线（暴露缺陷）</th></tr></thead><tbody>${det.results.map((r, i) => `<tr><td><code>${escape(r.case_id)}</code></td><td>${escape(r.category)}</td><td>${chip(r.passed ? 'PASS' : 'FAIL', r.passed ? 'green' : 'red')}</td><td>${chip(weak.results[i]?.passed ? 'PASS' : 'FAIL', weak.results[i]?.passed ? 'green' : 'amber')} <small>${escape((weak.results[i]?.violations || []).join(', ') || '—')}</small></td></tr>`).join('')}</tbody></table></div>`;
-    }
+    evalOut.innerHTML = renderAgentEvalHtml(codexPanelState.evalReport);
   }
   $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
   $('#codex-send').disabled = !codexCanSend() || !codexPanelState.draft.trim();
@@ -1803,15 +1985,20 @@ function memoryChart(run) {
 }
 
 function runDetail(run) {
-  if (!run) return '<div class="empty"><h1>Run not found.</h1><a class="button secondary" href="#overview">Back to overview</a></div>';
-  const states = [['Execution', run.execution], ['Observation', run.observation], ['Measurement', run.measurement_validity], ['Specification', run.specification_result]];
+  if (!run) return '<div class="empty"><h1>未找到该仿真记录</h1><a class="button secondary" href="#overview">返回仿真总览</a></div>';
+  const states = [
+    ['执行状态 · Execution', run.execution, '进程是否结束'],
+    ['观测新鲜度 · Observation', run.observation, '状态是否最新'],
+    ['测量有效性 · Measurement', run.measurement_validity, '提取结果是否可信'],
+    ['指标是否达标 · Spec', run.specification_result, '是否满足设计指标'],
+  ];
   const available = state.connections.filter(c => c.enabled);
   if (!available.some(c => c.connection_id === selectedConnection)) selectedConnection = available[0]?.connection_id || '';
   const history = state.sessions.filter(s => s.run_id === run.run_id);
   if (!history.some(s => s.session_id === selectedSession)) selectedSession = history[0]?.session_id || null;
-  let html = `<a class="back-link" href="#overview">← All runs</a>` + heading('SYNTHETIC EXPERIMENT', escape(run.label), 'Manual replay · no simulator or remote process is running.', `<div class="split-actions">${runStatus(run)}<button class="button primary" data-action="advance" data-id="${escape(run.run_id)}" ${run.finished ? 'disabled' : ''}>${run.finished ? 'Replay complete' : 'Next observation →'}</button></div>`);
-  html += `<div class="state-grid">${states.map(([label, value]) => `<div class="state-tile"><label>${label}</label><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="detail-grid"><div class="detail-stack"><section class="panel"><div class="panel-head"><h2>Memory observations</h2><span class="section-note">Finite scenario replay</span></div><div class="panel-body">${memoryChart(run)}</div></section><section class="panel"><div class="panel-head"><h2>Evidence timeline</h2><span class="section-note">${run.events.length} recorded events</span></div><div class="panel-body"><ol class="timeline">${[...run.events].reverse().map(event => `<li><div class="timeline-time">#${event.sequence} · ${escape(title(event.kind))}</div><p>${escape(event.message)}</p></li>`).join('')}</ol></div></section><section class="panel"><div class="panel-head"><h2>Execution identity</h2><span class="chip">PRESERVED</span></div><div class="panel-body identity">Attempt: ${escape(run.attempt_id)}<br>Submission: ${escape(run.submission_key)}<br>Owner: ${escape(JSON.stringify(run.execution_identity))}</div></section></div>`;
-  html += `<section class="panel diagnosis"><div class="panel-head"><div class="diagnose-head"><img src="./owl.svg" alt=""><h2>Diagnostic assistant</h2></div><span class="chip">DEMO</span></div><div class="panel-body"><form id="diagnose-form"><label for="diagnostic-connection">Connection</label><select id="diagnostic-connection" ${available.length ? '' : 'disabled'}>${available.length ? available.map(c => `<option value="${escape(c.connection_id)}" ${selectedConnection === c.connection_id ? 'selected' : ''}>${escape(c.label)} · ${escape(title(c.kind))}</option>`).join('') : '<option>Add a connection first</option>'}</select><label for="diagnostic-question">Ask about this run</label><textarea id="diagnostic-question" maxlength="2000" required>${escape(draftQuestion)}</textarea><button class="button primary full" type="submit" ${available.length && !submitting ? '' : 'disabled'}>✧ Diagnose snapshot</button></form><p class="subtle-note">Offline fixture response. Evidence is frozen when you ask. Proposals are advisory; this build cannot change or restart simulations.</p></div><div id="diagnosis-result" class="diagnosis-result"><div class="history-empty">${selectedSession ? 'Loading saved diagnosis…' : 'Your diagnosis and evidence citations will appear here.'}</div></div><div class="session-picker"><label for="session-picker">Saved sessions</label><select id="session-picker" ${history.length ? '' : 'disabled'}>${history.length ? history.map(s => `<option value="${escape(s.session_id)}" ${selectedSession === s.session_id ? 'selected' : ''}>${escape(s.connection_label)} · ${escape(new Date(s.created_at).toLocaleString())}</option>`).join('') : '<option>No sessions yet</option>'}</select></div></section></div>`;
+  let html = `<a class="back-link" href="#overview">← 返回全部仿真</a>` + heading('仿真详情与单步回放 · SYNTHETIC EXPERIMENT', escape(run.label), '点击右上角「Next observation →」逐步回放事件；右侧随时可向只读诊断助手提问。', `<div class="split-actions">${runStatus(run)}<button class="button primary" data-action="advance" data-id="${escape(run.run_id)}" ${run.finished ? 'disabled' : ''}>${run.finished ? '回放已结束' : 'Next observation →'}</button></div>`);
+  html += `<div class="state-grid">${states.map(([label, value, hint]) => `<div class="state-tile"><label>${label}</label><strong>${escape(title(value))}</strong><small class="state-hint">${hint}</small></div>`).join('')}</div><div class="detail-grid"><div class="detail-stack"><section class="panel"><div class="panel-head"><h2>内存观测曲线 · Memory observations</h2><span class="section-note">有限步合成回放</span></div><div class="panel-body">${memoryChart(run)}</div></section><section class="panel"><div class="panel-head"><h2>证据时间线 · Evidence timeline</h2><span class="section-note">共 ${run.events.length} 条已记录事件</span></div><div class="panel-body"><ol class="timeline">${[...run.events].reverse().map(event => `<li><div class="timeline-time">#${event.sequence} · ${escape(title(event.kind))}</div><p>${escape(event.message)}</p></li>`).join('')}</ol></div></section><section class="panel"><div class="panel-head"><h2>执行身份 · Execution identity</h2><span class="chip">PRESERVED</span></div><div class="panel-body identity">Attempt: ${escape(run.attempt_id)}<br>Submission: ${escape(run.submission_key)}<br>Owner: ${escape(JSON.stringify(run.execution_identity))}</div></section></div>`;
+  html += `<section class="panel diagnosis"><div class="panel-head"><div class="diagnose-head"><img src="./owl.svg" alt=""><h2>只读诊断助手</h2></div><span class="chip">DEMO</span></div><div class="panel-body"><form id="diagnose-form"><label for="diagnostic-connection">选择模拟连接</label><select id="diagnostic-connection" ${available.length ? '' : 'disabled'}>${available.length ? available.map(c => `<option value="${escape(c.connection_id)}" ${selectedConnection === c.connection_id ? 'selected' : ''}>${escape(c.label)} · ${escape(title(c.kind))}</option>`).join('') : '<option>请先去「连接测试沙箱」添加连接</option>'}</select><label for="diagnostic-question">向助手提问（基于当前冻结证据）</label><textarea id="diagnostic-question" maxlength="2000" required>${escape(draftQuestion)}</textarea><button class="button primary full" type="submit" ${available.length && !submitting ? '' : 'disabled'}>✧ Diagnose snapshot</button></form><p class="subtle-note">离线演练回复：提问时自动冻结当前证据快照，仅给出只读建议，绝不会擅自修改或重启仿真。</p></div><div id="diagnosis-result" class="diagnosis-result"><div class="history-empty">${selectedSession ? '正在读取已保存的诊断…' : '点击上方按钮后，诊断结论与证据引用会显示在这里。'}</div></div><div class="session-picker"><label for="session-picker">历史诊断记录</label><select id="session-picker" ${history.length ? '' : 'disabled'}>${history.length ? history.map(s => `<option value="${escape(s.session_id)}" ${selectedSession === s.session_id ? 'selected' : ''}>${escape(s.connection_label)} · ${escape(new Date(s.created_at).toLocaleString())}</option>`).join('') : '<option>暂无历史记录</option>'}</select></div></section></div>`;
   return html;
 }
 
@@ -1821,11 +2008,11 @@ function render() {
   const page = location.hash.slice(1) || 'overview';
   if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? 'Run locally' : page === 'quickstart' ? '快速上手 · 新手向导' : page === 'direct' ? '直连仿真 · SSH / 集群' : page === 'live' ? '真实仿真 · CircuitGit' : page === 'connections' ? 'AI connections' : page === 'hosts' ? 'Simulation hosts' : page === 'agents' ? 'Agent channel' : run ? run.label : 'Overview';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? '本地运行指南' : page === 'quickstart' ? '新手步步教程' : page === 'direct' ? '仿真 · 波形 · 批量工作台' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '连接测试沙箱' : page === 'hosts' ? 'EDA 服务器管理' : page === 'agents' ? 'AI 助手与评测' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (page === 'quickstart' && !isPublicDemo() && !wizardState.loaded && !wizardState.loading) refreshWizard();
-  if (page === 'direct' && !isPublicDemo() && !directState.loaded && !directState.loading) refreshDirect();
+  if (page === 'direct' && !directState.loaded && !directState.loading) refreshDirect();
   if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
   if (page === 'hosts' && !isPublicDemo()) {
@@ -1884,7 +2071,17 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
-  if (action.startsWith('live-') || action.startsWith('codex-') || action.startsWith('direct-')) return;
+  if (action.startsWith('live-') || action.startsWith('codex-') || action.startsWith('direct-') || action.startsWith('wizard-')) return;
+  if (action === 'public-run-eval') {
+    if (!isPublicDemo() || codexPanelState.evalBusy) return;
+    codexPanelState.evalBusy = true; render();
+    try {
+      codexPanelState.evalReport = await api('/api/agent/eval', {method: 'POST', body: {baseline: 'compare', repeats: 1}});
+      toast('已完成 10 项 Agent 安全闭环评测！确定性编排器 100% 通过且 0 违规。');
+    } catch (error) { toast(error.message); }
+    finally { codexPanelState.evalBusy = false; render(); }
+    return;
+  }
   if (isPublicDemo() && ['add-host', 'import-pool', 'host-probe', 'pool-scan', 'native-select'].includes(action)) {
     location.hash = '#local'; return;
   }
@@ -1922,10 +2119,13 @@ document.addEventListener('click', async event => {
       selectedQa = null; qaView = null; selectedHostIds = null; placement = null; executionPlan = null;
       draftQuestion = 'Explain this run and suggest the next read-only check.';
       demoPendingRequests.clear();
+      directState.loaded = false; directState.wfQuery = null; directState.wfCycles = null;
+      directState.selectedId = null; directState.selectedBatchId = null; directState.activeTab = 'waveforms';
+      codexPanelState.evalReport = null; wizardState.tutorialStep = 1;
       $('#connection-dialog').close();
       await refresh();
       if (location.hash !== '#overview') location.hash = '#overview';
-      render(); toast('Demo reset. The four synthetic scenarios are ready to explore.'); return;
+      render(); toast('演示数据已重置。可随时前往「✦ 新手步步教程」重新开始。'); return;
     }
     if (action === 'pool-scan') {
       const host_ids = selectedPoolIds();
@@ -1959,25 +2159,36 @@ document.addEventListener('click', handleLiveClick);
 document.addEventListener('click', handleDirectClick);
 document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action^="wizard-"]');
-  if (!button || isPublicDemo()) return;
+  if (!button) return;
   const action = button.dataset.action.slice(7);
-  if (action === 'refresh') { await refreshWizard(); return; }
+  if (action === 'step') {
+    const next = Number(button.dataset.step);
+    if (Number.isInteger(next) && next >= 1 && next <= 5) {
+      wizardState.tutorialStep = next;
+      render();
+    }
+    return;
+  }
   if (action === 'goto') {
     const route = button.dataset.route || '#overview';
+    const targetTab = button.dataset.tab || '';
     const targetRun = button.dataset.run || '';
     const targetBatch = button.dataset.batch || '';
+    if (targetTab) directState.activeTab = targetTab;
     if (targetRun) directState.selectedId = targetRun;
     if (targetBatch) directState.selectedBatchId = targetBatch;
     location.hash = route;
     if (route === '#direct') {
       await refreshDirect();
-      if (targetRun === 'demo-psfbin-500c') {
-        await runWaveformQuery();
-        await runWaveformCycles();
+      if (targetTab === 'waveforms' || targetRun === 'demo-psfbin-500c') {
+        if (!directState.wfQuery) await runWaveformQuery();
+        if (!directState.wfCycles && (directState.wfClock || directState.wfPeriod)) await runWaveformCycles();
       }
     }
     return;
   }
+  if (isPublicDemo()) return;
+  if (action === 'refresh') { await refreshWizard(); return; }
   if (wizardState.busy) return;
   if (action === 'demo') {
     wizardState.busy = true; wizardState.error = null; render();

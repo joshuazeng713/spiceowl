@@ -17,7 +17,6 @@ import errno
 import os
 from pathlib import Path
 import queue
-import re
 import selectors
 import shutil
 import signal
@@ -37,10 +36,6 @@ if IS_WINDOWS:  # pragma: no cover - exercised via unit tests on Windows & mocks
 else:
     import fcntl
     msvcrt = None  # type: ignore[assignment]
-
-
-_SSH_VERSION_CACHE: dict[str, tuple[int, int] | None] = {}
-_SSH_VERSION_RE = re.compile(r"OpenSSH(?:_for_Windows)?[_-](\d+)\.(\d+)")
 
 
 def platform_name() -> str:
@@ -513,37 +508,17 @@ def resolve_ssh_executable(*, windows: bool | None = None) -> str:
     return "ssh.exe"
 
 
-def _openssh_version(executable: str) -> tuple[int, int] | None:
-    if executable in _SSH_VERSION_CACHE:
-        return _SSH_VERSION_CACHE[executable]
-    version: tuple[int, int] | None = None
-    try:
-        result = subprocess.run(
-            [executable, "-V"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=3, check=False, text=True, encoding="utf-8", errors="replace",
-        )
-        banner = (result.stderr or "") + "\n" + (result.stdout or "")
-        match = _SSH_VERSION_RE.search(banner)
-        if match:
-            version = (int(match.group(1)), int(match.group(2)))
-    except (OSError, subprocess.SubprocessError, ValueError):
-        version = None
-    _SSH_VERSION_CACHE[executable] = version
-    return version
-
-
 def ssh_client_options(base_options: tuple[str, ...], *, executable: str | None = None,
                        windows: bool | None = None) -> tuple[str, ...]:
-    """Filter OpenSSH client options for version compatibility on Windows."""
+    """Filter OpenSSH client options for compatibility on Windows without spawning processes.
+
+    ``_ssh_argv`` must remain a pure argument builder (no subprocess side effects).
+    Windows 10 ships OpenSSH_for_Windows_8.1 which predates ``SessionType=default``
+    (added in OpenSSH 8.7), so that option is omitted on Windows while keeping
+    all other security-hardening options intact.
+    """
+    del executable
     use_windows = IS_WINDOWS if windows is None else windows
     if not use_windows:
         return base_options
-    exe = executable or resolve_ssh_executable(windows=True)
-    version = _openssh_version(exe)
-    # Windows 10 ships OpenSSH_for_Windows_8.1 which predates SessionType (8.7)
-    # and does not implement Unix-domain ControlMaster multiplexing.
-    drop = {"ControlMaster=no", "ControlPath=none", "ControlPersist=no"}
-    if version is not None and version < (8, 7):
-        drop.add("SessionType=default")
-    return tuple(opt for opt in base_options if opt not in drop)
+    return tuple(opt for opt in base_options if opt != "SessionType=default")

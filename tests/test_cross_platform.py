@@ -66,14 +66,11 @@ class PlatformPrimitivesTests(unittest.TestCase):
         base = ("BatchMode=yes", "ControlMaster=no", "ControlPath=none", "ControlPersist=no", "SessionType=default")
         # POSIX preserves all options verbatim
         self.assertEqual(_platform.ssh_client_options(base, windows=False), base)
-        # Old Windows OpenSSH 8.1 drops SessionType=default and Control*
-        with patch.object(_platform, "_openssh_version", return_value=(8, 1)):
-            self.assertEqual(_platform.ssh_client_options(base, executable="ssh.exe", windows=True), ("BatchMode=yes",))
-        # Modern Windows OpenSSH 9.5 keeps SessionType=default, drops Control*
-        with patch.object(_platform, "_openssh_version", return_value=(9, 5)):
+        # Windows drops SessionType=default purely (without spawning subprocesses)
+        with patch("subprocess.run", side_effect=AssertionError("ssh_client_options must be pure")):
             self.assertEqual(
                 _platform.ssh_client_options(base, executable="ssh.exe", windows=True),
-                ("BatchMode=yes", "SessionType=default"),
+                ("BatchMode=yes", "ControlMaster=no", "ControlPath=none", "ControlPersist=no"),
             )
 
     def test_file_lock_contention_on_current_os(self):
@@ -138,7 +135,10 @@ class PlatformPrimitivesTests(unittest.TestCase):
                 _platform.chmod_private(target, 0o600)
 
     def test_communicate_bounded_both_selector_and_threaded_modes(self):
-        for use_threads in (False, True):
+        # Windows select()/selectors only accepts sockets, not pipes, so Windows
+        # tests the threaded path while POSIX tests both selector and threaded paths.
+        modes = (True,) if _platform.IS_WINDOWS else (False, True)
+        for use_threads in modes:
             with self.subTest(use_threads=use_threads):
                 # 1. Normal stdin -> stdout + stderr echo
                 script = (

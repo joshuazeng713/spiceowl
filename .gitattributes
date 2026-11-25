@@ -1,0 +1,12 @@
+# Enforce consistent LF line endings across macOS, Linux, and Windows so
+# content-addressed netlists, publication hashes, and fixtures match identically.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.sqlite3 binary

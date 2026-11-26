@@ -283,6 +283,26 @@ async function quickConnectSshAlias(aliasName, {silentOnFail = false} = {}) {
   }
 }
 
+async function disconnectSshAlias(aliasName) {
+  if (!aliasName || wizardState.busy) return null;
+  wizardState.busy = true;
+  render();
+  try {
+    const res = await api('/api/wizard/disconnect', {method: 'POST', body: {alias: aliasName}});
+    wizardState.lastDiag = null;
+    wizardState.lastProbe = null;
+    await Promise.all([refresh(), refreshWizard()]);
+    toast(`已断开 ${aliasName}（本机 SSH 配置已保留，再次点击可重新连接）。`);
+    return res;
+  } catch (error) {
+    toast(error.message);
+    return null;
+  } finally {
+    wizardState.busy = false;
+    render();
+  }
+}
+
 window.addEventListener('message', async event => {
   const msg = event.data;
   if (msg && msg.type === 'spiceowl.ssh.updated') {
@@ -291,13 +311,17 @@ window.addEventListener('message', async event => {
     if (!isPublicDemo()) {
       wizardState.loaded = false;
       await Promise.all([refresh(), refreshWizard()]);
-      if (msg.diagnosis_ok && msg.selected_alias) {
+      if (msg.diagnosis_ok && msg.selected_alias && !msg.auto_connected && !msg.live_sync) {
         await quickConnectSshAlias(msg.selected_alias, {silentOnFail: true});
       } else {
         render();
-        toast(msg.selected_alias
-          ? `🟢 已同步 SSH 配置（${msg.selected_alias}），点击即可连通测试！`
-          : '🟢 已同步本机最新 SSH 服务器配置！');
+        if (!msg.live_sync) {
+          toast(msg.auto_connected
+            ? '🟢 已自动连接新配置好的服务器！'
+            : msg.selected_alias
+            ? `🟢 已同步 SSH 配置（${msg.selected_alias}），点击即可连接。`
+            : '🟢 已同步本机最新 SSH 服务器配置！');
+        }
       }
     }
     return;
@@ -501,14 +525,28 @@ function quickstartPage() {
         </div>
       </div>`;
   } else {
-    const aliasChips = aliases.map(a => {
+    const jumpTargets = new Set(aliases.flatMap(a => String(a.proxy_jump || '').split(',').map(s => s.trim()).filter(Boolean)));
+    const orderedAliases = [
+      ...aliases.filter(a => !jumpTargets.has(a.alias) || isAliasVerified(a)),
+      ...aliases.filter(a => jumpTargets.has(a.alias) && !isAliasVerified(a)),
+    ];
+    const aliasChips = orderedAliases.map(a => {
       const isOk = isAliasVerified(a);
-      return `<button type="button" class="home-alias-btn ${isOk ? 'verified' : ''}" data-action="home-quick-ssh" data-alias="${escape(a.alias)}" ${wizardState.busy ? 'disabled' : ''}><span>${isOk ? '✓ ' : ''}${escape(a.alias)}</span>${a.hostname ? `<small>${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)}</small>` : ''}</button>`;
+      const isJumpOnly = !isOk && jumpTargets.has(a.alias);
+      const tip = isOk
+        ? '已连接 · 再次点击断开连接（保留本机 SSH 配置）'
+        : isJumpOnly
+        ? '跳板机节点（供目标机中转）· 如需直接连接也可点击'
+        : '未连接 · 点击立即验证并连接';
+      const subText = (isJumpOnly ? '跳板机 · ' : '') + (a.hostname ? `${a.user ? a.user + '@' : ''}${a.hostname}` : '');
+      return `<button type="button" class="home-alias-btn ${isOk ? 'verified' : (isJumpOnly ? 'is-jump' : '')}" data-action="home-quick-ssh" data-alias="${escape(a.alias)}" data-verified="${isOk ? '1' : '0'}" title="${escape(tip)}" ${wizardState.busy ? 'disabled' : ''}><span>${isOk ? '✓ ' : ''}${escape(a.alias)}</span>${subText ? `<small>${escape(subText)}</small>` : ''}</button>`;
     }).join('');
     const diagFailed = wizardState.lastDiag && !wizardState.lastDiag.ok;
     const failedStep = diagFailed ? (wizardState.lastDiag.steps || []).find(s => !s.ok) : null;
+    const probeHost = wizardState.lastProbe?.identity?.hostname || wizardState.lastProbe?.identity?.actual_host || wizardState.lastDiag?.remote?.hostname || '';
+    const probeUser = wizardState.lastProbe?.identity?.username || wizardState.lastProbe?.identity?.actual_user || wizardState.lastDiag?.remote?.username || '';
     const statusBanner = wizardState.lastProbe?.identity?.verified && !wizardState.lastProbe?.error
-      ? `<div class="wf-mode-banner exact">${chip('SSH 已连通 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code></span></div>`
+      ? `<div class="wf-mode-banner exact">${chip('SSH 已连通 ✓', 'green')}<span>${probeHost || probeUser ? `主机 <code>${escape(probeHost || '—')}</code> · 用户 <code>${escape(probeUser || '—')}</code>` : '已通过身份与连通性验证'}</span></div>`
       : diagFailed
       ? `<div class="wf-mode-banner preview">${chip('需要配置', 'amber')}<span>${escape(failedStep?.detail || '尚未连通，请在配置向导中完成指纹或免密设置。')}</span><button type="button" class="button primary small" data-action="open-ssh-setup-wizard" data-alias="${escape(wizardState.lastDiag.alias || '')}">在向导中一键修复 ↗</button></div>`
       : wizardState.lastProbe?.error
@@ -521,7 +559,7 @@ function quickstartPage() {
       <div class="home-server-row">
         <div class="home-server-copy">
           <h3>${verifiedAliasCount ? `已就绪 ${verifiedAliasCount} 台 EDA 服务器` : `已发现 ${aliases.length} 个 SSH 服务器，点一下直接连通`}</h3>
-          <p>${verifiedAliasCount ? '点击任意服务器可立即验证或切换；需要加新服务器或跳板机，点右侧配置向导。' : '点击下方任意服务器即可自动识别主机与仿真器并完成连通（无需填写复杂表单）。'}</p>
+          <p>${verifiedAliasCount ? '绿色为已连接，再点一下可断开连接（保留 SSH 配置）；未连接点一下即连，新增或编辑点右侧配置向导。' : '点击下方任意服务器即可自动识别主机与仿真器并完成连通（无需填写复杂表单）。'}</p>
         </div>
         <div class="direct-actions">
           <button type="button" class="button primary small" data-action="open-ssh-setup-wizard">+ 配置新服务器 ↗</button>
@@ -2742,7 +2780,11 @@ document.addEventListener('click', async event => {
   if (action === 'home-quick-ssh') {
     const aliasName = button.dataset.alias;
     if (!aliasName) return;
-    await quickConnectSshAlias(aliasName);
+    if (button.dataset.verified === '1') {
+      await disconnectSshAlias(aliasName);
+    } else {
+      await quickConnectSshAlias(aliasName);
+    }
     return;
   }
   if (action === 'connector-open' || action === 'connector-retry') {

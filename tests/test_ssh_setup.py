@@ -613,6 +613,52 @@ class TestSshSetupUiAndServerRoutes(unittest.TestCase):
                 self.assertEqual(wiz2["workspace"]["verified_host_count"], 1)
                 self.assertTrue(next(a for a in wiz2["ssh_aliases"] if a["alias"] == "eda-lab-1")["verified"])
 
+                # Clicking an already-connected host disconnects it cleanly while preserving SSH config
+                st_disc, _, disc_bytes = raw_req(
+                    "POST",
+                    "/api/wizard/disconnect",
+                    {"Origin": f"http://127.0.0.1:{port}", "X-SpiceOwl-Token": csrf_tok},
+                    {"alias": "eda-lab-1"},
+                )
+                self.assertEqual(st_disc, 200)
+                disc = json.loads(disc_bytes.decode("utf-8"))
+                self.assertTrue(disc["ok"])
+                self.assertTrue(disc["disconnected"])
+                st_wd, _, wizd_bytes = raw_req("GET", "/api/wizard/status")
+                self.assertEqual(st_wd, 200)
+                wizd = json.loads(wizd_bytes.decode("utf-8"))
+                self.assertEqual(wizd["workspace"]["verified_host_count"], 0)
+                self.assertIn("eda-lab-1", [a["alias"] for a in wizd["ssh_aliases"]])
+                self.assertFalse(next(a for a in wizd["ssh_aliases"] if a["alias"] == "eda-lab-1")["verified"])
+
+                # Passing diagnose inside SSH Setup Wizard automatically registers & connects the host
+                def fake_probe_verified(host_id):
+                    obs = {"transport": "reachable", "identity": {"verified": True, "hostname": "sim-node-08", "username": "edauser"}, "tools": []}
+                    ctrl.hosts.store.update("host", host_id, lambda cur: cur | {"last_probe": obs})
+                    return obs
+
+                with patch("spiceowl.onboarding.ssh_setup_ui.diagnose_connection", return_value=fake_diag), \
+                        patch.object(ctrl.hosts, "probe", side_effect=fake_probe_verified):
+                    st_auto, _, auto_bytes = raw_req(
+                        "POST",
+                        "/ssh/setup/action",
+                        {"Origin": f"http://127.0.0.1:{port}"},
+                        {
+                            "request_id": boot["requestId"],
+                            "csrf": boot["csrf"],
+                            "action": "diagnose",
+                            "payload": {"alias": "eda-lab-1"},
+                        },
+                    )
+                self.assertEqual(st_auto, 200)
+                auto_res = json.loads(auto_bytes.decode("utf-8"))
+                self.assertTrue(auto_res["ok"])
+                self.assertTrue(auto_res["auto_connected"])
+                st_wa, _, wiza_bytes = raw_req("GET", "/api/wizard/status")
+                wiza = json.loads(wiza_bytes.decode("utf-8"))
+                self.assertEqual(wiza["workspace"]["verified_host_count"], 1)
+                self.assertTrue(next(a for a in wiza["ssh_aliases"] if a["alias"] == "eda-lab-1")["verified"])
+
                 # Deleting the managed SSH host via wizard also removes its registered host so no phantom "1 台已验证" remains
                 st_del, _, del_bytes = raw_req(
                     "POST",

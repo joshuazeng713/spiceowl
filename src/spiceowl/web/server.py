@@ -161,6 +161,48 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
     direct_monitor = direct_supervisor.monitor
     direct_supervisor.resume()
 
+    def _register_and_probe_diagnosed_host(hosts, alias: str, diag: dict):
+        from spiceowl.onboarding_wizard import quick_register_eda_host
+        remote = diag.get("remote") or {}
+        r_host = remote.get("hostname")
+        r_user = remote.get("username")
+        if not r_host or not r_user:
+            return None, False, None
+        host_id = re.sub(r"[^A-Za-z0-9_-]", "-", alias).strip("-") or "eda-host"
+        if not host_id[0].isalnum():
+            host_id = "h-" + host_id
+        host_id = host_id[:96]
+        sim = "spectre" if remote.get("spectre") else ("ngspice" if remote.get("ngspice") else "spectre")
+        sim_exe = remote.get("spectre") or remote.get("ngspice") or None
+        try:
+            host, created = quick_register_eda_host(
+                hosts,
+                host_id=host_id,
+                label=f"EDA ({alias})",
+                ssh_target=alias,
+                expected_host=r_host,
+                expected_user=r_user,
+                simulator=sim,
+                simulator_executable=sim_exe,
+            )
+        except DomainError as exc:
+            if exc.code != "conflict":
+                raise
+            hosts.remove(host_id)
+            host, created = quick_register_eda_host(
+                hosts,
+                host_id=host_id,
+                label=f"EDA ({alias})",
+                ssh_target=alias,
+                expected_host=r_host,
+                expected_user=r_user,
+                simulator=sim,
+                simulator_executable=sim_exe,
+            )
+        probe_res = hosts.probe(host["host_id"])
+        host = hosts.inspect(host["host_id"])
+        return host, created, probe_res
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "SpiceOwl"
         sys_version = ""
@@ -419,6 +461,17 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         remaining = set((result.get("state") or {}).get("existing_aliases") or [])
                         if alias.strip() not in remaining:
                             result["removed_registered_hosts"] = controller.hosts.remove_by_ssh_target(alias.strip())
+                elif action == "diagnose" and isinstance(payload, dict) and result.get("ok"):
+                    alias = payload.get("alias")
+                    diag = result.get("diagnosis") or {}
+                    if isinstance(alias, str) and alias.strip():
+                        try:
+                            host, _, probe_res = _register_and_probe_diagnosed_host(controller.hosts, alias.strip(), diag)
+                            if host is not None:
+                                result["auto_connected"] = bool((probe_res or {}).get("identity", {}).get("verified"))
+                                result["host_id"] = host["host_id"]
+                        except Exception:
+                            result["auto_connected"] = False
                 return self.reply(result)
             static = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/owl.svg": ("owl.svg", "image/svg+xml")}
             static.update({'/workflow.html': ('workflow.html', 'text/html; charset=utf-8'),
@@ -560,40 +613,39 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             if path == "/api/wizard/quick-connect" and self.command == "POST":
                 from spiceowl.onboarding.ssh_discovery import validate_alias
                 from spiceowl.onboarding.ssh_setup import diagnose_connection
-                from spiceowl.onboarding_wizard import quick_register_eda_host
                 req = self.body()
                 if set(req) - {"alias"} or "alias" not in req:
                     raise DomainError("Quick connect requires only an SSH alias.")
                 alias = validate_alias(req["alias"])
                 diag = diagnose_connection(ssh_dir, alias)
-                remote = diag.get("remote") or {}
-                r_host = remote.get("hostname")
-                r_user = remote.get("username")
-                if not r_host or not r_user:
+                host, created, probe_res = _register_and_probe_diagnosed_host(controller.hosts, alias, diag)
+                if host is None:
                     return self.reply({"ok": False, "diagnosis": diag})
-                host_id = re.sub(r"[^A-Za-z0-9_-]", "-", alias).strip("-") or "eda-host"
-                if not host_id[0].isalnum():
-                    host_id = "h-" + host_id
-                sim = "spectre" if remote.get("spectre") else ("ngspice" if remote.get("ngspice") else "spectre")
-                sim_exe = remote.get("spectre") or remote.get("ngspice") or None
-                host, created = quick_register_eda_host(
-                    controller.hosts,
-                    host_id=host_id[:96],
-                    label=f"EDA ({alias})",
-                    ssh_target=alias,
-                    expected_host=r_host,
-                    expected_user=r_user,
-                    simulator=sim,
-                    simulator_executable=sim_exe,
-                )
-                probe_res = controller.hosts.probe(host["host_id"])
-                host = controller.hosts.inspect(host["host_id"])
                 return self.reply({
                     "ok": bool(diag.get("ok")),
                     "host": host,
                     "created": created,
                     "probe": probe_res,
                     "diagnosis": diag,
+                })
+            if path == "/api/wizard/disconnect" and self.command == "POST":
+                from spiceowl.onboarding.ssh_discovery import validate_alias
+                req = self.body()
+                if set(req) - {"alias"} or "alias" not in req:
+                    raise DomainError("Disconnect requires only an SSH alias.")
+                alias = validate_alias(req["alias"])
+                removed = controller.hosts.remove_by_ssh_target(alias)
+                if not removed:
+                    host_id = re.sub(r"[^A-Za-z0-9_-]", "-", alias).strip("-")
+                    if host_id and not host_id[0].isalnum():
+                        host_id = "h-" + host_id
+                    if host_id and controller.hosts.remove(host_id[:96]):
+                        removed = [host_id[:96]]
+                return self.reply({
+                    "ok": True,
+                    "alias": alias,
+                    "disconnected": bool(removed),
+                    "removed_hosts": removed,
                 })
             if path == "/api/wizard/register-host" and self.command == "POST":
                 from spiceowl.onboarding_wizard import quick_register_eda_host

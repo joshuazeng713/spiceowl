@@ -453,9 +453,29 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   let aliasTouched = false;
   // Ephemeral in-RAM password cache strictly for this popup session (never persisted to disk/storage; wiped on close)
   let sessionPassword = '';
+  let lastAutoConnected = false;
   const autoTriedSessionPw = new Set();
 
   const $ = (id) => document.getElementById(id);
+
+  function notifyOpener(opts) {{
+    if (!window.opener) return;
+    const o = opts || {{}};
+    try {{
+      window.opener.postMessage({{
+        type: BOOT.postMessageType,
+        request_id: BOOT.requestId,
+        ok: true,
+        live_sync: Boolean(o.liveSync),
+        aliases: appState.existing_aliases || [],
+        managed: appState.managed || [],
+        selected_alias: o.alias || '',
+        diagnosis_ok: Boolean(o.diagOk),
+        auto_connected: Boolean(o.autoConnected),
+        remote: o.remote || null,
+      }}, BOOT.origin);
+    }} catch {{}}
+  }}
 
   function updateSessionPwUi() {{
     const hasPw = Boolean(sessionPassword);
@@ -751,6 +771,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
           await callAction('delete_host', {{alias: h.alias}});
           if (selectedAlias === h.alias) resetNewForm();
           else renderAll();
+          notifyOpener({{liveSync: true, alias: ''}});
           setMsg($('global-msg'), '已移除 ' + h.alias + '。', 'ok');
         }} catch (e) {{ setMsg($('global-msg'), e.message, 'err'); }}
       }});
@@ -1014,6 +1035,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     const depth = autoHealDepth || 0;
     const target = (alias || selectedAlias || $('f-alias').value || '').trim();
     if (!target) return;
+    lastAutoConnected = false;
     $('busy-text').textContent = '正在测试连接 ' + target + '…';
     $('btn-save-test').disabled = true;
     hideAssists();
@@ -1059,8 +1081,18 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
 
       if (d.ok) {{
         selectedAlias = target;
+        lastAutoConnected = Boolean(res.auto_connected);
         $('btn-add-another').classList.remove('hidden');
-        setMsg($('global-msg'), '✅ 连接成功！' + target + ' 已全部就绪；可以点「+ 继续添加下一台」或「完成并返回网页工作台」。', 'ok');
+        setMsg($('global-msg'), lastAutoConnected
+          ? ('✅ ' + target + ' 已自动连接并加入工作台！可点「+ 继续添加下一台」或「完成并返回网页工作台」。')
+          : ('✅ 连接成功！' + target + ' 已全部就绪；可点「+ 继续添加下一台」或「完成并返回网页工作台」。'), 'ok');
+        notifyOpener({{
+          liveSync: true,
+          alias: target,
+          diagOk: true,
+          autoConnected: lastAutoConnected,
+          remote: d.remote || null,
+        }});
       }} else if (d.code === 'need_host_key' && hop) {{
         setMsg($('global-msg'), '首次连接 ' + hopLabel + '，请核对下方指纹后点信任即可继续。', 'warn');
         $('hk-title').textContent = '🔑 首次连接' + hopLabel + '：确认指纹';
@@ -1260,20 +1292,13 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   $('btn-close-only').addEventListener('click', () => {{ sessionPassword = ''; window.close(); }});
   $('btn-done-return').addEventListener('click', () => {{
     sessionPassword = '';
-    if (window.opener) {{
-      try {{
-        window.opener.postMessage({{
-          type: BOOT.postMessageType,
-          request_id: BOOT.requestId,
-          ok: true,
-          aliases: appState.existing_aliases || [],
-          managed: appState.managed || [],
-          selected_alias: selectedAlias || $('f-alias').value.trim() || '',
-          diagnosis_ok: Boolean(lastDiagnosis && lastDiagnosis.ok),
-          remote: (lastDiagnosis && lastDiagnosis.remote) || null,
-        }}, BOOT.origin);
-      }} catch {{}}
-    }}
+    notifyOpener({{
+      liveSync: false,
+      alias: selectedAlias || $('f-alias').value.trim() || '',
+      diagOk: Boolean(lastDiagnosis && lastDiagnosis.ok),
+      autoConnected: lastAutoConnected,
+      remote: (lastDiagnosis && lastDiagnosis.remote) || null,
+    }});
     window.close();
   }});
 

@@ -1378,6 +1378,8 @@ dialog .muted {
 .home-alias-btn:hover { border-color:#1f6f54; background:#edf6f1; }
 .home-alias-btn small { color:var(--muted); font-size:11px; }
 .home-alias-btn.verified { border-color:#2c8a62; background:#eaf6ef; color:#16543d; }
+.home-alias-btn.verified:hover { border-color:#c26a5a; background:#fdf3f1; color:#8b2e22; }
+.home-alias-btn.is-jump { border-style:dashed; color:var(--muted); background:#fafbfa; }
 
 .home-flow-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }
 .home-flow-tile { text-align:left; background:#fcfcfa; border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:4px; cursor:pointer; transition:border-color .15s, background .15s; min-width:0; font:inherit; color:inherit; }

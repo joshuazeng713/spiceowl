@@ -345,7 +345,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
 
         def codex_control(self, action, body):
             fields = {'connect': ({'model', 'profile'}, set()), 'thread': (set(), set()),
-                'message': ({'thread_id', 'text', 'request_key'}, {'thread_id', 'text', 'request_key'}),
+                'message': ({'thread_id', 'text', 'request_key', 'model', 'reasoning_effort'}, {'thread_id', 'text', 'request_key'}),
                 'approval': ({'approval_id', 'decision'}, {'approval_id', 'decision'}),
                 'recover': ({'resolution', 'note', 'confirmed_side_effects_checked'}, set()),
                 'disconnect': (set(), set())}
@@ -501,6 +501,10 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 if url.query: raise DomainError('Codex client operations do not accept extra query arguments.')
                 if self.command == 'GET' and action == 'status':
                     return self.reply(controller.codex.status())
+                if self.command == 'GET' and action == 'models':
+                    return self.reply(controller.codex.list_models())
+                if self.command == 'GET' and action == 'auth':
+                    return self.reply(controller.codex.auth_status())
                 if self.command == 'GET' and action == 'recovery':
                     return self.reply(controller.codex.recovery_report())
                 if self.command == 'POST':

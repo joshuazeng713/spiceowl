@@ -45,10 +45,16 @@ vm.runInContext(`(async () => {\n${body}\nglobalThis.__exports = {
   setSimSource: fn => fn(simSourceState),
   setLibMgr: fn => fn(libMgrState),
   setDirectDraft: fn => fn(directDraft),
+  setCodex: fn => fn(codexPanelState),
   renderMySimulationsStrip,
   renderHostLiveCard,
   hosts,
   directAgentSetupPanel,
+  renderCleanDirectTimeline,
+  renderMarkdownHtml,
+  stripSimAgentContextEnvelope,
+  stripRnlCommentsForAgent,
+  buildSimAgentWorkspaceContext,
   renderLibraryManagerDialog,
   buildDirectPreparePayload,
   applyCircuitGitEntry,
@@ -100,12 +106,45 @@ const chosen = ex.selectImportEntry({filesByPath: bundle.filesByPath, entryPath:
 assert.equal(chosen.fileName, 'tb_adc.scs');
 assert.deepEqual(Object.keys(chosen.supportFiles), ['models/corner.scs']);
 
-// 4. Page 3 shows standalone Library Manager in standalone mode
+// 4. Page 3 shows standalone Library Manager, omits useless zero-PDK templates, and auto-collapses Agent guide after first message
 const standaloneHtml = ex.directAgentSetupPanel([{host_id: 'sim-node-a', label: 'Sim Node A'}]);
 assert(standaloneHtml.includes('data-standalone-library-entry="true"'), 'Standalone mode shows Library Manager entry');
 assert(!standaloneHtml.includes('data-circuitgit-entry="active"'), 'Standalone mode does not show CircuitGit banner');
+assert(!standaloneHtml.includes('sim-tpl-strip') && !standaloneHtml.includes('快速零 PDK 模板'), 'Useless zero-PDK template strip must be removed');
+assert(standaloneHtml.includes('id="sim-agent-guide"'), 'Agent guide renders before first message');
+assert(!standaloneHtml.includes('id="sim-agent-guide" class="sim-agent-guide" hidden'), 'Agent guide is visible before first message');
 
-// 5. When invoked by CircuitGit, Page 3 directly reuses CircuitGit entry and hides extra project picker
+// Once the user sends their first message, Agent guide collapses and tool calls stay collapsed in CircuitGit clean style
+ex.setCodex(c => {
+  c.status = {connected: true, state: 'complete', thread_id: 'th-1'};
+  c.selectedThread = 'th-1';
+  c.threads = [{
+    id: 'th-1',
+    items: [
+      {id: 'u1', type: 'user', text: '[SPICEOWL_CTX]\nctx\n[/SPICEOWL_CTX]\n\n帮我看看当前网表', status: 'accepted'},
+      {id: 't1', type: 'tool', name: 'spiceowl_direct_read', text: '{}', status: 'completed'},
+      {id: 'a1', type: 'assistant', text: '结论：**配置正常**\n- 建议开启 `save allpub`', status: 'completed'},
+    ],
+  }];
+});
+const afterMsgHtml = ex.directAgentSetupPanel([{host_id: 'sim-node-a', label: 'Sim Node A'}]);
+assert(afterMsgHtml.includes('id="sim-agent-guide" class="sim-agent-guide" hidden'), 'Agent guide must collapse after first message');
+const cleanTimeline = ex.renderCleanDirectTimeline([{
+  id: 'u1', type: 'user', text: '[SPICEOWL_CTX]\nhidden\n[/SPICEOWL_CTX]\n\n检查网表', status: 'accepted',
+}, {
+  id: 't1', type: 'tool', name: 'spiceowl_list_ic_gateways', text: '{}', status: 'completed',
+}, {
+  id: 'a1', type: 'assistant', text: '结论：**正常**\n<script>alert(1)</script>', status: 'completed',
+}]);
+assert(!cleanTimeline.includes('[SPICEOWL_CTX]'), 'Context envelope must be stripped from user chat bubble');
+assert(cleanTimeline.includes('<details class="sim-ai-progress">'), 'Tool calls collapse into single clean progress summary');
+assert(!cleanTimeline.includes('<details class="sim-ai-progress" open>'), 'Tool progress must be collapsed by default');
+assert(cleanTimeline.includes('<strong>正常</strong>'), 'Assistant Markdown must render cleanly');
+assert(!cleanTimeline.includes('<script>'), 'Markdown renderer must escape raw HTML');
+const strippedNet = ex.stripRnlCommentsForAgent('// title\n// @RNL {\n//   #R0 @PLACE(0,0)\n// }\nR0 (a 0) resistor r=1k');
+assert(!strippedNet.includes('@RNL') && strippedNet.includes('R0 (a 0) resistor r=1k'), 'RNL comments stripped from agent context');
+
+// 5. When invoked by CircuitGit, Page 3 directly reuses CircuitGit entry AND CircuitGit Agent channel
 const applied = ex.applyCircuitGitEntry({
   schema: 'spiceowl.circuitgit-entry.v1',
   source: 'circuitgit',
@@ -122,6 +161,7 @@ assert.equal(applied, true);
 assert.equal(ex.isCircuitGitManagedEntry(), true);
 const cgHtml = ex.directAgentSetupPanel([{host_id: 'sim-node-a', label: 'Sim Node A'}]);
 assert(cgHtml.includes('data-circuitgit-entry="active"'), 'CircuitGit mode displays reused CircuitGit entry banner');
+assert(cgHtml.includes('data-sim-agent-mode="circuitgit"'), 'CircuitGit mode directly reuses CircuitGit Agent channel');
 assert(!cgHtml.includes('data-standalone-library-entry="true"'), 'CircuitGit mode hides redundant standalone Library Manager picker');
 
 ex.setDirectDraft(d => { d.host_id = 'sim-node-a'; });

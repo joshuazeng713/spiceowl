@@ -17,7 +17,8 @@ let plannedKind = 'standalone', plannedReference = '', plannedHost = '';
 let selectedQa = null, qaView = null;
 const codexPanelState = {loaded: false, loading: false, busy: false, status: null, error: null,
   stream: null, streamState: 'idle', cursor: 0, statusCursor: 0, threads: [], selectedThread: null,
-  approvals: new Map(), profile: '', model: '', draft: '', pending: null, pendingLoaded: false,
+  approvals: new Map(), profile: '', model: '', reasoningEffort: '', draft: '', pending: null, pendingLoaded: false,
+  models: [], defaultModel: '', modelsLoaded: false, authAccount: null, settingsOpen: false,
   historyTruncated: false, recoverySnapshot: null, recoveryConfirmed: false, evalReport: null, evalBusy: false};
 const CODEX_PENDING_KEY = 'spiceowl.codex-pending';
 const isStandaloneAgent = () => !isPublicDemo() && state.agent_channel?.mode === 'standalone';
@@ -1117,85 +1118,206 @@ function directReportSection(report) {
   return `<div class="direct-report"><h3>收集报告（${escape(report.simulator || 'direct')}）</h3><pre class="plan-json">${escape(JSON.stringify(report, null, 2))}</pre></div>`;
 }
 
-const SIM_STARTER_TEMPLATES = {
-  spectre_rc_smoke: {
-    label: 'RC 瞬态烟雾 (100ns)',
-    simulator: 'spectre',
-    output_format: 'psfbin',
-    run_prefix: 'sim-rc-smoke',
-    netlist: [
-      '// SpiceOwl Zero-PDK Spectre RC Step Smoke Testbench',
-      'simulator lang=spectre',
-      'global 0',
-      'parameters vdd=1.2 r_val=1k c_val=10p',
-      'V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=5n rise=1n fall=1n width=40n period=100n',
-      'R1 (in out) resistor r=r_val',
-      'C1 (out 0) capacitor c=c_val',
-      'save in out',
-      'tran tran stop=100n errpreset=moderate',
-    ].join('\n'),
-  },
-  spectre_mos1_inverter: {
-    label: 'CMOS 反相器瞬态',
-    simulator: 'spectre',
-    output_format: 'psfbin',
-    run_prefix: 'sim-cmos-inv',
-    netlist: [
-      '// SpiceOwl Zero-PDK Level-1 CMOS Inverter Transient',
-      'simulator lang=spectre',
-      'global 0',
-      'parameters vdd=1.2 cload=20f',
-      'model nch mos1 type=n vto=0.35 kp=180u',
-      'model pch mos1 type=p vto=-0.35 kp=90u',
-      'V_dd (vdd_n 0) vsource dc=vdd',
-      'V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=2n rise=0.2n fall=0.2n width=8n period=20n',
-      'MN (out in 0 0) nch w=1u l=0.18u',
-      'MP (out in vdd_n vdd_n) pch w=2u l=0.18u',
-      'CL (out 0) capacitor c=cload',
-      'save in out',
-      'tran tran stop=40n errpreset=moderate',
-    ].join('\n'),
-  },
-  spectre_opamp_ac: {
-    label: '两极点运放 AC 频响',
-    simulator: 'spectre',
-    output_format: 'psfascii',
-    run_prefix: 'sim-opamp-ac',
-    netlist: [
-      '// SpiceOwl Zero-PDK Two-Pole Macro Op-Amp AC Loop',
-      'simulator lang=spectre',
-      'global 0',
-      'parameters gm1=1m ro1=100k c1=10p gm2=1m ro2=10k c2=0.5p',
-      'V_ac (in 0) vsource type=dc dc=0 mag=1 phase=0',
-      'G1 (n1 0 in 0) vccs gm=gm1',
-      'R1 (n1 0) resistor r=ro1',
-      'C1 (n1 0) capacitor c=c1',
-      'G2 (out 0 n1 0) vccs gm=gm2',
-      'R2 (out 0) resistor r=ro2',
-      'C2 (out 0) capacitor c=c2',
-      'save out',
-      'ac ac start=10 stop=1G dec=20',
-    ].join('\n'),
-  },
-  spectre_rlc_ringing: {
-    label: '二阶 RLC 振铃',
-    simulator: 'spectre',
-    output_format: 'psfbin',
-    run_prefix: 'sim-rlc-step',
-    netlist: [
-      '// SpiceOwl Zero-PDK 2nd-Order RLC Underdamped Step',
-      'simulator lang=spectre',
-      'global 0',
-      'parameters vdd=1.2 r_val=120 l_val=200n c_val=5p',
-      'V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=2n rise=0.2n fall=0.2n width=80n period=120n',
-      'R1 (in n1) resistor r=r_val',
-      'L1 (n1 out) inductor l=l_val',
-      'C1 (out 0) capacitor c=c_val',
-      'save in out',
-      'tran tran stop=60n maxstep=50p errpreset=conservative',
-    ].join('\n'),
-  },
-};
+// Safe Markdown subset ported from CircuitGit's ai-panel.js (no raw HTML injection).
+function renderMarkdownInline(text) {
+  const raw = String(text ?? '');
+  const tokens = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\([^\s)]+\))/g;
+  let out = '';
+  let offset = 0;
+  for (const match of raw.matchAll(tokens)) {
+    out += escape(raw.slice(offset, match.index));
+    const tok = match[0];
+    if (tok.startsWith('`')) {
+      out += `<code>${escape(tok.slice(1, -1))}</code>`;
+    } else if (tok.startsWith('**')) {
+      out += `<strong>${escape(tok.slice(2, -2))}</strong>`;
+    } else if (tok.startsWith('*')) {
+      out += `<em>${escape(tok.slice(1, -1))}</em>`;
+    } else {
+      const link = /^\[([^\]]+)\]\((.+)\)$/.exec(tok);
+      let safeHref = '';
+      if (link) {
+        try {
+          const u = new URL(link[2]);
+          if (u.protocol === 'https:' || u.protocol === 'http:') safeHref = u.href;
+        } catch { /* ignore */ }
+      }
+      out += safeHref
+        ? `<a href="${escape(safeHref)}" target="_blank" rel="noopener noreferrer">${escape(link[1])}</a>`
+        : escape(tok);
+    }
+    offset = match.index + tok.length;
+  }
+  out += escape(raw.slice(offset));
+  return out;
+}
+
+function renderMarkdownHtml(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const parts = [];
+  let para = [];
+  let listTag = '';
+  let listItems = [];
+  let inCode = false;
+  let codeLines = [];
+
+  const flushPara = () => {
+    if (para.length) {
+      parts.push(`<p>${para.map(renderMarkdownInline).join('<br>')}</p>`);
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (listTag && listItems.length) {
+      parts.push(`<${listTag}>${listItems.map(li => `<li>${renderMarkdownInline(li)}</li>`).join('')}</${listTag}>`);
+    }
+    listTag = '';
+    listItems = [];
+  };
+
+  for (const line of lines) {
+    if (/^\s*```/.test(line)) {
+      flushPara();
+      flushList();
+      if (inCode) {
+        parts.push(`<pre><code>${escape(codeLines.join('\n'))}</code></pre>`);
+        codeLines = [];
+        inCode = false;
+      } else {
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const listM = /^\s*(?:([-*])|\d+\.)\s+(.+)$/.exec(line);
+    const headM = /^#{1,4}\s+(.+)$/.exec(line);
+    if (listM) {
+      flushPara();
+      const tag = listM[1] ? 'ul' : 'ol';
+      if (listTag && listTag !== tag) flushList();
+      listTag = tag;
+      listItems.push(listM[2]);
+    } else if (headM) {
+      flushPara();
+      flushList();
+      parts.push(`<p class="sim-ai-heading"><strong>${renderMarkdownInline(headM[1])}</strong></p>`);
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  if (inCode && codeLines.length) parts.push(`<pre><code>${escape(codeLines.join('\n'))}</code></pre>`);
+  flushPara();
+  flushList();
+  return parts.join('') || `<p>${escape(text || '')}</p>`;
+}
+
+const SIM_CTX_OPEN = '[SPICEOWL_CTX]';
+const SIM_CTX_CLOSE = '[/SPICEOWL_CTX]';
+
+function stripSimAgentContextEnvelope(text) {
+  const s = String(text ?? '');
+  const start = s.indexOf(SIM_CTX_OPEN);
+  const end = s.indexOf(SIM_CTX_CLOSE);
+  if (start !== -1 && end !== -1 && end > start) {
+    return (s.slice(0, start) + s.slice(end + SIM_CTX_CLOSE.length)).trim();
+  }
+  return s;
+}
+
+function stripRnlCommentsForAgent(netlistText) {
+  const lines = String(netlistText || '').split(/\r?\n/);
+  const kept = [];
+  let inRnl = false;
+  let rnlDepth = 0;
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (!inRnl && t.startsWith('//') && t.includes('@RNL')) {
+      const opens = (t.match(/\{/g) || []).length;
+      const closes = (t.match(/\}/g) || []).length;
+      if (opens > closes) { inRnl = true; rnlDepth = opens - closes; }
+      continue;
+    }
+    if (inRnl) {
+      const opens = (t.match(/\{/g) || []).length;
+      const closes = (t.match(/\}/g) || []).length;
+      rnlDepth += opens - closes;
+      if (rnlDepth <= 0) inRnl = false;
+      continue;
+    }
+    kept.push(ln);
+  }
+  return kept.join('\n').trim();
+}
+
+function buildSimAgentWorkspaceContext() {
+  const lines = [buildSimAgentContextSummary()];
+  lines.push(`当前选中主机：${directDraft.host_id || '未选择'}；仿真器：${directDraft.simulator || 'spectre'}；执行后端：${directDraft.backend || 'ssh_direct'}；资源预算：${directDraft.cpus} 核 / ${directDraft.memory_gib} GiB / ${directDraft.wall_seconds}s。`);
+  if (simSourceState.origin !== 'none') {
+    const label = simSourceState.fromSchematic && simSourceState.cellName
+      ? `${simSourceState.libraryName ? simSourceState.libraryName + '/' : ''}${simSourceState.cellName} (${simSourceState.viewId || 'schematic'})`
+      : (simSourceState.fileName || simSourceState.projectName || '当前网表');
+    lines.push(`当前电路来源：${label}（${simSourceState.origin}${simSourceState.sshTarget ? ' · ' + simSourceState.sshTarget : ''}）。`);
+  }
+  const cleanNet = stripRnlCommentsForAgent(directDraft.netlist_text || '');
+  if (cleanNet) {
+    const maxChars = 9000;
+    const excerpt = cleanNet.length > maxChars ? cleanNet.slice(0, maxChars) + '\n... (网表已截断，保留前 9000 字符)' : cleanNet;
+    lines.push(`当前编辑网表（${simSourceState.fileName || 'input.scs'}，已省略 RNL 图形注释）：\n\`\`\`spectre\n${excerpt}\n\`\`\``);
+  } else {
+    lines.push('当前网表内容为空（用户尚未在右侧 Library Manager 选入网表）。');
+  }
+  return `${SIM_CTX_OPEN}\n${lines.join('\n')}\n${SIM_CTX_CLOSE}`;
+}
+
+async function loadCodexCatalogAndAuth({force = false} = {}) {
+  if (!isStandaloneAgent() || !codexPanelState.status?.connected) return;
+  if (codexPanelState.modelsLoaded && !force) return;
+  codexPanelState.modelsLoaded = true;
+  try {
+    const [mRes, aRes] = await Promise.all([
+      api('/api/codex/models').catch(() => null),
+      api('/api/codex/auth').catch(() => null),
+    ]);
+    if (mRes && Array.isArray(mRes.models)) {
+      codexPanelState.models = mRes.models;
+      codexPanelState.defaultModel = mRes.default_model || '';
+    }
+    if (aRes && aRes.account) {
+      codexPanelState.authAccount = aRes.account;
+    }
+    if (location.hash === '#direct') render();
+  } catch { /* older connector versions may not expose /models or /auth */ }
+}
+
+function formatCodexAccountLabel(account) {
+  if (!account) return '使用本机 Codex 登录与配置';
+  if (account.account_type === 'chatgpt' || account.account_type === 'chatgptAuthTokens') {
+    return `Codex 已登录 · ${account.plan_type && account.plan_type !== 'unknown' ? account.plan_type : '订阅已就绪'}`;
+  }
+  if (account.login_status === 'signed_out') return 'Codex 尚未登录（请先在本机完成 Codex 登录）';
+  if (account.requires_openai_auth === false) return '使用本机已配置的模型服务';
+  if (account.login_status === 'signed_in') return '使用本机已有登录';
+  return '使用本机 Codex 配置';
+}
+
+function simAgentStatusChip(status) {
+  if (!status?.connected) return chip('未连接', '');
+  const s = status.state;
+  if (s === 'starting' || s === 'running') return chip('思考中…', 'blue');
+  if (s === 'awaiting_approval') return chip('待审批', 'amber');
+  if (status.recovery_required || s === 'unknown') return chip('待核对', 'amber');
+  if (s === 'failed') return chip('异常', 'red');
+  return chip('已就绪', 'green');
+}
 
 function pickMostIdleHostId() {
   const list = state.hosts || [];
@@ -1275,7 +1397,7 @@ function buildDirectPreparePayload() {
 async function quickLaunchDirectSimulation() {
   if (isPublicDemo() || directState.busy) return;
   if (!directDraft.netlist_text.trim()) {
-    toast('请先点选上方一个零 PDK 模板、导入本地网表，或让左侧 Agent 帮你生成网表。');
+    toast('请先通过「打开 Library Manager」从远端电路库 / Virtuoso schematic 或本地导入网表，或直接粘贴网表。');
     return;
   }
   if (!state.hosts.length) {
@@ -1315,16 +1437,20 @@ async function quickLaunchDirectSimulation() {
 }
 
 async function sendPromptToSimAgent(promptText) {
-  if (!isStandaloneAgent() || codexPanelState.busy) return;
-  const text = String(promptText || '').trim();
-  if (!text) return;
+  if (!isStandaloneAgent() || isCircuitGitManagedEntry() || codexPanelState.busy) return;
+  const userText = String(promptText || '').trim();
+  if (!userText) return;
   codexPanelState.busy = true;
   codexPanelState.error = null;
   renderCodexActivity();
   try {
     if (!codexPanelState.status?.connected) {
-      await api('/api/codex/connect', {method: 'POST', body: {}});
+      await api('/api/codex/connect', {method: 'POST', body: {
+        ...(codexPanelState.model.trim() ? {model: codexPanelState.model.trim()} : {}),
+        ...(codexPanelState.profile.trim() ? {profile: codexPanelState.profile.trim()} : {}),
+      }});
       await refreshCodexStatus();
+      void loadCodexCatalogAndAuth({force: true});
     }
     if (!codexPanelState.status?.thread_id) {
       const th = await api('/api/codex/thread', {method: 'POST'});
@@ -1332,15 +1458,22 @@ async function sendPromptToSimAgent(promptText) {
       await refreshCodexStatus();
     }
     openCodexEvents();
+    const fullText = `${buildSimAgentWorkspaceContext()}\n\n${userText}`;
     const request = {
       thread_id: codexPanelState.status.thread_id,
-      text,
+      text: fullText.slice(0, 23800),
       request_key: `codex-${crypto.randomUUID()}`,
+      ...(codexPanelState.model.trim() ? {model: codexPanelState.model.trim()} : {}),
+      ...(codexPanelState.reasoningEffort ? {reasoning_effort: codexPanelState.reasoningEffort} : {}),
     };
-    sessionStorage.setItem(CODEX_PENDING_KEY, JSON.stringify(request));
-    codexPanelState.pending = request;
+    sessionStorage.setItem(CODEX_PENDING_KEY, JSON.stringify({
+      thread_id: request.thread_id,
+      request_key: request.request_key,
+      text: userText.slice(0, 3900),
+    }));
+    codexPanelState.pending = {thread_id: request.thread_id, request_key: request.request_key, text: userText};
     codexItem(codexThread(request.thread_id), 'request:' + request.request_key, 'user', {
-      text: request.text,
+      text: userText,
       status: 'unconfirmed',
       requestKey: request.request_key,
     });
@@ -1405,39 +1538,69 @@ function directAgentSetupPanel(hostsList) {
 
   const recBox = `<details class="host-form-details" ${directDraft.rec_enabled ? 'open' : ''}><summary>夜间有界自动恢复（OOM 扩内存 / License 退避重试）</summary><div class="direct-check-row"><label><input id="direct-rec-enabled" type="checkbox" ${directDraft.rec_enabled ? 'checked' : ''}> 启用有界自动恢复</label></div><div class="direct-grid"><label>最大恢复次数 (0–5)<input id="direct-rec-attempts" type="number" min="0" max="5" value="${escape(directDraft.rec_max_attempts)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>内存上限 (GiB)<input id="direct-rec-maxmem" type="number" min="1" max="16384" value="${escape(directDraft.rec_max_memory_gib)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>许可证退避 (秒)<input id="direct-rec-backoff" type="number" min="0" max="3600" value="${escape(directDraft.rec_license_backoff)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>时间预算 (分钟)<input id="direct-rec-elapsed" type="number" min="1" max="10080" value="${escape(directDraft.rec_max_elapsed_min)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label></div><div class="direct-check-row"><label><input id="direct-rec-lic" type="checkbox" ${directDraft.rec_retry_license ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> License 退避重试</label><label><input id="direct-rec-oom" type="checkbox" ${directDraft.rec_retry_oom ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> OOM 自动内存翻倍</label><label><input id="direct-rec-relocate" type="checkbox" ${directDraft.rec_allow_relocate ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 允许迁移空闲主机</label></div></details>`;
 
-  const agentCard = isStandaloneAgent() ? `
-    <section class="sim-agent-card">
+  const circuitGitManaged = isCircuitGitManagedEntry();
+  const activeThread = codexPanelState.threads.find(item => item.id === codexPanelState.selectedThread);
+  const hasChatMessages = Boolean((activeThread?.items || []).length || codexPanelState.pending);
+  const effLabels = [['', '沿用会话'], ['low', '低'], ['medium', '中'], ['high', '高'], ['xhigh', '很高']];
+  const modelOptions = [
+    `<option value="" ${!codexPanelState.model ? 'selected' : ''}>跟随默认${codexPanelState.defaultModel ? ' · ' + escape(codexPanelState.defaultModel) : ''}</option>`,
+    ...(codexPanelState.models || []).map(m => `<option value="${escape(m.id)}" ${codexPanelState.model === m.id ? 'selected' : ''}>${escape(m.displayName || m.id)}</option>`),
+  ].join('');
+
+  const agentCard = (isStandaloneAgent() && !circuitGitManaged) ? `
+    <section class="sim-agent-card" data-sim-agent-mode="standalone">
       <div class="sim-card-head">
-        <h2>✧ Agent 仿真配置助手 <span id="codex-runtime-state">${chip(agentReady ? 'Codex 已连接' : (status?.state || '待连接'), agentReady ? 'green' : '')}</span></h2>
+        <h2>✧ Agent 仿真配置助手 <span id="codex-runtime-state">${simAgentStatusChip(status)}</span></h2>
         <div class="direct-actions">
           ${agentReady
-            ? `<button type="button" class="button secondary small" data-action="codex-thread">新对话</button>`
-            : `<button type="button" class="button primary small" data-action="sim-agent-connect" ${codexPanelState.busy ? 'disabled' : ''}>${codexPanelState.busy ? '正在连接…' : '一键连接 Codex'}</button>`}
+            ? `<button type="button" class="button secondary small sim-ai-gear" data-action="sim-agent-settings" aria-label="AI 设置与连接" aria-expanded="${codexPanelState.settingsOpen ? 'true' : 'false'}" title="模型、思考强度与本机 Codex 连接">⚙</button><button type="button" class="button secondary small" data-action="codex-thread">新对话</button>`
+            : `<button type="button" class="button primary small" data-action="sim-agent-connect" ${codexPanelState.busy ? 'disabled' : ''}>${codexPanelState.busy ? '连接中…' : '连接本机 Codex'}</button>`}
         </div>
       </div>
-      <p class="subtle-note">直接用自然语言描述你想跑的仿真，或点下方快捷指令让 Agent 结合实时服务器余量与 SPICE License 帮你选机、写网表、查配置；生成的网表可一键填入右侧。</p>
-      <div class="sim-prompt-chips">
-        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="pick_host" ${codexPanelState.busy ? 'disabled' : ''}>🎯 帮我挑最空闲的服务器并核对 SPICE License</button>
-        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="smoke_netlist" ${codexPanelState.busy ? 'disabled' : ''}>⚡ 生成零 PDK Spectre 烟雾网表</button>
-        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="review_netlist" ${codexPanelState.busy ? 'disabled' : ''}>📝 帮我检查右侧当前网表与仿真设置</button>
-        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="pvt_plan" ${codexPanelState.busy ? 'disabled' : ''}>▦ 帮我规划 PVT Corner / MC 扫描方案</button>
+      ${agentReady && codexPanelState.settingsOpen ? `
+        <div class="sim-ai-settings" role="group" aria-label="AI 设置与连接">
+          <div class="sim-ai-settings-account">
+            <span>${escape(formatCodexAccountLabel(codexPanelState.authAccount))}</span>
+            <div class="direct-actions">
+              <button type="button" class="button secondary small" data-action="sim-agent-refresh-models" ${codexPanelState.busy ? 'disabled' : ''}>刷新模型</button>
+              <button type="button" class="button secondary small" data-action="codex-disconnect" ${codexPanelState.busy ? 'disabled' : ''}>断开</button>
+            </div>
+          </div>
+          <div class="sim-ai-settings-grid">
+            <label>模型
+              <select id="sim-ai-model" ${codexPanelState.busy || codexActiveTurn() ? 'disabled' : ''}>${modelOptions}</select>
+            </label>
+            <label>思考强度
+              <select id="sim-ai-effort" ${codexPanelState.busy || codexActiveTurn() ? 'disabled' : ''}>${effLabels.map(([v, l]) => `<option value="${v}" ${codexPanelState.reasoningEffort === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+            </label>
+          </div>
+          <small class="subtle-note">与 CircuitGit 复用同一本机 Codex 登录与人工审批安全策略。</small>
+        </div>` : ''}
+      <div id="sim-agent-guide" class="sim-agent-guide" ${hasChatMessages ? 'hidden' : ''}>
+        <p class="subtle-note">直接用自然语言描述你想跑的仿真，或点下方快捷指令；对话开始后引导会自动收起。</p>
+        <div class="sim-prompt-chips">
+          <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="pick_host" ${codexPanelState.busy ? 'disabled' : ''}>🎯 挑最空闲服务器并核对 SPICE License</button>
+          <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="review_netlist" ${codexPanelState.busy ? 'disabled' : ''}>📝 检查当前网表与仿真配置</button>
+          <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="pvt_plan" ${codexPanelState.busy ? 'disabled' : ''}>▦ 规划 PVT Corner / MC 扫描方案</button>
+        </div>
       </div>
       <div id="codex-notices" class="codex-notices"></div>
-      <span id="codex-stream-state" class="subtle-note" style="font-size:11.5px">${codexPanelState.streamState === 'connected' ? '实时对话流已连接' : '点上方指令或发送消息即自动开启对话'}</span>
       <div id="codex-timeline" class="sim-agent-timeline" role="log" aria-live="polite" aria-label="Agent 仿真配置对话"></div>
       <div id="codex-approvals" class="codex-approvals"></div>
-      <form id="sim-agent-form" class="codex-composer">
-        <textarea id="codex-message" maxlength="4000" rows="3" placeholder="例如：帮我在最空闲的服务器上配置一个 Spectre 100ns 瞬态仿真，保存 in 和 out 波形，并开启 OOM 自动扩内存…">${escape(codexPanelState.draft)}</textarea>
+      <form id="sim-agent-form" class="codex-composer sim-ai-composer">
+        <textarea id="codex-message" maxlength="4000" rows="2" placeholder="向 AI 提问或描述仿真需求（Enter 发送，Shift+Enter 换行）…">${escape(codexPanelState.draft)}</textarea>
         <div>
-          <span class="subtle-note">Agent 调用工具仍受权限审批保护，不会擅自改原网表。</span>
-          <button id="codex-send" class="button primary small" type="submit" ${codexPanelState.busy ? 'disabled' : ''}>发送给 Agent</button>
+          <span class="subtle-note">已自动附带当前电路、Maestro 与服务器余量上下文；副作用需人工批准。</span>
+          <button id="codex-send" class="button primary small" type="submit" ${codexPanelState.busy ? 'disabled' : ''}>发送</button>
         </div>
       </form>
     </section>` : `
-    <section class="sim-agent-card">
-      <div class="sim-card-head"><h2>✧ CircuitGit 协同 Agent</h2>${chip('协同模式', 'green')}</div>
-      <p class="subtle-note">当前工作区与 CircuitGit 共享同一条 Agent 对话通道，不重复启动第二个助手。</p>
-      <a class="button primary small" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">前往 CircuitGit 对话 ↗</a>
+    <section class="sim-agent-card" data-sim-agent-mode="circuitgit">
+      <div class="sim-card-head"><h2>✧ CircuitGit 协同 Agent</h2>${chip('已复用 CircuitGit 对话', 'green')}</div>
+      <p class="subtle-note">当前已由 CircuitGit 统一托管项目与 Codex Agent 对话，直接复用 CircuitGit 交互入口，不再重复建立连接。</p>
+      <div class="direct-actions">
+        <a class="button primary small" href="${escape(simSourceState.returnUrl || circuitGitEntry)}" target="_blank" rel="noopener noreferrer">回到 CircuitGit 对话 ↗</a>
+      </div>
     </section>`;
 
   const bestBanner = bestHostId && Number.isFinite(bestRes?.cpu_busy_percent)
@@ -1451,7 +1614,6 @@ function directAgentSetupPanel(hostsList) {
     : '';
 
   const supportEntries = Object.entries(simSourceState.supportFiles || {});
-  const circuitGitManaged = isCircuitGitManagedEntry();
 
   let sourceBarHtml = '';
   if (circuitGitManaged) {
@@ -1520,12 +1682,6 @@ function directAgentSetupPanel(hostsList) {
         <div class="direct-actions" style="flex:none">
           <button type="button" class="button primary small" data-action="lib-mgr-open" data-tab="${hostsList.length ? 'ssh' : 'local'}">打开 Library Manager</button>
         </div>
-      </div>
-      <div class="sim-tpl-strip">
-        <span class="subtle-note">快速零 PDK 模板：</span>
-        <div class="sim-tpl-chips">
-          ${Object.entries(SIM_STARTER_TEMPLATES).map(([k, t]) => `<button type="button" class="sim-tpl-chip" data-action="direct-tpl" data-id="${escape(k)}">${escape(t.label)}</button>`).join('')}
-        </div>
       </div>`;
   }
 
@@ -1584,7 +1740,7 @@ function directAgentSetupPanel(hostsList) {
         <div class="direct-file-row" style="margin-top:10px">
           <label for="direct-netlist">网表内容（${escape(simSourceState.fileName || 'input.scs')} · 可从 Library Manager 选择、粘贴或由左侧 Agent 填入）</label>
         </div>
-        <textarea id="direct-netlist" class="direct-netlist" required placeholder="${circuitGitManaged ? '当前网表已由 CircuitGit 提供…' : '点上方「打开 Library Manager」浏览远端项目/导入本地网表，或点选零 PDK 模板…'}">${escape(directDraft.netlist_text)}</textarea>
+        <textarea id="direct-netlist" class="direct-netlist" required placeholder="${circuitGitManaged ? '当前网表已由 CircuitGit 提供…' : '点上方「打开 Library Manager」浏览远端 Virtuoso schematic / 电路库或导入本地网表，也可直接粘贴…'}">${escape(directDraft.netlist_text)}</textarea>
         ${supportFilesHtml}
         <details class="host-form-details" style="margin-top:10px">
           <summary>更多选项（执行后端 SSH/LSF/Slurm · CPU/内存/波形格式 · 远端环境与夜间恢复）</summary>
@@ -2800,28 +2956,6 @@ async function handleDirectClick(event) {
       directDraft.target_mode = 'host';
       directDraft.host_id = id;
       render();
-    }
-    return;
-  }
-  if (action === 'tpl') {
-    const tpl = SIM_STARTER_TEMPLATES[id];
-    if (tpl) {
-      directDraft.simulator = tpl.simulator;
-      directDraft.output_format = tpl.output_format;
-      directDraft.netlist_text = tpl.netlist;
-      const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
-      directDraft.run_key = `${tpl.run_prefix}-${stamp}`;
-      simSourceState.origin = 'template';
-      simSourceState.projectName = tpl.label;
-      simSourceState.fileName = tpl.simulator === 'ngspice' ? 'input.sp' : 'input.scs';
-      simSourceState.entryPath = simSourceState.fileName;
-      simSourceState.supportFiles = {};
-      simSourceState.skipped = [];
-      simSourceState.sourceCommit = '';
-      directState.quickLaunchNote = null;
-      directState.quickLaunchError = null;
-      render();
-      toast(`已载入「${tpl.label}」模板，点击「🚀 一键准备并启动仿真」即可运行。`);
     }
     return;
   }
@@ -4212,6 +4346,9 @@ async function refreshCodexStatus() {
     setCodexStatus(await api('/api/codex/status'));
     codexPanelState.error = null;
     openCodexEvents();
+    if (codexPanelState.status?.connected && location.hash === '#direct' && !codexPanelState.modelsLoaded) {
+      void loadCodexCatalogAndAuth();
+    }
   } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
   finally { codexPanelState.loading = false; if (!location.hash || ['#quickstart', '#agents', '#direct'].includes(location.hash)) render(); }
 }
@@ -4229,29 +4366,79 @@ function codexApprovalCard(approval) {
   return `<article class="codex-approval" data-approval-id="${escape(approval.approval_id)}"><div class="codex-card-heading"><strong>Human approval</strong>${chip(approval.status || 'pending', 'amber')}</div><p>${escape(approval.summary || 'Review this exact requested action.')}</p><details open><summary>Requested action</summary><pre>${escape(codexText(approval.params, 65536))}</pre></details>${preview ? `<p class="subtle-note">This is an incomplete or redacted preview. Approval stays disabled until complete reviewable details are available.</p><button class="button secondary small" data-action="codex-details" data-id="${escape(approval.approval_id)}">Read frozen action details</button>` : ''}<div class="codex-approval-actions"><button class="button primary small" data-action="codex-approve" data-id="${escape(approval.approval_id)}" ${approve ? '' : 'disabled'}>Approve this action</button><button class="button secondary small" data-action="codex-deny" data-id="${escape(approval.approval_id)}" ${deny ? '' : 'disabled'}>Deny</button></div>${approval.status === 'unknown' ? '<p class="subtle-note">Approval outcome is unknown. This action will not be retried automatically.</p>' : ''}</article>`;
 }
 
+function renderCleanDirectTimeline(items) {
+  if (!items.length) {
+    return '<div class="codex-chat-empty"><strong>Agent 仿真配置已就绪</strong><p>输入需求或点上方引导指令开始，右侧电路、Maestro 与服务器余量会自动同步给 AI。</p></div>';
+  }
+  const chunks = [];
+  let toolBuf = [];
+  const flushTools = () => {
+    if (!toolBuf.length) return;
+    const running = toolBuf.find(t => t.status === 'running');
+    const failed = toolBuf.some(t => t.status === 'failed');
+    const summaryLabel = running
+      ? `正在调用工具 · ${running.name || '执行中'}…`
+      : failed
+      ? `执行步骤（${toolBuf.length} 步 · 含异常，点击展开）`
+      : `已完成 · ${toolBuf.length} 步工具调用`;
+    const stepsHtml = toolBuf.map(t => `<li class="sim-ai-step"><details><summary><span>${escape(t.name || 'Tool')}</span><small>${t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束'}</small></summary><pre>${escape(t.text || '')}</pre></details></li>`).join('');
+    chunks.push(`<details class="sim-ai-progress"><summary>${escape(summaryLabel)}</summary><ol class="sim-ai-steps">${stepsHtml}</ol></details>`);
+    toolBuf = [];
+  };
+  for (const item of items) {
+    if (item.type === 'tool') {
+      toolBuf.push(item);
+      continue;
+    }
+    flushTools();
+    if (item.type === 'user') {
+      const cleanUser = stripSimAgentContextEnvelope(item.text || '');
+      chunks.push(`<article class="sim-ai-msg is-user"><strong class="sim-ai-role">你${item.status === 'unconfirmed' ? ' · 发送中' : ''}</strong><div class="sim-ai-md"><p>${escape(cleanUser)}</p></div></article>`);
+    } else {
+      const text = item.text || '';
+      const hasNetlist = Boolean(extractNetlistCodeBlock(text));
+      const bodyHtml = text
+        ? renderMarkdownHtml(text)
+        : '<p class="subtle-note">正在生成回答…</p>';
+      chunks.push(`<article class="sim-ai-msg is-assistant"><strong class="sim-ai-role">AI</strong><div class="sim-ai-md">${bodyHtml}</div>${hasNetlist ? `<button type="button" class="button secondary small sim-apply-code-btn" data-action="direct-apply-agent-code" data-id="${escape(item.id)}">✨ 一键填入右侧网表</button>` : ''}</article>`);
+    }
+  }
+  flushTools();
+  return chunks.join('');
+}
+
 function renderCodexActivity() {
   const timeline = $('#codex-timeline');
   if (!timeline || !isStandaloneAgent()) return;
   const onDirectSetup = location.hash === '#direct';
   const thread = codexPanelState.threads.find(item => item.id === codexPanelState.selectedThread);
+  const items = thread?.items || [];
   const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
-  timeline.innerHTML = (thread?.items || []).map(item => {
-    if (item.type === 'tool') {
-      return `<details class="codex-tool" open><summary><strong>${escape(item.name || 'Tool call')}</strong>${chip(item.status)}</summary>${item.preview ? '<p class="subtle-note">Retained preview · incomplete tool result. The operation status does not establish that the full result is displayed.</p>' : ''}<pre>${escape(item.text)}</pre>${item.ownerReview ? '<p class="subtle-note">This operation needs the execution owner’s human review. Open the review page supplied in the result. A Codex tool approval does not approve that separate operation.</p>' : ''}</details>`;
-    }
-    const hasNetlist = onDirectSetup && item.type === 'assistant' && Boolean(extractNetlistCodeBlock(item.text || ''));
-    return `<article class="codex-message codex-${item.type}"><div>${item.type === 'user' ? 'You' : 'Codex'}${item.status === 'unconfirmed' ? ' · delivery unconfirmed' : ''}</div>${item.preview ? '<p class="subtle-note">Retained preview · incomplete message.</p>' : ''}<p>${escape(item.text || 'Waiting for response text…')}</p>${hasNetlist ? `<button type="button" class="button secondary small sim-apply-code-btn" data-action="direct-apply-agent-code" data-id="${escape(item.id)}">✨ 一键填入右侧网表</button>` : ''}</article>`;
-  }).join('')
-    || (onDirectSetup
-      ? '<div class="codex-chat-empty"><strong>Agent 辅助仿真配置已就绪</strong><p>点击上方快捷指令，或在下方输入你的仿真需求，Agent 会结合实时服务器负载与 SPICE License 协助你配置并生成网表。</p></div>'
-      : '<div class="codex-chat-empty"><strong>Your simulation workspace, in conversation.</strong><p>Connect explicitly, create a conversation, then send a message. Tool requests and any required human approvals appear here.</p></div>');
+  if (onDirectSetup) {
+    timeline.innerHTML = renderCleanDirectTimeline(items);
+    const guide = $('#sim-agent-guide');
+    if (guide) guide.hidden = Boolean(items.length || codexPanelState.pending);
+  } else {
+    timeline.innerHTML = items.map(item => {
+      if (item.type === 'tool') {
+        return `<details class="codex-tool" open><summary><strong>${escape(item.name || 'Tool call')}</strong>${chip(item.status)}</summary>${item.preview ? '<p class="subtle-note">Retained preview · incomplete tool result. The operation status does not establish that the full result is displayed.</p>' : ''}<pre>${escape(item.text)}</pre>${item.ownerReview ? '<p class="subtle-note">This operation needs the execution owner’s human review. Open the review page supplied in the result. A Codex tool approval does not approve that separate operation.</p>' : ''}</details>`;
+      }
+      const displayText = item.type === 'user' ? stripSimAgentContextEnvelope(item.text || '') : (item.text || 'Waiting for response text…');
+      return `<article class="codex-message codex-${item.type}"><div>${item.type === 'user' ? 'You' : 'Codex'}${item.status === 'unconfirmed' ? ' · delivery unconfirmed' : ''}</div>${item.preview ? '<p class="subtle-note">Retained preview · incomplete message.</p>' : ''}<p>${escape(displayText)}</p></article>`;
+    }).join('')
+      || '<div class="codex-chat-empty"><strong>Your simulation workspace, in conversation.</strong><p>Connect explicitly, create a conversation, then send a message. Tool requests and any required human approvals appear here.</p></div>';
+  }
   if (nearBottom) timeline.scrollTop = timeline.scrollHeight;
   const status = codexPanelState.status;
   if ($('#native-count')) {
     $('#native-count').textContent = codexPanelState.threads.length;
     $('#native-count').title = 'Conversations received in this browser';
   }
-  if ($('#codex-runtime-state')) $('#codex-runtime-state').innerHTML = chip(status?.state || 'disconnected', status?.connected ? 'green' : '');
+  if ($('#codex-runtime-state')) {
+    $('#codex-runtime-state').innerHTML = onDirectSetup
+      ? simAgentStatusChip(status)
+      : chip(status?.state || 'disconnected', status?.connected ? 'green' : '');
+  }
   if ($('#codex-stream-state')) {
     $('#codex-stream-state').textContent = codexPanelState.streamState === 'reconnecting'
       ? 'Updates interrupted; reconnecting the read-only event stream. Messages are not resent.'
@@ -4580,7 +4767,7 @@ document.addEventListener('click', async event => {
       return;
     }
     if (action === 'sim-agent-connect') {
-      if (!isStandaloneAgent() || codexPanelState.busy) return;
+      if (!isStandaloneAgent() || isCircuitGitManagedEntry() || codexPanelState.busy) return;
       codexPanelState.busy = true;
       renderCodexActivity();
       try {
@@ -4592,21 +4779,31 @@ document.addEventListener('click', async event => {
           await refreshCodexStatus();
         }
         openCodexEvents();
-        toast('🟢 Codex Agent 已连接，可以直接帮你配置并启动仿真！');
+        void loadCodexCatalogAndAuth({force: true});
+        toast('🟢 已连接本机 Codex Agent。');
       } finally {
         codexPanelState.busy = false;
         renderCodexActivity();
       }
       return;
     }
+    if (action === 'sim-agent-settings') {
+      codexPanelState.settingsOpen = !codexPanelState.settingsOpen;
+      if (codexPanelState.settingsOpen) void loadCodexCatalogAndAuth();
+      render();
+      return;
+    }
+    if (action === 'sim-agent-refresh-models') {
+      await loadCodexCatalogAndAuth({force: true});
+      toast('已刷新本机 Codex 模型目录与登录状态。');
+      return;
+    }
     if (action === 'sim-agent-prompt') {
       const kind = button.dataset.kind || '';
-      const ctx = buildSimAgentContextSummary();
       const prompts = {
-        pick_host: `${ctx}\n请帮我分析哪台服务器现在最适合跑新的 Spectre 仿真，确认 SPICE License 余量是否充足，并推荐合适的 CPU 线程数和内存上限。`,
-        smoke_netlist: `${ctx}\n请为我生成一个可直接运行的零 PDK Spectre 瞬态烟雾验证网表（带 save 语句和 tran 分析，放在 \`\`\`spectre 代码块里），方便我一键填入右侧跑通第一个仿真并验证 PSF 波形。`,
-        review_netlist: `${ctx}\n请帮我检查下面这份准备提交到 ${directDraft.host_id || '空闲服务器'} 的 ${directDraft.simulator} 网表配置（分析语句、收敛选项、save 节点和资源参数），如有改进建议请给出修改后的 \`\`\`spectre 代码块：\n\n\`\`\`spectre\n${directDraft.netlist_text || '(当前网表为空，请帮我给一份起手模板)'}\n\`\`\``,
-        pvt_plan: `${ctx}\n我想对当前电路做 PVT Corner 与 Monte Carlo 批量仿真，请帮我规划合理的工艺角、电压、温度组合、样本数和并发控制策略，避免打满 SPICE License 或 OOM。`,
+        pick_host: '请结合当前服务器资源与 SPICE License 余量，推荐最适合跑新 Spectre 仿真的服务器，并给出合理的 CPU 核数与内存建议。',
+        review_netlist: '请检查我当前右侧的网表与仿真配置（分析语句、收敛选项、save 节点与资源设置），简洁给出关键问题和修改建议。',
+        pvt_plan: '请为我当前电路规划一套合理的 PVT Corner 与 Monte Carlo 批量仿真方案，兼顾覆盖度、SPICE License 余量与并发控制。',
       };
       await sendPromptToSimAgent(prompts[kind] || prompts.pick_host);
       return;
@@ -4955,6 +5152,12 @@ document.addEventListener('change', event => {
     codexPanelState.selectedThread = event.target.value;
     renderCodexActivity();
   }
+  if (event.target.id === 'sim-ai-model') {
+    codexPanelState.model = event.target.value;
+  }
+  if (event.target.id === 'sim-ai-effort') {
+    codexPanelState.reasoningEffort = event.target.value;
+  }
   if (event.target.id === 'codex-rec-confirm') {
     codexPanelState.recoveryConfirmed = event.target.checked;
     renderCodexActivity();
@@ -5089,6 +5292,9 @@ document.addEventListener('click', async event => {
       codexPanelState.selectedThread = receipt.thread_id || null;
     } else if (action === 'codex-disconnect') {
       closeCodexEvents();
+      codexPanelState.settingsOpen = false;
+      codexPanelState.modelsLoaded = false;
+      codexPanelState.authAccount = null;
       renderCodexActivity();
       await api('/api/codex/disconnect', {method: 'POST'});
     } else if (['codex-approve', 'codex-deny'].includes(action)) {
@@ -5427,6 +5633,20 @@ document.addEventListener('keydown', event => {
   if (event.target.id === 'lib-mgr-path' && event.key === 'Enter') {
     event.preventDefault();
     void browseLibrarySsh(libMgrState.path || '~');
+  }
+  if (
+    event.target.id === 'codex-message'
+    && location.hash === '#direct'
+    && event.key === 'Enter'
+    && !event.shiftKey
+    && !event.isComposing
+    && event.keyCode !== 229
+  ) {
+    event.preventDefault();
+    const form = $('#sim-agent-form');
+    if (form && !codexPanelState.busy && codexPanelState.draft.trim()) {
+      void sendPromptToSimAgent(codexPanelState.draft);
+    }
   }
 });
 

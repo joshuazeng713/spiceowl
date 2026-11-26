@@ -52,6 +52,9 @@ Do not approve requests, call approval endpoints, invent run identities or chang
 Only the human client can decide a frozen approval. Stop dependent work after denial or uncertainty.
 Preserve exact source, model, experiment and run identities. Missing scientific inputs stay missing.
 Report execution, measurement validity, specification, operating qualification and dependency provenance separately.
+Be concise and direct (matching CircuitGit's assistant style): reply in the user's language, lead with concrete conclusions and actionable recommendations, avoid verbose filler, and never dump raw tool JSON.
+When a [SPICEOWL_CTX] workspace snapshot (active circuit, netlist, Maestro settings, host pool, and SPICE license availability) is attached to the user's message, read and use it directly as your current circuit context.
+Only include a fenced ```spectre or ```spice code block when proposing a runnable netlist or concrete netlist modification.
 '''
 
 
@@ -518,11 +521,78 @@ class CodexBridge:
                     self._unknown('thread_start_unconfirmed')
                 raise
 
-    def send_message(self, thread_id, text, request_key):
+    def list_models(self):
+        """Read the local Codex model catalog (matching CircuitGit's model/list projection)."""
+        with self.lock:
+            self._active()
+            rpc = self.rpc
+            default_model = self.data.get('model') or ''
+        reply = rpc.call('model/list', {})
+        raw_items = reply.get('data') if isinstance(reply, dict) else None
+        if not isinstance(raw_items, list):
+            raw_items = reply.get('models') if isinstance(reply, dict) and isinstance(reply.get('models'), list) else []
+        models = []
+        for item in raw_items[:64]:
+            if not isinstance(item, dict):
+                continue
+            mid = item.get('id') or item.get('model')
+            if not isinstance(mid, str) or not IDENTIFIER.fullmatch(mid):
+                continue
+            efforts = []
+            raw_eff = item.get('supportedReasoningEfforts') or []
+            if isinstance(raw_eff, list):
+                for eff in raw_eff[:12]:
+                    if isinstance(eff, str) and eff:
+                        efforts.append(eff)
+                    elif isinstance(eff, dict) and isinstance(eff.get('reasoningEffort'), str):
+                        efforts.append(eff['reasoningEffort'])
+            models.append({
+                'id': mid,
+                'displayName': str(item.get('displayName') or mid)[:120],
+                'description': str(item.get('description') or '')[:240],
+                'defaultReasoningEffort': item.get('defaultReasoningEffort') if isinstance(item.get('defaultReasoningEffort'), str) else None,
+                'supportedReasoningEfforts': efforts,
+            })
+            if not default_model and item.get('isDefault') is True:
+                default_model = mid
+        return {'schema': 'spiceowl.codex-models.v1', 'default_model': default_model, 'models': models}
+
+    def auth_status(self):
+        """Read local Codex account status without ever exposing tokens or secrets."""
+        with self.lock:
+            self._active()
+            rpc = self.rpc
+        reply = rpc.call('account/read', {'refreshToken': False})
+        acct = reply.get('account') if isinstance(reply, dict) and isinstance(reply.get('account'), dict) else {}
+        acct_type = acct.get('type') if isinstance(acct.get('type'), str) else None
+        plan_type = acct.get('planType') if isinstance(acct.get('planType'), str) else 'unknown'
+        requires_auth = reply.get('requiresOpenaiAuth') if isinstance(reply, dict) and isinstance(reply.get('requiresOpenaiAuth'), bool) else None
+        if acct_type:
+            login_status = 'signed_in'
+        elif requires_auth is True:
+            login_status = 'signed_out'
+        else:
+            login_status = 'unknown'
+        return {
+            'schema': 'spiceowl.codex-auth.v1',
+            'account': {
+                'account_type': acct_type,
+                'plan_type': plan_type,
+                'login_status': login_status,
+                'requires_openai_auth': requires_auth,
+            },
+        }
+
+    def send_message(self, thread_id, text, request_key, model=None, reasoning_effort=None):
         _id(thread_id, 'thread ID')
         _id(request_key, 'request key')
         _check(isinstance(text, str) and text.strip() and len(text) <= 24000, 'Message must contain 1–24000 characters.')
-        fingerprint = _digest([thread_id, text])
+        if model is not None:
+            _id(model, 'model name')
+        if reasoning_effort is not None:
+            _check(isinstance(reasoning_effort, str) and reasoning_effort in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'),
+                   'Unsupported reasoning effort.')
+        fingerprint = _digest([thread_id, text, model, reasoning_effort] if (model or reasoning_effort) else [thread_id, text])
         with self.operation_lock:
             with self.lock:
                 old = self.data['requests'].get(request_key)
@@ -545,7 +615,12 @@ class CodexBridge:
                 # Durable identity and bounded history before turn/start can reach the process.
                 self._event('bridge/user_message', {'text': text, 'request_key': request_key, 'state': 'pending'})
             try:
-                reply = self.rpc.call('turn/start', {'threadId': thread_id, 'input': [{'type': 'text', 'text': text}]})
+                turn_params = {'threadId': thread_id, 'input': [{'type': 'text', 'text': text}]}
+                if model:
+                    turn_params['model'] = model
+                if reasoning_effort:
+                    turn_params['effort'] = reasoning_effort
+                reply = self.rpc.call('turn/start', turn_params)
                 _check(type(reply.get('turn')) is dict, 'Codex returned an incomplete turn identity.', 'codex_protocol')
                 turn_id = _id(reply.get('turn', {}).get('id'), 'turn ID')
                 with self.lock:

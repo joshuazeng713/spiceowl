@@ -54,6 +54,16 @@ let wizardState = {
   loaded: false, loading: false, busy: false, status: null, demo: null,
   firstSim: null, lastProbe: null, error: null, tutorialStep: 1,
 };
+let hostLiveState = {
+  loading: false,
+  loaded: false,
+  loadedAt: 0,
+  hostSignature: '',
+  observedAt: null,
+  summary: null,
+  byId: new Map(),
+  error: null,
+};
 let wizardDraft = {
   alias_pick: '', host_id: '', label: '', ssh_target: '', expected_host: '', expected_user: '',
   simulator: 'spectre', simulator_executable: '', backend: 'ssh_direct', queue: '', partition: '',
@@ -262,6 +272,7 @@ async function quickConnectSshAlias(aliasName, {silentOnFail = false} = {}) {
     const res = await api('/api/wizard/quick-connect', {method: 'POST', body: {alias: aliasName}});
     wizardState.lastDiag = res.diagnosis || null;
     wizardState.lastProbe = res.probe || null;
+    hostLiveState.loaded = false;
     await refresh();
     await refreshWizard();
     if (res.host?.host_id) {
@@ -291,6 +302,8 @@ async function disconnectSshAlias(aliasName) {
     const res = await api('/api/wizard/disconnect', {method: 'POST', body: {alias: aliasName}});
     wizardState.lastDiag = null;
     wizardState.lastProbe = null;
+    hostLiveState.loaded = false;
+    hostLiveState.byId.delete(aliasName);
     await Promise.all([refresh(), refreshWizard()]);
     toast(`已断开 ${aliasName}（本机 SSH 配置已保留，再次点击可重新连接）。`);
     return res;
@@ -310,6 +323,7 @@ window.addEventListener('message', async event => {
     if (event.origin !== expectedOrigin) return;
     if (!isPublicDemo()) {
       wizardState.loaded = false;
+      hostLiveState.loaded = false;
       await Promise.all([refresh(), refreshWizard()]);
       if (msg.diagnosis_ok && msg.selected_alias && !msg.auto_connected && !msg.live_sync) {
         await quickConnectSshAlias(msg.selected_alias, {silentOnFail: true});
@@ -596,25 +610,18 @@ function quickstartPage() {
       <div class="home-server-card">${serverInner}</div>
     </section>`;
 
-  const coreFlows = `
-    <section class="home-section" aria-label="核心功能入口">
+  const nextStepSection = `
+    <section class="home-section" aria-label="下一步">
       <div class="home-section-head">
-        <h2>连好后，核心就这 3 件事</h2>
-        <span class="home-status-tag">未连接时也可以直接点进去体验</span>
+        <h2><span class="home-step-num">3</span> 下一步</h2>
+        <span class="home-status-tag ${verifiedAliasCount ? 'ready' : ''}">${verifiedAliasCount ? `已连接 ${verifiedAliasCount} 台服务器` : '连接服务器后即可查看实时资源'}</span>
       </div>
-      <div class="home-flow-grid">
-        <button type="button" class="home-flow-tile" data-action="wizard-goto" data-route="#direct" data-tab="waveforms" data-run="demo-psfbin-500c" data-batch="">
-          <strong><span>📈 大波形与周期切片</span><span>→</span></strong>
-          <span>原位缩放 500 周期二进制 PSF、双游标与一键无损量测</span>
-        </button>
-        <button type="button" class="home-flow-tile" data-action="wizard-goto" data-route="#direct" data-tab="batches" data-run="" data-batch="demo-pvt-27">
-          <strong><span>▦ PVT / MC 批量扫描</span><span>→</span></strong>
-          <span>27-Corner 彩色矩阵、40 样本直方图与保守良率统计</span>
-        </button>
-        <button type="button" class="home-flow-tile" data-action="wizard-goto" data-route="#direct" data-tab="recovery" data-run="" data-batch="">
-          <strong><span>☾ 夜间 Agent 值守</span><span>→</span></strong>
-          <span>排队超时 / OOM 自动推送给你的 Agent，早起网页安静验收</span>
-        </button>
+      <div class="home-next-card">
+        <div class="home-server-copy">
+          <h3>查看服务器池资源情况</h3>
+          <p>${verifiedAliasCount ? `前往下一页查看当前已连接的 ${verifiedAliasCount} 台服务器的 CPU、内存、磁盘占用，以及正在运行的仿真情况。` : '前往下一页查看所有已连接服务器的 CPU、内存、磁盘占用，以及当前正在运行的仿真情况。'}</p>
+        </div>
+        <a class="button primary" href="#hosts" data-action="home-next-hosts">查看服务器池资源 →</a>
       </div>
     </section>`;
 
@@ -628,7 +635,7 @@ function quickstartPage() {
       ${wizardState.error ? `<p class="error-text" role="alert">${escape(wizardState.error)}</p>` : ''}
       ${agentSection}
       ${serverSection}
-      ${coreFlows}
+      ${nextStepSection}
     </div>`;
 }
 
@@ -1911,7 +1918,7 @@ spiceowl connector install</pre></details><p class="subtle-note">安装完成后
 }
 
 function publicHostPage() {
-  return heading('EDA 服务器管理 · SIMULATION HOSTS', '连接本机连接器后，直接在本网页管理您的仿真服务器池', '当前为浏览器预览模式，不会读取本机 SSH；点击下方按钮唤起本机连接器后，即可在本页直接识别 ~/.ssh/config、核验主机并扫描 CPU/内存余量。') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">需本机连接器 · SSH CONNECTOR</span><h2>你的 SSH 密钥与服务器配置始终留在本机</h2><div class="public-feature-grid"><article><h3>1. 自动识别 SSH 别名</h3><p>连上本机连接器后直接读取 <code>~/.ssh/config</code> 别名列表，零密码输入，原生支持跳板机（ProxyJump）。</p></article><article><h3>2. 显式身份与工具校验</h3><p>点击校验才会核对远端 <code>hostname</code>、<code>id -un</code> 与 Spectre / ngspice 版本，绝不后台静默扫描。</p></article><article><h3>3. 智能选机与新鲜度保护</h3><p>对比各节点 CPU / 内存余量并标注观测时间；超时或失联的机器绝不会被误当成空闲节点。</p></article></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>示例计算节点（只读示意）</th><th>连接校验</th><th>CPU 占用 / 核数</th><th>可用 / 总内存</th><th>选机结论</th></tr></thead><tbody><tr><td><code>sim-node-a</code></td><td>${chip('Verified', 'green')}</td><td>18% / 32 核</td><td>96 / 128 GiB</td><td>${chip('推荐优先', 'green')}</td></tr><tr><td><code>sim-node-b</code></td><td>${chip('Verified', 'green')}</td><td>84% / 32 核</td><td>14 / 128 GiB</td><td>${chip('负载较高', 'amber')}</td></tr><tr><td><code>sim-node-c</code></td><td>${chip('Stale / Unverified', 'red')}</td><td>Unknown</td><td>Unknown</td><td>${chip('自动排除', 'red')}</td></tr></tbody></table></div><p class="subtle-note">本页不采集任何主机名、账号、私钥或凭据。点击下方按钮唤起本机连接器即可直接管理您的真实服务器。</p><div class="public-info-links"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器管理服务器</button><a class="button secondary" href="#direct">先体验仿真与大波形</a></div></div></section>`;
+  return heading('服务器池资源 · SERVER POOL & SIMULATIONS', '连接本机连接器后，实时查看所有已连接服务器的资源与运行中仿真', '当前为浏览器预览模式，不会读取本机 SSH；连上本机连接器并在首页接好服务器后，本页会自动展示每台服务器的 CPU、内存、磁盘占用与实时在跑的 Spectre / ngspice / Virtuoso 任务。') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">需本机连接器 · SSH CONNECTOR</span><h2>第二页总览：资源占用 + 运行中仿真（示例示意）</h2><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>示例计算节点（只读示意）</th><th>CPU 占用 / 核数</th><th>内存已用 / 总计</th><th>当前运行中仿真</th><th>状态</th></tr></thead><tbody><tr><td><code>sim-node-a</code></td><td>18.4% · 64 核</td><td>32 / 128 GiB（可用 96 GiB）</td><td>0 个仿真 · 空闲可提交</td><td>${chip('空闲推荐', 'green')}</td></tr><tr><td><code>sim-node-b</code></td><td>76.2% · 96 核</td><td>48 / 128 GiB（可用 80 GiB）</td><td>3 个 spectre（共占 42.5 核）· 4 个 virtuoso</td><td>${chip('运行中', 'blue')}</td></tr><tr><td><code>sim-node-c</code></td><td>94.1% · 64 核</td><td>116 / 128 GiB（可用 12 GiB）</td><td>5 个 spectre（共占 58.0 核）</td><td>${chip('高负载', 'red')}</td></tr></tbody></table></div><p class="subtle-note">所有 SSH 密钥与服务器配置始终只留在本机，不读取网表路径或命令参数。点击下方按钮连接本机连接器后即可查看你的真实服务器池。</p><div class="public-info-links"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器查看真实服务器</button><a class="button secondary" href="#quickstart">返回首页与连接</a></div></div></section>`;
 }
 
 function publicAgentPage() {
@@ -2165,15 +2172,260 @@ function connections() {
   return html + `<div class="planned-note"><strong>关于真实 AI 助手</strong><p>本页连接卡片仅用于离线沙箱演练。要连接本机真实 Codex 对话或查看 CircuitGit 嵌入通道，请前往 <a href="#agents">AI 助手与评测</a>。</p></div>`;
 }
 
+function formatBytesHuman(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  const tib = 1024 ** 4, gib = 1024 ** 3, mib = 1024 ** 2;
+  if (bytes >= tib) return `${(bytes / tib).toFixed(2)} TiB`;
+  if (bytes >= gib) return `${(bytes / gib).toFixed(1)} GiB`;
+  if (bytes >= mib) return `${(bytes / mib).toFixed(0)} MiB`;
+  return `${Math.round(bytes / 1024)} KiB`;
+}
+
+function formatCpuWithCores(pct) {
+  if (!Number.isFinite(pct)) return '—';
+  if (pct >= 150) return `${pct.toFixed(0)}% (${(pct / 100).toFixed(1)}核)`;
+  return `${pct.toFixed(1)}%`;
+}
+
+function recomputeHostLiveSummary() {
+  const entries = state.hosts.map(h => hostLiveState.byId.get(h.host_id)).filter(Boolean);
+  const reachable = entries.filter(e => e.ok);
+  const cpuVals = reachable.map(e => e.resources?.cpu_busy_percent).filter(v => Number.isFinite(v));
+  hostLiveState.summary = {
+    total_hosts: state.hosts.length,
+    reachable_hosts: reachable.length,
+    total_cpus: reachable.reduce((acc, e) => acc + (Number(e.resources?.cpu_count) || 0), 0),
+    avg_cpu_busy_percent: cpuVals.length ? Number((cpuVals.reduce((a, b) => a + b, 0) / cpuVals.length).toFixed(1)) : null,
+    total_memory_bytes: reachable.reduce((acc, e) => acc + (Number(e.resources?.memory_total_bytes) || 0), 0),
+    available_memory_bytes: reachable.reduce((acc, e) => acc + (Number(e.resources?.memory_available_bytes) || 0), 0),
+    active_simulations: reachable.reduce((acc, e) => acc + (Number(e.simulations?.active_count) || 0), 0),
+    my_active_simulations: reachable.reduce((acc, e) => acc + (Number(e.simulations?.my_active_count) || 0), 0),
+    active_eda_tools: reachable.reduce((acc, e) => acc + (Number(e.simulations?.eda_tool_count) || 0), 0),
+    managed_active_runs: entries.reduce((acc, e) => acc + (e.managed_runs || []).filter(r => r.active).length, 0),
+  };
+}
+
+async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
+  if (isPublicDemo() || hostLiveState.loading) return null;
+  const sig = state.hosts.map(h => h.host_id).sort().join(',');
+  if (!hostIds && !state.hosts.length) {
+    hostLiveState.loaded = true;
+    hostLiveState.loadedAt = Date.now();
+    hostLiveState.hostSignature = '';
+    hostLiveState.byId = new Map();
+    hostLiveState.summary = null;
+    hostLiveState.error = null;
+    return null;
+  }
+  hostLiveState.loading = true;
+  hostLiveState.error = null;
+  if (location.hash === '#hosts') render();
+  try {
+    const data = await api('/api/hosts/live-status', {
+      method: 'POST',
+      body: hostIds ? {host_ids: hostIds} : {},
+    });
+    if (!hostIds) {
+      hostLiveState.byId = new Map();
+    }
+    for (const item of (data.hosts || [])) {
+      hostLiveState.byId.set(item.host_id, item);
+    }
+    if (Array.isArray(data.registry_hosts)) {
+      state.hosts = data.registry_hosts;
+      if ($('#host-count')) $('#host-count').textContent = state.hosts.length;
+    }
+    hostLiveState.observedAt = data.observed_at || new Date().toISOString();
+    hostLiveState.loaded = true;
+    hostLiveState.loadedAt = Date.now();
+    hostLiveState.hostSignature = state.hosts.map(h => h.host_id).sort().join(',');
+    recomputeHostLiveSummary();
+    if (!silent) {
+      const okCnt = (data.hosts || []).filter(h => h.ok).length;
+      toast(`已刷新 ${okCnt}/${(data.hosts || []).length} 台服务器的实时资源与运行中仿真。`);
+    }
+    return data;
+  } catch (error) {
+    hostLiveState.error = error.message;
+    if (!silent) toast(error.message);
+    return null;
+  } finally {
+    hostLiveState.loading = false;
+    if (location.hash === '#hosts') render();
+  }
+}
+
+function renderHostLiveCard(host) {
+  const live = hostLiveState.byId.get(host.host_id) || null;
+  const fallbackRes = host.last_resources?.resources || {};
+  const res = live ? (live.resources || {}) : fallbackRes;
+  const cpuPct = Number.isFinite(res.cpu_busy_percent) ? Math.max(0, Math.min(100, res.cpu_busy_percent)) : null;
+  const cpuCount = Number.isFinite(res.cpu_count) ? res.cpu_count : null;
+  const load1 = Number.isFinite(res.load_1m) ? res.load_1m.toFixed(2) : '—';
+  const load5 = Number.isFinite(res.load_5m) ? res.load_5m.toFixed(2) : '—';
+  const memTotal = Number.isFinite(res.memory_total_bytes) ? res.memory_total_bytes : null;
+  const memAvail = Number.isFinite(res.memory_available_bytes) ? res.memory_available_bytes : null;
+  const memUsed = (memTotal !== null && memAvail !== null && memTotal >= memAvail) ? (memTotal - memAvail) : null;
+  const memPct = (memUsed !== null && memTotal > 0) ? Math.max(0, Math.min(100, (memUsed / memTotal) * 100)) : null;
+  const diskAvail = Number.isFinite(res.home_disk_available_bytes) ? res.home_disk_available_bytes : null;
+
+  const sims = live?.simulations || null;
+  const simCount = sims ? (sims.active_count || 0) : 0;
+  const mySimCount = sims ? (sims.my_active_count || 0) : 0;
+  const edaToolCount = sims ? (sims.eda_tool_count || 0) : 0;
+  const processes = sims?.processes || [];
+  const managedRuns = live?.managed_runs || [];
+  const activeManagedRuns = managedRuns.filter(r => r.active);
+
+  const level = live ? live.load_level : (hostLiveState.loading ? 'moderate' : 'idle');
+  const levelBadge = !live && hostLiveState.loading
+    ? chip('采样中…', 'blue')
+    : !live
+    ? chip('待采样', '')
+    : !live.ok
+    ? chip('连接异常', 'amber')
+    : level === 'busy'
+    ? chip('高负载', 'red')
+    : level === 'moderate'
+    ? chip(simCount > 0 ? '仿真运行中' : '中等负载', 'blue')
+    : chip(simCount > 0 ? '较空闲' : '空闲推荐', 'green');
+
+  const barClass = pct => (pct === null ? 'ok' : pct >= 80 ? 'high' : pct >= 55 ? 'warn' : 'ok');
+
+  const toolTags = sims ? Object.entries(sims.by_tool || {}).map(([tool, cnt]) => {
+    const isSim = processes.some(p => p.tool === tool && p.category === 'simulation');
+    return `<span class="pool-tool-tag ${isSim ? 'sim' : 'eda'}">${escape(tool)} ×${cnt}</span>`;
+  }).join('') : '';
+
+  const renderProcRow = p => `<tr class="${p.is_me ? 'is-me' : ''}"><td><strong>${escape(p.tool)}</strong></td><td>${escape(p.user)}${p.is_me ? '<span class="pool-me-pill">我</span>' : ''}</td><td>${escape(formatCpuWithCores(p.cpu_percent))}</td><td>${escape(formatBytesHuman(p.rss_bytes))}</td><td>${escape(p.elapsed)}</td></tr>`;
+
+  let simsBody = '';
+  if (!live && hostLiveState.loading) {
+    simsBody = '<p class="subtle-note">正在实时读取 CPU、内存与仿真进程…</p>';
+  } else if (!live) {
+    simsBody = '<p class="subtle-note">点击右上角「刷新」读取该服务器实时资源与正在运行的仿真。</p>';
+  } else if (!live.ok) {
+    simsBody = `<p class="error-text">${escape(live.error?.message || '无法读取该服务器的实时状态。')}</p>`;
+  } else {
+    const parts = [];
+    if (activeManagedRuns.length) {
+      parts.push(`<div class="pool-managed-list">${activeManagedRuns.map(r => `<div class="pool-managed-item"><span><strong>${escape(r.run_id)}</strong> · ${escape(r.simulator)} (${escape(r.backend)})</span><div>${chip(r.state, 'blue')} <button type="button" class="button secondary small" data-action="host-open-run" data-id="${escape(r.run_id)}">盯守 →</button></div></div>`).join('')}</div>`);
+    }
+    if (processes.length) {
+      const topProcs = processes.slice(0, 6);
+      const moreProcs = processes.slice(6);
+      parts.push(`<div class="pool-proc-wrap"><table class="pool-proc-table"><thead><tr><th>进程</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${topProcs.map(renderProcRow).join('')}</tbody></table></div>`);
+      if (moreProcs.length) {
+        parts.push(`<details class="home-advanced"><summary>展开其余 ${moreProcs.length} 个 EDA 进程</summary><div class="pool-proc-wrap" style="margin-top:6px"><table class="pool-proc-table"><thead><tr><th>进程</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${moreProcs.map(renderProcRow).join('')}</tbody></table></div></details>`);
+      }
+    } else if (!activeManagedRuns.length) {
+      parts.push('<div class="pool-sim-idle">✓ 当前无活跃仿真进程，空闲可直接提交仿真</div>');
+    }
+    simsBody = parts.join('');
+  }
+
+  const simSummaryText = !live || !live.ok
+    ? '当前正在跑的仿真'
+    : simCount > 0
+    ? `当前正在跑的仿真：${simCount} 个（共占 ${escape(formatCpuWithCores(sims.total_sim_cpu_percent))} · ${escape(formatBytesHuman(sims.total_sim_rss_bytes))}${mySimCount ? ` · 我的 ${mySimCount} 个` : ''}）`
+    : edaToolCount > 0
+    ? `当前正在跑的仿真：0 个（另有 ${edaToolCount} 个 EDA 工具会话）`
+    : '当前正在跑的仿真：0 个';
+
+  const obsStamp = live?.observed_at || host.last_resources?.observed_at || host.last_probe?.observed_at || null;
+  const obsTime = obsStamp && Number.isFinite(Date.parse(obsStamp)) ? new Date(obsStamp).toLocaleTimeString() : '尚未采样';
+
+  return `
+    <article class="pool-live-card level-${escape(level)}">
+      <div class="pool-live-head">
+        <div class="pool-live-title">
+          <h3>${escape(host.host_id)} ${levelBadge}</h3>
+          <small>${escape(host.label)}</small>
+        </div>
+        <button type="button" class="button secondary small" data-action="host-live-refresh-one" data-id="${escape(host.host_id)}" ${hostLiveState.loading ? 'disabled' : ''}>刷新</button>
+      </div>
+      <div class="pool-meters">
+        <div class="pool-meter">
+          <div class="pool-meter-top">
+            <strong>CPU 占用</strong>
+            <span>${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : '—'}${cpuCount !== null ? ` · ${cpuCount} 核` : ''} · Load ${load1} / ${load5}</span>
+          </div>
+          <div class="pool-bar"><i class="${barClass(cpuPct)}" style="width:${cpuPct !== null ? cpuPct.toFixed(1) : 0}%"></i></div>
+        </div>
+        <div class="pool-meter">
+          <div class="pool-meter-top">
+            <strong>内存占用</strong>
+            <span>${memUsed !== null && memTotal !== null ? `${formatBytesHuman(memUsed)} / ${formatBytesHuman(memTotal)}（可用 ${formatBytesHuman(memAvail)}）` : '—'}</span>
+          </div>
+          <div class="pool-bar"><i class="${barClass(memPct)}" style="width:${memPct !== null ? memPct.toFixed(1) : 0}%"></i></div>
+        </div>
+        <div class="pool-disk-row">
+          <span>主目录可用磁盘</span>
+          <code>${diskAvail !== null ? formatBytesHuman(diskAvail) : '—'}</code>
+        </div>
+      </div>
+      <div class="pool-sims-box">
+        <div class="pool-sims-head">
+          <strong>${simSummaryText}</strong>
+        </div>
+        ${toolTags ? `<div class="pool-tool-tags">${toolTags}</div>` : ''}
+        ${simsBody}
+      </div>
+      <div class="pool-live-foot">
+        <span>最近采样：${escape(obsTime)}</span>
+        <button type="button" class="button secondary small" data-action="direct-use-placement" data-id="${escape(host.host_id)}">在此机新建仿真 →</button>
+      </div>
+    </article>`;
+}
+
 function hosts() {
   if (isPublicDemo()) return publicHostPage();
   syncHostSelection();
   const count = selectedHostIds?.size || 0;
-  let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Register your servers, verify each connection, then compare saved resource observations.', `<div class="host-page-actions"><button class="button primary" data-action="open-ssh-setup-wizard">＋ SSH 配置向导 ↗</button><button class="button secondary" data-action="add-host">手动登记</button><button class="button secondary" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button secondary" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>`);
-  html += `<div class="host-onboarding"><div><strong>1. 向导配置</strong><span>只需填服务器地址与用户名，密钥、跳板机与指纹全自动引导。</span></div><div><strong>2. 自动识别</strong><span>连通后自动识别远端主机身份与 Spectre / ngspice，无需手填复杂表单。</span></div><div><strong>3. 资源扫描</strong><span>按需探测各节点 CPU 与内存余量，为夜间值守提供实时选机依据。</span></div></div>`;
-  html += poolOverview();
-  if (!state.hosts.length) html += `<div class="empty"><h2>尚未接入 EDA 服务器</h2><p>打开图形化向导，只需填写地址和用户名即可一键配好免密并加入服务器池。</p><button class="button primary" data-action="open-ssh-setup-wizard">＋ 打开 SSH 配置向导 ↗</button></div>`;
-  html += `<details class="host-details" ${state.hosts.length <= 1 ? 'open' : ''}><summary>Host identity and tool versions</summary><div class="connections-list">${state.hosts.map(host => {
+  let html = heading(
+    'SERVER POOL & LIVE SIMULATIONS',
+    '服务器池资源与运行中仿真',
+    '实时展示首页已连接的所有服务器的 CPU、内存、磁盘占用，以及当前正在运行的仿真进程与任务。',
+    `<div class="host-page-actions"><button type="button" class="button primary" data-action="host-live-refresh" ${hostLiveState.loading || !state.hosts.length ? 'disabled' : ''}>${hostLiveState.loading ? '正在采样全部服务器…' : '刷新全部资源与仿真'}</button><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 管理 / 新增服务器 ↗</button></div>`
+  );
+
+  if (hostLiveState.error) {
+    html += `<p class="error-text" role="alert">${escape(hostLiveState.error)}</p>`;
+  }
+
+  if (!state.hosts.length) {
+    html += `<div class="empty"><h2>尚未连接任何 EDA 服务器</h2><p>请先在「首页与连接」中完成服务器配置与连接，连上的服务器会自动在这里展示实时资源占用与运行中的仿真。</p><div class="direct-actions" style="justify-content:center"><a class="button primary" href="#quickstart">返回首页与连接 →</a><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 打开 SSH 配置向导 ↗</button></div></div>`;
+  } else {
+    const s = hostLiveState.summary;
+    const totalMemGiB = s && s.total_memory_bytes ? (s.total_memory_bytes / 2 ** 30).toFixed(0) : '—';
+    const availMemGiB = s && s.available_memory_bytes ? (s.available_memory_bytes / 2 ** 30).toFixed(0) : '—';
+    html += `
+      <div class="pool-kpi-grid">
+        <div class="pool-kpi-card">
+          <span>已连接服务器</span>
+          <strong>${state.hosts.length} 台</strong>
+          <small>${s ? `${s.reachable_hosts} 台在线已采样` : (hostLiveState.loading ? '正在并发采样…' : '准备采样')}</small>
+        </div>
+        <div class="pool-kpi-card">
+          <span>集群总核数 / 平均 CPU</span>
+          <strong>${s && s.total_cpus ? `${s.total_cpus} 核` : '—'}</strong>
+          <small>${s && Number.isFinite(s.avg_cpu_busy_percent) ? `平均 CPU 占用 ${s.avg_cpu_busy_percent}%` : '等待实时采样'}</small>
+        </div>
+        <div class="pool-kpi-card">
+          <span>集群可用 / 总内存</span>
+          <strong>${s && s.total_memory_bytes ? `${availMemGiB} / ${totalMemGiB} GiB` : '—'}</strong>
+          <small>${s && s.total_memory_bytes ? `整体内存占用 ${(((s.total_memory_bytes - s.available_memory_bytes) / s.total_memory_bytes) * 100).toFixed(1)}%` : '等待实时采样'}</small>
+        </div>
+        <div class="pool-kpi-card">
+          <span>当前运行中仿真</span>
+          <strong>${s ? `${s.active_simulations} 个` : '—'}</strong>
+          <small>${s ? `${s.my_active_simulations ? `我的 ${s.my_active_simulations} 个 · ` : ''}${s.active_eda_tools} 个 EDA 工具 · ${s.managed_active_runs} 个托管任务` : '统计 Spectre / ngspice 等'}</small>
+        </div>
+      </div>`;
+    html += `<div class="pool-live-grid">${state.hosts.map(renderHostLiveCard).join('')}</div>`;
+  }
+
+  html += `<details class="host-details"><summary>高级：智能选机、执行计划、手动登记与工具版本详情</summary><div style="margin-top:12px;display:flex;flex-direction:column;gap:14px"><div class="host-page-actions"><button class="button secondary small" data-action="add-host">手动登记</button><button class="button secondary small" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button secondary small" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>${poolOverview()}<div class="connections-list">${state.hosts.map(host => {
     const probe = host.last_probe;
     const evidence = connectionEvidence(host), status = connectionStatus(evidence);
     const fields = [['SSH transport', evidence?.transport || 'unchecked'], ['Host identity', evidence?.identity?.verified === true ? 'matched at last check' : 'unverified'], ['Tool check', observationTime(probe)], ['Simulation readiness', 'not tested']];
@@ -2182,8 +2434,8 @@ function hosts() {
       return `<div class="host-tool"><strong>${escape(title(tool.kind))}</strong>${chip(result?.status || 'unchecked', result?.status === 'available' ? 'green' : result ? 'amber' : '')}<span class="host-version">${escape(result?.version || 'Version unverified')}</span>${result?.error ? `<p class="error-text">${escape(result.error.message)}</p>` : ''}</div>`;
     }).join('');
     return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">▤</div><div class="connection-name"><h3>${escape(host.label)} ${chip(status.label, status.color)}</h3><p>Registered host · ${escape(host.host_id)}</p></div><div class="connection-actions"><button class="button primary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></div></div><div class="connection-readiness">${fields.map(([label, value]) => `<div class="readiness-field"><span>${label}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="host-tools">${toolRows || '<p class="subtle-note">No simulator executable configured. Connection checks verify identity only.</p>'}</div>${status.help ? `<div class="host-error">${escape(status.help)}</div>` : ''}<div class="connection-bottom"><span>Connection evidence: ${escape(observationTime(evidence))}</span><span>Saved result · no automatic remote polling</span></div></article>`;
-  }).join('')}</div></details>`;
-  return html + `<div class="planned-note"><strong>Plans preserve simulation ownership.</strong><p>A new standalone job can receive a proposed host. An existing Virtuoso-managed run retains its original host and native run reference. These plans do not reserve resources or launch a simulation; input, environment and license checks still belong to submission.</p></div>`;
+  }).join('')}</div></div></details>`;
+  return html;
 }
 
 function metric(value, suffix = '', digits = 1) {
@@ -2657,7 +2909,7 @@ function render() {
   const page = location.hash.slice(1) || 'quickstart';
   if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? '仿真与波形' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? '仿真与波形' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (page === 'quickstart' && !isPublicDemo()) {
@@ -2668,10 +2920,15 @@ function render() {
   if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
   if (page === 'hosts' && !isPublicDemo()) {
-    $('#execution-kind').value = plannedKind;
-    $('#execution-ref').value = plannedReference;
-    if (plannedHost) $('#execution-host').value = plannedHost;
+    if ($('#execution-kind')) $('#execution-kind').value = plannedKind;
+    if ($('#execution-ref')) $('#execution-ref').value = plannedReference;
+    if (plannedHost && $('#execution-host')) $('#execution-host').value = plannedHost;
     updateHostSelectionUI();
+    const curSig = state.hosts.map(h => h.host_id).sort().join(',');
+    const stale = !hostLiveState.loaded || hostLiveState.hostSignature !== curSig || (Date.now() - hostLiveState.loadedAt > 20000);
+    if (state.hosts.length && !hostLiveState.loading && stale) {
+      refreshHostLiveStatus({silent: true});
+    }
   }
   if (page === 'agents' && !isPublicDemo()) {
     renderNativeResponse();
@@ -2851,6 +3108,23 @@ document.addEventListener('click', async event => {
       await refresh();
       if (location.hash !== '#overview') location.hash = '#overview';
       render(); toast('演示数据已重置。可随时前往「✦ 新手步步教程」重新开始。'); return;
+    }
+    if (action === 'host-live-refresh') {
+      await refreshHostLiveStatus();
+      return;
+    }
+    if (action === 'host-live-refresh-one') {
+      if (id) await refreshHostLiveStatus({hostIds: [id]});
+      return;
+    }
+    if (action === 'host-open-run') {
+      if (id) {
+        directState.selectedId = id;
+        directState.activeTab = 'monitor';
+        location.hash = '#direct';
+        await refreshDirect();
+      }
+      return;
     }
     if (action === 'pool-scan') {
       const host_ids = selectedPoolIds();

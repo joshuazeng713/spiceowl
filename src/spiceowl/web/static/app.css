@@ -1381,6 +1381,7 @@ dialog .muted {
 .home-alias-btn.verified:hover { border-color:#c26a5a; background:#fdf3f1; color:#8b2e22; }
 .home-alias-btn.is-jump { border-style:dashed; color:var(--muted); background:#fafbfa; }
 
+.home-next-card { background:#fff; border:1px solid #b5d4c5; border-radius:12px; padding:20px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; background:linear-gradient(180deg, #f8fcf9 0%, #ffffff 70%); }
 .home-flow-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }
 .home-flow-tile { text-align:left; background:#fcfcfa; border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:4px; cursor:pointer; transition:border-color .15s, background .15s; min-width:0; font:inherit; color:inherit; }
 .home-flow-tile:hover { border-color:#9bc0ae; background:#fff; }
@@ -1388,6 +1389,65 @@ dialog .muted {
 .home-flow-tile span { font-size:12px; line-height:1.45; color:var(--muted); }
 .home-advanced { margin-top:2px; border-top:1px dashed var(--line); padding-top:10px; }
 .home-advanced summary { font-size:12px; color:var(--muted); cursor:pointer; user-select:none; }
+
+/* Page 2: Live Server Pool Resources & Active Simulations */
+.pool-kpi-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin-bottom:18px; }
+.pool-kpi-card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:15px 16px; display:flex; flex-direction:column; gap:4px; min-width:0; }
+.pool-kpi-card span { font-size:12px; color:var(--muted); }
+.pool-kpi-card strong { font-size:21px; font-weight:700; color:var(--ink); letter-spacing:-.02em; }
+.pool-kpi-card small { font-size:11.5px; color:var(--muted); }
+
+.pool-live-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; margin-bottom:20px; }
+.pool-live-card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:18px; display:flex; flex-direction:column; gap:14px; min-width:0; transition:border-color .15s, box-shadow .15s; }
+.pool-live-card:hover { border-color:#b9cec2; box-shadow:0 6px 20px rgba(23,46,53,.05); }
+.pool-live-card.level-idle { border-top:3px solid #2c8a62; }
+.pool-live-card.level-moderate { border-top:3px solid #2b6cb0; }
+.pool-live-card.level-busy { border-top:3px solid #c9563c; }
+.pool-live-card.level-error { border-top:3px solid #b45309; }
+.pool-live-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.pool-live-title { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.pool-live-title h3 { margin:0; font-size:16px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.pool-live-title small { font-size:11.5px; color:var(--muted); font-family:var(--mono); }
+
+.pool-meters { display:flex; flex-direction:column; gap:10px; }
+.pool-meter { display:flex; flex-direction:column; gap:4px; }
+.pool-meter-top { display:flex; align-items:baseline; justify-content:space-between; gap:8px; font-size:12.5px; flex-wrap:wrap; }
+.pool-meter-top strong { color:var(--ink); font-weight:600; }
+.pool-meter-top span { color:var(--muted); font-family:var(--mono); font-size:12px; }
+.pool-bar { width:100%; height:8px; border-radius:999px; background:#edf2ee; overflow:hidden; }
+.pool-bar > i { display:block; height:100%; border-radius:999px; transition:width .25s ease; }
+.pool-bar > i.ok { background:#2c8a62; }
+.pool-bar > i.warn { background:#d97706; }
+.pool-bar > i.high { background:#cf4a36; }
+
+.pool-disk-row { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--muted); padding-top:2px; }
+.pool-disk-row code { font-family:var(--mono); font-size:11.5px; color:var(--ink); background:#f3f6f4; padding:2px 6px; border-radius:5px; }
+
+.pool-sims-box { border-top:1px solid var(--line); padding-top:12px; display:flex; flex-direction:column; gap:8px; }
+.pool-sims-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.pool-sims-head strong { font-size:13px; color:var(--ink); }
+.pool-tool-tags { display:flex; flex-wrap:wrap; gap:6px; }
+.pool-tool-tag { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11.5px; font-weight:600; background:#edf5f0; color:#185842; border:1px solid #cde2d6; }
+.pool-tool-tag.eda { background:#f3f4f6; color:#4b5563; border-color:#e2e5e9; font-weight:500; }
+.pool-tool-tag.sim { background:#e8f1fb; color:#1d4e89; border-color:#c6dbf5; }
+
+.pool-proc-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+.pool-proc-table { width:100%; border-collapse:collapse; font-size:12px; }
+.pool-proc-table th { text-align:left; font-size:11px; font-weight:600; color:var(--muted); background:#f8faf9; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+.pool-proc-table td { padding:5px 8px; border-bottom:1px solid #f0f3f1; white-space:nowrap; font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+.pool-proc-table tr:last-child td { border-bottom:0; }
+.pool-proc-table tr.is-me td { background:#f1faf5; }
+.pool-me-pill { display:inline-block; margin-left:4px; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:700; background:#1f6f54; color:#fff; font-family:var(--sans); }
+.pool-sim-idle { font-size:12.5px; color:#185842; background:#eff8f3; border:1px solid #cce4d6; border-radius:8px; padding:8px 11px; }
+.pool-managed-list { display:flex; flex-direction:column; gap:6px; }
+.pool-managed-item { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 10px; border-radius:8px; background:#f4f9f6; border:1px solid #d1e5da; font-size:12px; }
+
+.pool-live-foot { margin-top:auto; padding-top:8px; border-top:1px dashed var(--line); display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; font-size:11.5px; color:var(--muted); }
+
+@media(max-width:960px) {
+  .pool-kpi-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .pool-live-grid { grid-template-columns:minmax(0, 1fr); }
+}
 
 @media(max-width:860px) {
   .home-agent-grid, .home-flow-grid { grid-template-columns:minmax(0, 1fr); }

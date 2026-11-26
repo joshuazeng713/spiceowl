@@ -179,11 +179,13 @@ async function interactiveTutorialAndWorkbench(page, report, label) {
   assert.equal(await page.locator('.home-agent-card').count(), 2, 'Expected 2 clean Agent connect cards');
   await page.locator('[data-action="home-connect-codex"]').waitFor({state: 'visible'});
   await page.locator('[data-action="home-connect-ssh"]').waitFor({state: 'visible'});
-  assert.equal(await page.locator('.home-flow-tile').count(), 3, 'Expected 3 core workflow tiles');
+  await page.locator('.home-next-card').waitFor({state: 'visible'});
   await noOverflow(page, report, `${label}-quickstart`);
   if (label === 'desktop') await snapshot(page, report, `${label}-home`);
-  // Click first core workflow tile directly into #direct waveforms
-  await page.locator('.home-flow-tile').first().click();
+  // Click Next Step button directly into #hosts (Page 2: server pool resources), then open #direct waveforms
+  await page.locator('[data-action="home-next-hosts"]').click();
+  await page.locator('[data-public-demo-info="hosts"]').waitFor();
+  await page.locator('[data-nav="direct"]').click();
 
   // 2. #direct Tab 1: 500-cycle PSF Binary waveforms, Dual Cursors A/B, Lossless Analog Metrics, Multi-Corner Overlay & Cycle Slicer #317
   await page.locator('.direct-tabs').waitFor();

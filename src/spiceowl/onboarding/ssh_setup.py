@@ -50,6 +50,7 @@ from spiceowl.onboarding.ssh_discovery import discover_ssh_hosts, validate_alias
 
 MANAGED_FILENAME = "spiceowl_hosts.conf"
 MANAGED_KEY_NAME = "id_ed25519_spiceowl"
+MANAGED_RSA_KEY_NAME = "id_rsa_spiceowl"
 INCLUDE_LINE = f"Include {MANAGED_FILENAME}"
 
 _BLOCK_START_RE = re.compile(r"^#\s*>>>\s*spiceowl-host:\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,95})\s*>>>\s*$")
@@ -460,6 +461,11 @@ def _render_host_block(entry: dict) -> str:
     if entry.get("identity_file"):
         lines.append(f"  IdentityFile {entry['identity_file']}")
         lines.append("  IdentitiesOnly yes")
+    if entry.get("legacy_rsa"):
+        lines.append("  HostKeyAlgorithms +ssh-rsa")
+        lines.append("  PubkeyAcceptedAlgorithms +ssh-rsa")
+    if entry.get("legacy_kex"):
+        lines.append("  KexAlgorithms +diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1")
     lines.append("  ServerAliveInterval 30")
     lines.append(f"# <<< spiceowl-host: {entry['alias']} <<<")
     return "\n".join(lines)
@@ -482,6 +488,8 @@ def _parse_managed_file(text: str) -> tuple[list[dict], list[str]]:
                 "user": "",
                 "proxy_jump": "",
                 "identity_file": "",
+                "legacy_rsa": False,
+                "legacy_kex": False,
                 "managed": True,
             }
             continue
@@ -510,6 +518,10 @@ def _parse_managed_file(text: str) -> tuple[list[dict], list[str]]:
                 cur["proxy_jump"] = val
             elif key == "identityfile":
                 cur["identity_file"] = val
+            elif key in ("hostkeyalgorithms", "pubkeyacceptedalgorithms", "pubkeyacceptedkeytypes") and "ssh-rsa" in val:
+                cur["legacy_rsa"] = True
+            elif key == "kexalgorithms" and "sha1" in val:
+                cur["legacy_kex"] = True
         else:
             other_lines.append(line)
     return hosts, other_lines
@@ -589,6 +601,9 @@ def upsert_managed_host(ssh_dir: str | Path | None, entry: dict) -> dict:
     else:
         identity_file = validate_identity_file(raw_id, ssh_dir=base)
 
+    legacy_rsa = bool(entry.get("legacy_rsa", False))
+    legacy_kex = bool(entry.get("legacy_kex", False))
+
     record = {
         "alias": alias,
         "hostname": hostname,
@@ -596,6 +611,8 @@ def upsert_managed_host(ssh_dir: str | Path | None, entry: dict) -> dict:
         "user": user,
         "proxy_jump": proxy_jump,
         "identity_file": identity_file,
+        "legacy_rsa": legacy_rsa,
+        "legacy_kex": legacy_kex,
         "managed": True,
     }
     managed_path = base / MANAGED_FILENAME
@@ -641,9 +658,17 @@ def delete_managed_host(ssh_dir: str | Path | None, alias: str) -> dict:
 # SSH key management (never reads private key contents)
 # ---------------------------------------------------------------------------
 
-def ensure_managed_key(ssh_dir: str | Path | None = None, *, key_name: str = MANAGED_KEY_NAME) -> dict:
-    """Ensure the SpiceOwl managed Ed25519 key exists; return public key metadata only."""
-    clean_name = validate_key_name(key_name)
+def ensure_managed_key(
+    ssh_dir: str | Path | None = None,
+    *,
+    key_name: str | None = None,
+    key_type: str = "ed25519",
+) -> dict:
+    """Ensure a SpiceOwl managed key (Ed25519 or RSA-4096 for legacy OpenSSH) exists."""
+    if key_type not in ("ed25519", "rsa"):
+        raise DomainError("key_type must be 'ed25519' or 'rsa'.", "ssh_key_invalid")
+    effective_name = key_name or (MANAGED_RSA_KEY_NAME if key_type == "rsa" else MANAGED_KEY_NAME)
+    clean_name = validate_key_name(effective_name)
     base = _ensure_ssh_dir(ssh_dir)
     priv_path = base / clean_name
     pub_path = base / f"{clean_name}.pub"
@@ -664,10 +689,11 @@ def ensure_managed_key(ssh_dir: str | Path | None = None, *, key_name: str = MAN
             _atomic_write_private(pub_path, pub_line + "\n", mode=0o644)
         else:
             keygen = _resolve_openssh_tool("ssh-keygen")
-            rc, _out, err = _run_bounded(
-                [keygen, "-t", "ed25519", "-N", "", "-C", "spiceowl-local", "-f", str(priv_path)],
-                timeout=15.0,
-            )
+            kg_argv = [keygen, "-t", key_type]
+            if key_type == "rsa":
+                kg_argv.extend(["-b", "4096"])
+            kg_argv.extend(["-N", "", "-C", "spiceowl-local", "-f", str(priv_path)])
+            rc, _out, err = _run_bounded(kg_argv, timeout=15.0)
             if rc != 0 or not pub_path.is_file():
                 msg = err.decode("utf-8", errors="replace").strip()[:200]
                 raise DomainError(f"ssh-keygen failed to generate '{clean_name}': {msg or 'unknown error'}", "ssh_keygen_failed")
@@ -681,6 +707,7 @@ def ensure_managed_key(ssh_dir: str | Path | None = None, *, key_name: str = MAN
     config_path = f"~/.ssh/{clean_name}" if base == home_ssh else str(priv_path)
     return {
         "name": clean_name,
+        "key_type": normalized_pub.split(None, 1)[0],
         "private_path": str(priv_path),
         "config_path": config_path,
         "public_key": normalized_pub,
@@ -723,7 +750,7 @@ def list_local_keys(ssh_dir: str | Path | None = None) -> list[dict]:
             "public_key": pub_line,
             "fingerprint": fp,
             "has_private": has_private,
-            "managed": key_name == MANAGED_KEY_NAME,
+            "managed": key_name in (MANAGED_KEY_NAME, MANAGED_RSA_KEY_NAME),
         })
     results.sort(key=lambda row: (not row["managed"], row["name"]))
     return results
@@ -782,7 +809,6 @@ def _base_batch_ssh_argv(ssh_config: Path | None) -> list[str]:
         "ConnectionAttempts=1",
         "ConnectTimeout=8",
         "NumberOfPasswordPrompts=0",
-        "LogLevel=ERROR",
     ))
     for opt in base_opts:
         argv.extend(["-o", opt])
@@ -813,7 +839,7 @@ def scan_host_key(
         argv = _base_batch_ssh_argv(cfg_path)
         if prior_hops:
             argv.extend(["-J", ",".join(prior_hops)])
-        argv.extend(["--", last_hop, f"ssh-keyscan -T 8 -p {clean_port} -- {shlex.quote(clean_host)}"])
+        argv.extend(["--", last_hop, f"ssh-keyscan -T 8 -p {clean_port} {shlex.quote(clean_host)}"])
         rc, out, err = _run_bounded(argv, timeout=DEFAULT_KEYSCAN_TIMEOUT + 5.0)
 
     out_text = out.decode("utf-8", errors="replace")
@@ -917,6 +943,8 @@ def deploy_public_key(
     proxy_jump: str = "",
     ssh_config: str | Path | None = None,
     accept_new_host_key: bool = True,
+    legacy_rsa: bool = False,
+    legacy_kex: bool = False,
 ) -> dict:
     """Deploy ``public_key`` to remote ``~/.ssh/authorized_keys`` using a one-time password.
 
@@ -980,6 +1008,11 @@ def deploy_public_key(
         if cfg_path.is_file():
             argv.extend(["-F", str(cfg_path)])
         strict_mode = "accept-new" if accept_new_host_key else "yes"
+        extra_legacy: list[str] = []
+        if legacy_rsa:
+            extra_legacy.extend(["HostKeyAlgorithms=+ssh-rsa", "PubkeyAcceptedAlgorithms=+ssh-rsa"])
+        if legacy_kex:
+            extra_legacy.append("KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1")
         opts = ssh_client_options((
             "BatchMode=no",
             f"StrictHostKeyChecking={strict_mode}",
@@ -997,7 +1030,7 @@ def deploy_public_key(
             "RequestTTY=no",
             "ConnectionAttempts=1",
             "ConnectTimeout=10",
-            "LogLevel=ERROR",
+            *extra_legacy,
         ))
         for opt in opts:
             argv.extend(["-o", opt])
@@ -1020,6 +1053,17 @@ def deploy_public_key(
             "username": clean_user,
             "fingerprint": fp,
             "message": "该公钥已存在于远端 authorized_keys，无需重复写入。" if already else "公钥已自动写入远端 ~/.ssh/authorized_keys（一次性密码已立即销毁）。",
+        }
+    if "no matching host key type found" in err_low or "no matching key exchange method found" in err_low:
+        return {
+            "ok": False,
+            "code": "legacy_ssh_negotiation",
+            "already_present": False,
+            "hostname": clean_host,
+            "port": clean_port,
+            "username": clean_user,
+            "fingerprint": fp,
+            "message": "远端为旧版 OpenSSH（仅支持 ssh-rsa / 旧加密套件），需启用旧版兼容模式后重试。",
         }
     if "remote host identification has changed" in err_low:
         return {
@@ -1116,17 +1160,35 @@ def _tcp_probe(host: str, port: int, timeout: float = DEFAULT_TCP_TIMEOUT) -> tu
         return False, f"无法连通 {host}:{port}（{exc.strerror or type(exc).__name__}），请检查端口、SSH 服务或网络。"
 
 
-def _classify_ssh_failure(err_bytes: bytes, *, role: str) -> tuple[str, str]:
-    low = err_bytes.decode("utf-8", errors="replace").lower()
+def _classify_ssh_failure(err_bytes: bytes, *, role: str) -> tuple[str, str, dict]:
+    raw_text = err_bytes.decode("utf-8", errors="replace").strip()
+    low = raw_text.lower()
+    first_line = next((ln.strip()[:180] for ln in raw_text.splitlines() if ln.strip()), "")
+    flags = {"needs_legacy_rsa": False, "needs_legacy_kex": False, "raw_hint": first_line}
+    if "no matching host key type found" in low or ("their offer:" in low and "ssh-rsa" in low):
+        flags["needs_legacy_rsa"] = True
+        return (
+            "legacy_ssh_negotiation",
+            f"{role}为旧版 OpenSSH（仅提供 ssh-rsa 主机算法），需启用 RSA 兼容模式（HostKeyAlgorithms +ssh-rsa）。",
+            flags,
+        )
+    if "no matching key exchange method found" in low:
+        flags["needs_legacy_kex"] = True
+        return (
+            "legacy_ssh_negotiation",
+            f"{role}为旧版 OpenSSH（密钥交换算法较旧），需启用旧版 KEX 兼容模式。",
+            flags,
+        )
     if "remote host identification has changed" in low:
-        return "need_host_key", f"{role}主机指纹发生变化，与本地 known_hosts 冲突，请核实后更新指纹。"
+        return "need_host_key", f"{role}主机指纹发生变化，与本地 known_hosts 冲突，请核实后更新指纹。", flags
     if "host key verification failed" in low:
-        return "need_host_key", f"本地尚未信任{role}指纹，请先扫描并确认写入 ~/.ssh/known_hosts。"
+        return "need_host_key", f"本地尚未信任{role}指纹，请先扫描并确认写入 ~/.ssh/known_hosts。", flags
     if "permission denied" in low or "publickey" in low:
-        return "need_key_deploy", f"{role}免密认证未通过：请确认已将公钥部署到{role}的 ~/.ssh/authorized_keys。"
+        return "need_key_deploy", f"{role}免密认证未通过：请将本机公钥部署到{role}，或切换为已授权的本地密钥。", flags
     if any(k in low for k in ("could not resolve", "name or service not known", "nodename nor servname", "no route", "unreachable", "timed out", "connection refused")):
-        return "network_unreachable", f"{role}网络不可达或超时，请检查 VPN、主机地址、端口与跳板机路由。"
-    return "ssh_error", f"{role} SSH 连接失败，请核对主机名、用户名、跳板机与密钥配置。"
+        return "network_unreachable", f"{role}网络不可达或超时，请检查 VPN、主机地址、端口与跳板机路由。", flags
+    extra = f"（OpenSSH 提示：{first_line}）" if first_line else ""
+    return "ssh_error", f"{role} SSH 连接失败，请核对主机名、用户名、跳板机与密钥配置{extra}。", flags
 
 
 def _parse_probe_kv(stdout_text: str) -> dict:
@@ -1163,24 +1225,36 @@ def diagnose_connection(ssh_dir: str | Path | None, alias: str) -> dict:
     if proxy_jump:
         first_hop = proxy_jump.split(",")[0].strip()
         try:
-            _, hop_host_or_alias, hop_port = _parse_single_jump_hop(first_hop)
+            hop_user, hop_host_or_alias, hop_port = _parse_single_jump_hop(first_hop)
         except DomainError:
-            hop_host_or_alias, hop_port = first_hop, None
+            hop_user, hop_host_or_alias, hop_port = None, first_hop, None
         hop_meta = _lookup_alias_metadata(base, hop_host_or_alias) if hop_port is None else {}
         tcp_host = hop_meta.get("hostname") or hop_host_or_alias
         tcp_port = int(hop_port or hop_meta.get("port") or 22)
+        eff_jump_user = hop_user or hop_meta.get("user") or meta.get("user") or ""
+        jump_hop_info = {
+            "role": "jump",
+            "alias": hop_meta.get("alias") or hop_host_or_alias,
+            "hostname": tcp_host,
+            "port": tcp_port,
+            "username": eff_jump_user,
+            "proxy_jump": "",
+            "legacy_rsa": bool(hop_meta.get("legacy_rsa", False)),
+            "legacy_kex": bool(hop_meta.get("legacy_kex", False)),
+            "managed": bool(hop_meta.get("managed", False)),
+        }
 
         tcp_ok, tcp_detail = _tcp_probe(tcp_host, tcp_port)
         steps.append({"id": "jump_tcp", "label": f"跳板机网络连通 ({tcp_host}:{tcp_port})", "ok": tcp_ok, "detail": tcp_detail})
         if not tcp_ok:
-            return {"ok": False, "alias": clean_alias, "code": "network_unreachable", "steps": steps, "remote": remote}
+            return {"ok": False, "alias": clean_alias, "code": "network_unreachable", "steps": steps, "remote": remote, "failing_hop": jump_hop_info}
 
         jump_argv = _base_batch_ssh_argv(cfg_path) + ["--", first_hop, "true"]
         j_rc, _j_out, j_err = _run_bounded(jump_argv, timeout=DEFAULT_SSH_TIMEOUT)
         if j_rc != 0:
-            code, detail = _classify_ssh_failure(j_err, role=f"跳板机 ({first_hop}) ")
+            code, detail, flags = _classify_ssh_failure(j_err, role=f"跳板机 ({first_hop}) ")
             steps.append({"id": "jump_auth", "label": f"跳板机免密认证 ({first_hop})", "ok": False, "detail": detail})
-            return {"ok": False, "alias": clean_alias, "code": code, "steps": steps, "remote": remote}
+            return {"ok": False, "alias": clean_alias, "code": code, "steps": steps, "remote": remote, "failing_hop": {**jump_hop_info, **flags}}
         steps.append({"id": "jump_auth", "label": f"跳板机免密认证 ({first_hop})", "ok": True, "detail": f"跳板机 {first_hop} 免密认证通过。"})
     else:
         target_host = meta.get("hostname") or clean_alias
@@ -1188,7 +1262,15 @@ def diagnose_connection(ssh_dir: str | Path | None, alias: str) -> dict:
         tcp_ok, tcp_detail = _tcp_probe(target_host, target_port)
         steps.append({"id": "target_tcp", "label": f"目标机网络连通 ({target_host}:{target_port})", "ok": tcp_ok, "detail": tcp_detail})
         if not tcp_ok:
-            return {"ok": False, "alias": clean_alias, "code": "network_unreachable", "steps": steps, "remote": remote}
+            return {
+                "ok": False, "alias": clean_alias, "code": "network_unreachable", "steps": steps, "remote": remote,
+                "failing_hop": {
+                    "role": "target", "alias": clean_alias, "hostname": target_host, "port": target_port,
+                    "username": meta.get("user") or "", "proxy_jump": "",
+                    "legacy_rsa": bool(meta.get("legacy_rsa", False)), "legacy_kex": bool(meta.get("legacy_kex", False)),
+                    "managed": bool(meta.get("managed", False)),
+                },
+            }
 
     probe_cmd = (
         "printf 'USER=%s\\nHOST=%s\\nPY3=%s\\nPY=%s\\nSPECTRE=%s\\nNGSPICE=%s\\n' "
@@ -1202,9 +1284,22 @@ def diagnose_connection(ssh_dir: str | Path | None, alias: str) -> dict:
     target_argv = _base_batch_ssh_argv(cfg_path) + ["--", clean_alias, probe_cmd]
     t_rc, t_out, t_err = _run_bounded(target_argv, timeout=DEFAULT_SSH_TIMEOUT)
     if t_rc != 0:
-        code, detail = _classify_ssh_failure(t_err, role=f"目标机 ({clean_alias}) ")
+        code, detail, flags = _classify_ssh_failure(t_err, role=f"目标机 ({clean_alias}) ")
         steps.append({"id": "target_auth", "label": f"目标机免密认证 ({clean_alias})", "ok": False, "detail": detail})
-        return {"ok": False, "alias": clean_alias, "code": code, "steps": steps, "remote": remote}
+        return {
+            "ok": False, "alias": clean_alias, "code": code, "steps": steps, "remote": remote,
+            "failing_hop": {
+                "role": "target", "alias": clean_alias,
+                "hostname": meta.get("hostname") or clean_alias,
+                "port": int(meta.get("port") or 22),
+                "username": meta.get("user") or "",
+                "proxy_jump": proxy_jump,
+                "legacy_rsa": bool(meta.get("legacy_rsa", False)),
+                "legacy_kex": bool(meta.get("legacy_kex", False)),
+                "managed": bool(meta.get("managed", False)),
+                **flags,
+            },
+        }
 
     remote = _parse_probe_kv(t_out.decode("utf-8", errors="replace"))
     who = f"{remote['username'] or '?'}@{remote['hostname'] or clean_alias}"

@@ -362,6 +362,60 @@ class TestSshHostKeysDeployAndDiagnostics(unittest.TestCase):
             self.assertFalse(r_py["ok"])
             self.assertEqual(r_py["code"], "missing_python")
 
+            # 6. Legacy OpenSSH 5.3 (ssh-rsa only) on jump host reports failing_hop + needs_legacy_rsa
+            legacy_err = b"Unable to negotiate with 10.0.0.1 port 2222: no matching host key type found. Their offer: ssh-rsa,ssh-dss\r\n"
+            with patch.object(ssh_setup, "_tcp_probe", return_value=(True, "ok")), \
+                    patch.object(ssh_setup, "_run_bounded", return_value=(255, b"", legacy_err)):
+                r_leg = diagnose_connection(ssh_dir, "eda-jumped")
+            self.assertFalse(r_leg["ok"])
+            self.assertEqual(r_leg["code"], "legacy_ssh_negotiation")
+            self.assertEqual(r_leg["failing_hop"]["role"], "jump")
+            self.assertTrue(r_leg["failing_hop"]["needs_legacy_rsa"])
+
+            # Upsert with legacy_rsa=True writes HostKeyAlgorithms +ssh-rsa and parses back cleanly
+            upsert_managed_host(ssh_dir, {
+                "alias": "jump-legacy",
+                "hostname": "10.0.0.1",
+                "user": "alice",
+                "legacy_rsa": True,
+                "legacy_kex": True,
+            })
+            managed_map = {h["alias"]: h for h in list_managed_hosts(ssh_dir)}
+            self.assertTrue(managed_map["jump-legacy"]["legacy_rsa"])
+            self.assertTrue(managed_map["jump-legacy"]["legacy_kex"])
+            conf_text = (ssh_dir / MANAGED_FILENAME).read_text(encoding="utf-8")
+            self.assertIn("HostKeyAlgorithms +ssh-rsa", conf_text)
+            self.assertIn("PubkeyAcceptedAlgorithms +ssh-rsa", conf_text)
+
+            # ensure_managed_key(key_type="rsa") generates 4096-bit RSA key
+            def fake_rsa_keygen(argv, **_kwargs):
+                self.assertIn("rsa", argv)
+                self.assertIn("4096", argv)
+                priv = Path(argv[argv.index("-f") + 1])
+                priv.write_text("FAKE-RSA-PRIV\n", encoding="utf-8")
+                Path(str(priv) + ".pub").write_text(f"ssh-rsa {_FAKE_ED25519_BLOB} spiceowl-local\n", encoding="utf-8")
+                return 0, b"", b""
+
+            with patch.object(ssh_setup, "_run_bounded", side_effect=fake_rsa_keygen):
+                rsa_k = ensure_managed_key(ssh_dir, key_type="rsa")
+            self.assertEqual(rsa_k["name"], ssh_setup.MANAGED_RSA_KEY_NAME)
+            self.assertEqual(rsa_k["key_type"], "ssh-rsa")
+
+            # deploy_public_key(legacy_rsa=True) passes +ssh-rsa options
+            dep_argv = []
+            def fake_dep(argv, **_kwargs):
+                dep_argv.extend(argv)
+                return 0, b"SPICEOWL_KEY_DEPLOYED\n", b""
+
+            with patch.object(ssh_setup, "_run_bounded", side_effect=fake_dep):
+                dep_res = deploy_public_key(
+                    ssh_dir=ssh_dir, hostname="10.0.0.1", port=22, username="alice",
+                    public_key=rsa_k["public_key"], password="temp-pw-123", legacy_rsa=True,
+                )
+            self.assertTrue(dep_res["ok"])
+            self.assertIn("HostKeyAlgorithms=+ssh-rsa", dep_argv)
+            self.assertIn("PubkeyAcceptedAlgorithms=+ssh-rsa", dep_argv)
+
 
 class TestSshSetupUiAndServerRoutes(unittest.TestCase):
     def test_reusable_html_csp_and_dispatcher(self) -> None:

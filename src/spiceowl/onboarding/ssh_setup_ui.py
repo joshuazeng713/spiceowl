@@ -5,12 +5,13 @@ Designed to be mounted on loopback HTTP connectors by BOTH:
 - CircuitGit's local Connector (`tools/workbench/remote_node.py` via submodule)
 
 UX philosophy:
-- Ask ONLY for the minimal essentials up front (target host + username, plus
-  optional ProxyJump toggle). Alias, port (22), and managed Ed25519 key are
-  handled automatically and tucked under an expandable "Advanced" section.
-- Progressive disclosure: click ONE button ("保存并测试连接"); if host key
-  trust or public-key deployment is needed, the wizard automatically surfaces
-  only that exact step in-place and re-tests once confirmed.
+- Ask ONLY for minimal essentials up front (target server + username + optional
+  ProxyJump address/username + visible 1-line key selector/copy bar).
+- Progressive step-by-step repair on the EXACT failing hop (jump host OR target
+  server): automatically enables legacy `ssh-rsa` compatibility + RSA-4096 key
+  for older EDA OpenSSH 5.x/6.x gateways, scans & trusts host fingerprints, and
+  deploys public keys with a one-time password or 1-click copy—all inside the
+  single popup window.
 
 Security guarantees:
 - Strict nonce-based Content-Security-Policy (`default-src 'none'`, no inline handlers).
@@ -29,6 +30,7 @@ import re
 from spiceowl.domain.common import DomainError
 from spiceowl.onboarding.ssh_setup import (
     MANAGED_KEY_NAME,
+    MANAGED_RSA_KEY_NAME,
     delete_managed_host,
     deploy_public_key,
     diagnose_connection,
@@ -78,6 +80,7 @@ def build_ssh_setup_state(ssh_dir: str | Path | None = None) -> dict:
         "managed_file": aliases_info["managed_file"],
         "keys": keys,
         "default_key_name": MANAGED_KEY_NAME,
+        "default_rsa_key_name": MANAGED_RSA_KEY_NAME,
         "has_managed_key": any(k.get("name") == MANAGED_KEY_NAME and k.get("has_private") for k in keys),
         "ssh_dir": str(base),
     }
@@ -96,8 +99,9 @@ def dispatch_ssh_setup_action(ssh_dir: str | Path | None, action: str, payload: 
         return {"ok": True, "state": build_ssh_setup_state(base)}
 
     if action == "ensure_key":
-        key_name = data.get("key_name") or MANAGED_KEY_NAME
-        key_info = ensure_managed_key(base, key_name=key_name)
+        key_type = data.get("key_type") or "ed25519"
+        key_name = data.get("key_name") or None
+        key_info = ensure_managed_key(base, key_name=key_name, key_type=key_type)
         return {"ok": True, "key": key_info, "state": build_ssh_setup_state(base)}
 
     if action == "upsert_host":
@@ -124,9 +128,11 @@ def dispatch_ssh_setup_action(ssh_dir: str | Path | None, action: str, payload: 
 
     if action == "deploy_key":
         cfg = base / "config"
+        legacy_rsa = bool(data.get("legacy_rsa", False))
+        legacy_kex = bool(data.get("legacy_kex", False))
         pub = data.get("public_key", "")
         if not pub:
-            pub = ensure_managed_key(base)["public_key"]
+            pub = ensure_managed_key(base, key_type="rsa" if legacy_rsa else "ed25519")["public_key"]
         accept_new = data.get("accept_new_host_key", True)
         if type(accept_new) is not bool:
             raise DomainError("accept_new_host_key must be boolean.", "ssh_setup_payload_invalid")
@@ -140,6 +146,8 @@ def dispatch_ssh_setup_action(ssh_dir: str | Path | None, action: str, payload: 
             proxy_jump=data.get("proxy_jump", "") or data.get("jump_alias", ""),
             ssh_config=cfg if cfg.is_file() else None,
             accept_new_host_key=accept_new,
+            legacy_rsa=legacy_rsa,
+            legacy_kex=legacy_kex,
         )
         return {"ok": bool(deploy["ok"]), "deploy": deploy}
 
@@ -207,18 +215,18 @@ def ssh_setup_html(
 :root{{--bg:#f4f5f0;--card:#ffffff;--ink:#172e35;--muted:#53666c;--line:#d8dfd7;--accent:#1f6f54;--accent-hover:#185842;--accent-soft:#edf5f0;--danger:#b42318;--danger-soft:#fef3f2;--warn:#9a5b13;--warn-soft:#fef7ec;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',sans-serif}}
 *{{box-sizing:border-box}}
 body{{margin:0;padding:18px;background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans)}}
-.wrap{{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:14px}}
-.hdr{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}}
+.wrap{{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:14px}}
+.hdr{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}}
 .hdr h1{{margin:0;font-size:18px;letter-spacing:-.01em}}
 .hdr p{{margin:3px 0 0;font-size:12.5px;color:var(--muted)}}
 .pill{{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent-hover);font-size:11.5px;font-weight:600;white-space:nowrap}}
-.layout{{display:grid;grid-template-columns:240px minmax(0,1fr);gap:14px;align-items:start}}
+.layout{{display:grid;grid-template-columns:235px minmax(0,1fr);gap:14px;align-items:start}}
 .layout.single{{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:740px){{.layout{{grid-template-columns:1fr}}}}
-.panel{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:14px}}
+.panel{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:13px}}
 .panel h2{{margin:0;font-size:15.5px;display:flex;align-items:center;gap:8px}}
 .sub{{margin:0;font-size:12.5px;color:var(--muted)}}
-.host-list{{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow:auto}}
+.host-list{{display:flex;flex-direction:column;gap:8px;max-height:560px;overflow:auto}}
 .host-item{{border:1px solid var(--line);border-radius:9px;padding:10px 11px;background:#fbfcfa;display:flex;flex-direction:column;gap:6px}}
 .host-item.active{{border-color:var(--accent);background:var(--accent-soft)}}
 .host-item-top{{display:flex;justify-content:space-between;align-items:center;gap:6px}}
@@ -235,7 +243,10 @@ input:focus,select:focus,textarea:focus{{outline:2px solid rgba(31,111,84,.25);b
 textarea.mono{{font:12px/1.45 var(--mono);background:#f6f8f6;border:1px solid var(--line);border-radius:8px;padding:9px 10px;resize:none;word-break:break-all}}
 .check-toggle{{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;user-select:none}}
 .check-toggle input{{width:auto;margin:0;accent-color:var(--accent)}}
-.jump-box{{background:#f8fbf9;border:1px solid #d4e3da;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:8px}}
+.jump-box{{background:#f8fbf9;border:1px solid #d4e3da;border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:10px}}
+.key-bar{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f8faf8;border:1px solid var(--line);border-radius:9px;padding:9px 12px}}
+.key-bar label{{font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap}}
+.key-bar select{{flex:1 1 200px;padding:6px 9px;font-size:13px}}
 .row{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
 button{{border:1px solid transparent;border-radius:8px;padding:9px 15px;font:600 13.5px/1.2 var(--sans);cursor:pointer;transition:background .15s,border-color .15s}}
 button:disabled{{opacity:.55;cursor:not-allowed}}
@@ -263,7 +274,7 @@ button:disabled{{opacity:.55;cursor:not-allowed}}
 details.adv{{border-top:1px dashed var(--line);padding-top:10px}}
 details.adv summary{{cursor:pointer;font-size:12.5px;color:var(--muted);user-select:none}}
 details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
-.footer-bar{{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #ebefea}}
+.footer-bar{{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding-top:6px;border-top:1px solid #ebefea}}
 .hidden{{display:none !important}}
 </style>
 </head>
@@ -272,7 +283,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   <header class="hdr">
     <div>
       <h1>🦉 连接你的 SSH 服务器</h1>
-      <p>只需填写服务器地址和用户名；密钥、跳板机、指纹信任和连通检测全自动引导，绝不覆盖你原有的 SSH 配置。</p>
+      <p>全流程都在本页完成：填地址与用户名 → 自动兼容旧版 EDA 服务器 → 一键信任指纹 → 免密密钥自动写入并连通验证。</p>
     </div>
     <span class="pill">🔒 仅本机 127.0.0.1 · 密码绝不落盘</span>
   </header>
@@ -290,47 +301,62 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       <h2 id="form-title">填写服务器信息</h2>
       <form id="host-form" autocomplete="off">
         <div class="grid2">
-          <label class="field">服务器地址（IP 或域名）
-            <input id="f-hostname" required maxlength="253" placeholder="例如：10.0.1.25 或 alice@sim.lab.edu">
+          <label class="field">目标服务器地址（IP 或主机名）
+            <input id="f-hostname" required maxlength="253" placeholder="例如：10.0.1.25 或 thu-shu">
             <small>支持直接粘贴 <code>用户名@地址</code>，会自动拆开填好。</small>
           </label>
           <label class="field">登录用户名
-            <input id="f-user" required maxlength="64" placeholder="例如：alice">
+            <input id="f-user" required maxlength="64" placeholder="例如：zengsy">
             <small>你在该服务器上的 Linux 账号名。</small>
           </label>
         </div>
 
-        <div style="margin-top:12px">
+        <div style="margin-top:11px">
           <label class="check-toggle">
             <input id="f-use-jump" type="checkbox">
             <span>需要经过跳板机中转（ProxyJump）</span>
           </label>
         </div>
 
-        <div id="jump-box" class="jump-box hidden" style="margin-top:10px">
-          <label class="field">跳板机地址或已有别名
-            <input id="f-jump" maxlength="320" placeholder="例如：bastion 或 user@jump.lab.edu（多跳用逗号分隔）">
-            <small>若还没有配跳板机，可先填跳板机的地址保存一次，再新建目标机并选择它。</small>
-          </label>
+        <div id="jump-box" class="jump-box hidden" style="margin-top:9px">
+          <div class="grid2">
+            <label class="field">跳板机地址或已有别名
+              <input id="f-jump" maxlength="320" placeholder="例如：101.6.68.50 或 bastion">
+              <small>支持填 IP/域名（自动托管），也支持多跳逗号分隔。</small>
+            </label>
+            <label class="field">跳板机用户名（选填）
+              <input id="f-jump-user" maxlength="64" placeholder="留空默认与目标机用户名相同">
+              <small>若跳板机账号不同再填即可。</small>
+            </label>
+          </div>
           <div id="jump-chips" class="chips"></div>
         </div>
 
-        <details id="adv-details" class="adv" style="margin-top:12px">
-          <summary>更多选项（自定义别名 / 端口 22 / 切换密钥）</summary>
+        <div class="key-bar" style="margin-top:11px">
+          <label for="f-key">🔑 免密密钥</label>
+          <select id="f-key"></select>
+          <button id="btn-quick-copy-key" class="btn-sec btn-sm" type="button">复制公钥</button>
+        </div>
+
+        <details id="adv-details" class="adv" style="margin-top:10px">
+          <summary>更多选项（自定义别名 / 端口 22 / 旧版 OpenSSH 兼容）</summary>
           <div class="grid2">
-            <label class="field">服务器别名（默认自动生成）
-              <input id="f-alias" maxlength="96" placeholder="留空则按地址自动命名">
+            <label class="field">服务器别名（默认自动按地址命名）
+              <input id="f-alias" maxlength="96" placeholder="留空自动命名">
             </label>
             <label class="field">SSH 端口
               <input id="f-port" type="number" min="1" max="65535" value="22">
             </label>
-            <label class="field" style="grid-column:1 / -1">免密私钥（默认自动管理 Ed25519 密钥）
-              <select id="f-key"></select>
+          </div>
+          <div style="margin-top:8px">
+            <label class="check-toggle" style="font-weight:500">
+              <input id="f-legacy-rsa" type="checkbox">
+              <span>启用旧版 OpenSSH (ssh-rsa) 兼容模式（通常会自动识别开启）</span>
             </label>
           </div>
         </details>
 
-        <div class="row" style="margin-top:14px">
+        <div class="row" style="margin-top:13px">
           <button id="btn-save-test" class="btn-primary" type="submit">保存并测试连接</button>
           <button id="btn-save-only" class="btn-sec" type="button">仅保存</button>
           <span id="busy-text" class="sub"></span>
@@ -339,14 +365,14 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
 
       <div id="global-msg" class="notice hidden" role="status"></div>
 
-      <!-- Progressive diagnostic timeline (shown after clicking Save & Test) -->
+      <!-- Progressive diagnostic timeline -->
       <section id="diag-section" class="hidden" style="display:flex;flex-direction:column;gap:10px">
         <ul id="diag-steps" class="step-list"></ul>
 
-        <!-- Step-on-demand A: Host key verification (shown ONLY when code === need_host_key) -->
+        <!-- Step-on-demand A: Host key verification (automatically targets the exact failing hop: jump OR target!) -->
         <div id="assist-hostkey" class="assist-card hidden">
-          <h3>🔑 首次连接：确认服务器指纹</h3>
-          <p class="sub">请核对下方服务器公钥指纹，确认无误后点击信任即可自动写入 <code>~/.ssh/known_hosts</code> 并继续测试。</p>
+          <h3 id="hk-title">🔑 首次连接：确认服务器指纹</h3>
+          <p id="hk-desc" class="sub">请核对下方服务器公钥指纹，确认无误后点击信任即可写入 <code>~/.ssh/known_hosts</code> 并继续测试。</p>
           <div id="fp-results" style="display:flex;flex-direction:column;gap:6px"></div>
           <div class="row">
             <button id="btn-trust-retry" class="btn-primary" type="button" disabled>信任此指纹并继续测试</button>
@@ -354,17 +380,18 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
           </div>
         </div>
 
-        <!-- Step-on-demand B: Public key deployment (shown ONLY when code === need_key_deploy) -->
+        <!-- Step-on-demand B: Public key deployment (automatically targets the exact failing hop: jump OR target!) -->
         <div id="assist-deploy" class="assist-card hidden">
-          <h3>🔐 首次免密：将本机公钥写入目标服务器</h3>
-          <p class="sub">只需配置这一次免密，之后永久免密码。输入一次登录密码可自动写入（密码用完即销毁，绝不保存）；若服务器禁止密码登录，直接复制公钥即可。</p>
+          <h3 id="dp-title">🔐 首次免密：配置本机公钥</h3>
+          <p id="dp-desc" class="sub">输入一次登录密码即可把本机公钥自动写入远端（密码用完即销毁，绝不保存）；如果你本机已有授权密钥，直接在上方「🔑 免密密钥」切换后点重新测试即可免密登录。</p>
+          <div id="dp-alt-keys" class="chips hidden"></div>
           <div class="row">
-            <input id="f-password" type="password" autocomplete="new-password" placeholder="输入一次远端登录密码（仅本次生效）" style="flex:1 1 220px">
-            <button id="btn-deploy-retry" class="btn-primary" type="button">自动配置免密并重测</button>
+            <input id="f-password" type="password" autocomplete="new-password" placeholder="输入一次登录密码（仅本次部署公钥）" style="flex:1 1 220px">
+            <button id="btn-deploy-retry" class="btn-primary" type="button">自动配置免密并继续</button>
           </div>
           <div id="deploy-msg" class="notice hidden"></div>
           <details class="adv">
-            <summary>服务器禁止密码登录或需动态验证码？展开手动复制公钥</summary>
+            <summary>服务器禁止密码登录或需动态验证码？展开复制公钥手动粘贴</summary>
             <div style="display:flex;flex-direction:column;gap:8px">
               <div id="key-fp" class="sub"></div>
               <textarea id="pub-key-box" class="mono" rows="2" readonly></textarea>
@@ -396,6 +423,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   let scannedEntries = [];
   let selectedAlias = '';
   let lastDiagnosis = null;
+  let activeHop = null;
   let aliasTouched = false;
 
   const $ = (id) => document.getElementById(id);
@@ -407,13 +435,13 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     el.textContent = text;
   }}
 
-  function deriveAlias(host) {{
+  function deriveAlias(host, prefix) {{
     const clean = (host || '').trim().toLowerCase().replace(/^https?:\\/\\//, '');
     if (!clean) return '';
     const isIp = /^[0-9.]+$/.test(clean);
-    const base = isIp ? ('eda-' + clean.replace(/\\./g, '-')) : clean.split('.')[0];
+    const base = isIp ? ((prefix || 'eda') + '-' + clean.replace(/\\./g, '-')) : clean.split('.')[0];
     const safe = base.replace(/[^a-z0-9_-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
-    return safe || 'eda-server';
+    return safe || (prefix || 'eda-server');
   }}
 
   async function callAction(action, payload) {{
@@ -435,9 +463,17 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     return data;
   }}
 
-  function managedKeyObj() {{
+  function findSelectedKeyObj() {{
+    const choice = $('f-key').value;
     const keys = appState.keys || [];
-    return keys.find(k => k.managed && k.has_private) || keys.find(k => k.has_private) || keys[0] || null;
+    if (choice && choice !== '__auto__') {{
+      const match = keys.find(k => k.config_path === choice);
+      if (match) return match;
+    }}
+    return keys.find(k => k.name === BOOT.state.default_key_name && k.has_private)
+      || keys.find(k => k.managed && k.has_private)
+      || keys.find(k => k.has_private)
+      || null;
   }}
 
   function renderKeys() {{
@@ -446,27 +482,28 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     sel.replaceChildren();
     const optAuto = document.createElement('option');
     optAuto.value = '__auto__';
-    optAuto.textContent = '自动使用 {safe_brand} 托管 Ed25519 密钥（推荐）';
+    optAuto.textContent = '自动管理密钥（新版 Ed25519 / 旧版服务器自动 RSA）';
     sel.appendChild(optAuto);
-    const optDefault = document.createElement('option');
-    optDefault.value = '';
-    optDefault.textContent = '使用 OpenSSH 默认密钥（不指定 IdentityFile）';
-    sel.appendChild(optDefault);
     for (const k of (appState.keys || [])) {{
       if (!k.has_private) continue;
       const opt = document.createElement('option');
       opt.value = k.config_path;
-      opt.textContent = k.name + (k.managed ? '（托管）' : '') + ' · ' + k.key_type;
+      opt.textContent = k.name + (k.managed ? '（托管）' : '（本机已有）') + ' · ' + k.key_type;
       sel.appendChild(opt);
     }}
+    const optNone = document.createElement('option');
+    optNone.value = '';
+    optNone.textContent = '使用 OpenSSH 默认密钥（不指定）';
+    sel.appendChild(optNone);
     if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
-    else {{
-      const mk = (appState.keys || []).find(k => k.managed && k.has_private);
-      sel.value = mk ? mk.config_path : '__auto__';
-    }}
-    const mk = managedKeyObj();
-    $('pub-key-box').value = mk ? mk.public_key : '';
-    $('key-fp').textContent = mk ? ('本机公钥：' + mk.name + ' · ' + mk.fingerprint) : '';
+    else sel.value = '__auto__';
+    syncPubKeyBox();
+  }}
+
+  function syncPubKeyBox(overrideKeyObj) {{
+    const k = overrideKeyObj || findSelectedKeyObj();
+    $('pub-key-box').value = k ? k.public_key : '';
+    $('key-fp').textContent = k ? ('当前公钥：' + k.name + ' (' + k.key_type + ') · ' + k.fingerprint) : '';
   }}
 
   function renderJumpChips() {{
@@ -509,15 +546,19 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     $('f-hostname').value = h.hostname || '';
     $('f-user').value = h.user || '';
     $('f-port').value = String(h.port || 22);
+    $('f-legacy-rsa').checked = Boolean(h.legacy_rsa);
     const hasJump = Boolean(h.proxy_jump);
     $('f-use-jump').checked = hasJump;
     $('jump-box').classList.toggle('hidden', !hasJump);
     $('f-jump').value = h.proxy_jump || '';
+    const jumpManaged = (appState.managed || []).find(m => m.alias === h.proxy_jump);
+    $('f-jump-user').value = jumpManaged && jumpManaged.user !== h.user ? jumpManaged.user : '';
     if (h.identity_file && [...$('f-key').options].some(o => o.value === h.identity_file)) {{
       $('f-key').value = h.identity_file;
     }} else if (!h.identity_file) {{
       $('f-key').value = '';
     }}
+    syncPubKeyBox();
     hideAssists();
     $('diag-section').classList.add('hidden');
     setMsg($('global-msg'), '', '');
@@ -529,14 +570,17 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     selectedAlias = '';
     aliasTouched = false;
     lastDiagnosis = null;
+    activeHop = null;
     $('form-title').textContent = '新增 SSH 服务器';
     $('f-alias').value = '';
     $('f-hostname').value = '';
     $('f-user').value = '';
     $('f-port').value = '22';
+    $('f-legacy-rsa').checked = false;
     $('f-use-jump').checked = false;
     $('jump-box').classList.add('hidden');
     $('f-jump').value = '';
+    $('f-jump-user').value = '';
     hideAssists();
     $('diag-section').classList.add('hidden');
     setMsg($('global-msg'), '', '');
@@ -562,7 +606,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       strong.textContent = h.alias;
       const badge = document.createElement('span');
       badge.className = 'tag managed';
-      badge.textContent = '已配置';
+      badge.textContent = h.legacy_rsa ? 'RSA兼容' : '已配置';
       top.append(strong, badge);
       const meta = document.createElement('div');
       meta.className = 'host-meta';
@@ -574,7 +618,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       bEdit.addEventListener('click', () => fillFormFromManaged(h));
       const bDiag = document.createElement('button');
       bDiag.type = 'button'; bDiag.className = 'btn-sec btn-sm'; bDiag.textContent = '测试';
-      bDiag.addEventListener('click', () => {{ fillFormFromManaged(h); runDiagnosis(h.alias); }});
+      bDiag.addEventListener('click', () => {{ fillFormFromManaged(h); runDiagnosis(h.alias, 0); }});
       const bDel = document.createElement('button');
       bDel.type = 'button'; bDel.className = 'btn-danger btn-sm'; bDel.textContent = '删';
       bDel.addEventListener('click', async () => {{
@@ -614,7 +658,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       }});
       const bDiag = document.createElement('button');
       bDiag.type = 'button'; bDiag.className = 'btn-sec btn-sm'; bDiag.textContent = '测试';
-      bDiag.addEventListener('click', () => {{ selectedAlias = alias; renderHosts(); runDiagnosis(alias); }});
+      bDiag.addEventListener('click', () => {{ selectedAlias = alias; renderHosts(); runDiagnosis(alias, 0); }});
       actions.append(bJump, bDiag);
       item.append(top, actions);
       box.appendChild(item);
@@ -627,48 +671,88 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     renderJumpChips();
   }}
 
-  async function ensureKeySilently() {{
-    const mk = (appState.keys || []).find(k => k.managed && k.has_private);
-    if (mk) return mk;
-    const res = await callAction('ensure_key', {{}});
+  async function ensureKeyOfType(keyType) {{
+    const wantType = keyType === 'rsa' ? 'ssh-rsa' : 'ssh-ed25519';
+    const wantName = keyType === 'rsa' ? (appState.default_rsa_key_name || 'id_rsa_spiceowl') : (appState.default_key_name || 'id_ed25519_spiceowl');
+    const existing = (appState.keys || []).find(k => k.name === wantName && k.has_private);
+    if (existing) return existing;
+    const res = await callAction('ensure_key', {{key_type: keyType === 'rsa' ? 'rsa' : 'ed25519'}});
     renderKeys();
-    return res.key;
+    const after = (appState.keys || []).find(k => k.name === res.key.name) || res.key;
+    if (!after.key_type) after.key_type = wantType;
+    return after;
+  }}
+
+  function parseRawHostSpec(raw, fallbackUser) {{
+    let host = (raw || '').trim();
+    let user = (fallbackUser || '').trim();
+    let port = 22;
+    if (host.includes('@')) {{
+      const [u, rest] = host.split('@', 2);
+      if (u) user = u.trim();
+      host = rest.trim();
+    }}
+    if (host.includes(':')) {{
+      const [h, p] = host.split(':', 2);
+      if (p && /^[0-9]+$/.test(p)) {{
+        host = h.trim();
+        port = Number(p);
+      }}
+    }}
+    return {{host, user, port}};
   }}
 
   async function saveCurrentHost() {{
-    let rawHost = $('f-hostname').value.trim();
-    let user = $('f-user').value.trim();
-    let port = Number($('f-port').value || 22);
-    // Convenience: if user pasted user@host[:port] into hostname box, split cleanly
-    if (rawHost.includes('@')) {{
-      const parts = rawHost.split('@');
-      if (parts.length === 2 && !user) {{
-        user = parts[0].trim();
-        $('f-user').value = user;
-      }}
-      rawHost = parts[parts.length - 1].trim();
-      $('f-hostname').value = rawHost;
-    }}
-    if (rawHost.includes(':')) {{
-      const [h, p] = rawHost.split(':', 2);
-      if (p && /^[0-9]+$/.test(p)) {{
-        rawHost = h.trim();
-        port = Number(p);
-        $('f-hostname').value = rawHost;
-        $('f-port').value = String(port);
-      }}
-    }}
+    const parsedTarget = parseRawHostSpec($('f-hostname').value, $('f-user').value);
+    const rawHost = parsedTarget.host;
+    const user = parsedTarget.user;
+    let port = Number($('f-port').value || parsedTarget.port || 22);
+    if (parsedTarget.port !== 22 && port === 22) port = parsedTarget.port;
+    $('f-hostname').value = rawHost;
+    $('f-user').value = user;
+    $('f-port').value = String(port);
+
     const alias = $('f-alias').value.trim() || deriveAlias(rawHost);
     if (!alias) throw new Error('请填写有效的服务器地址。');
     $('f-alias').value = alias;
 
+    const legacyRsa = $('f-legacy-rsa').checked;
     let keyChoice = $('f-key').value;
     if (keyChoice === '__auto__') {{
-      const mk = await ensureKeySilently();
+      const mk = await ensureKeyOfType(legacyRsa ? 'rsa' : 'ed25519');
       keyChoice = mk.config_path;
       $('f-key').value = keyChoice;
     }}
-    const proxyJump = $('f-use-jump').checked ? $('f-jump').value.trim() : '';
+
+    let proxyJump = '';
+    if ($('f-use-jump').checked) {{
+      const rawJump = $('f-jump').value.trim();
+      if (rawJump) {{
+        const existingSet = new Set(appState.existing_aliases || []);
+        if (!rawJump.includes(',') && !existingSet.has(rawJump)) {{
+          // User typed a raw jump host IP/domain (e.g. 101.6.68.50) -> auto-create managed jump entry!
+          const parsedJump = parseRawHostSpec(rawJump, $('f-jump-user').value.trim() || user);
+          const jumpAlias = deriveAlias(parsedJump.host, 'jump');
+          const prevJump = (appState.managed || []).find(m => m.alias === jumpAlias);
+          await callAction('upsert_host', {{
+            alias: jumpAlias,
+            hostname: parsedJump.host,
+            user: parsedJump.user || user,
+            port: parsedJump.port || 22,
+            proxy_jump: '',
+            identity_file: (prevJump && prevJump.identity_file) ? prevJump.identity_file : keyChoice,
+            legacy_rsa: Boolean(prevJump && prevJump.legacy_rsa),
+            legacy_kex: Boolean(prevJump && prevJump.legacy_kex),
+          }});
+          proxyJump = jumpAlias;
+          $('f-jump').value = jumpAlias;
+        }} else {{
+          proxyJump = rawJump;
+        }}
+      }}
+    }}
+
+    const prevTarget = (appState.managed || []).find(m => m.alias === alias);
     const res = await callAction('upsert_host', {{
       alias: alias,
       hostname: rawHost,
@@ -676,26 +760,76 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       port: port,
       proxy_jump: proxyJump,
       identity_file: keyChoice,
+      legacy_rsa: legacyRsa || Boolean(prevTarget && prevTarget.legacy_rsa),
+      legacy_kex: Boolean(prevTarget && prevTarget.legacy_kex),
     }});
     selectedAlias = res.host.alias;
     renderAll();
     return res.host;
   }}
 
-  async function scanFingerprintsForCurrent() {{
+  async function autoFixLegacyHop(hop) {{
+    if (!hop) return false;
+    const existing = (appState.managed || []).find(m => m.alias === hop.alias);
+    const fallbackUser = hop.username || $('f-user').value.trim();
+    if (!fallbackUser) return false;
+
+    // For legacy OpenSSH 5.x/6.x (ssh-rsa only), Ed25519 keys are unsupported -> switch to an RSA key!
+    let nextKeyPath = (existing && existing.identity_file) || $('f-key').value;
+    const allKeys = appState.keys || [];
+    const currentKeyMeta = allKeys.find(k => k.config_path === nextKeyPath);
+    if (hop.needs_legacy_rsa && (!currentKeyMeta || currentKeyMeta.key_type !== 'ssh-rsa')) {{
+      // Prefer existing managed RSA or generate id_rsa_spiceowl
+      const rsaKey = await ensureKeyOfType('rsa');
+      nextKeyPath = rsaKey.config_path;
+    }}
+
+    const targetAlias = (existing && existing.alias) || (hop.role === 'jump' ? deriveAlias(hop.hostname, 'jump') : hop.alias);
+    await callAction('upsert_host', {{
+      alias: targetAlias,
+      hostname: (existing && existing.hostname) || hop.hostname,
+      port: (existing && existing.port) || hop.port || 22,
+      user: (existing && existing.user) || fallbackUser,
+      proxy_jump: (existing && existing.proxy_jump) || hop.proxy_jump || '',
+      identity_file: nextKeyPath === '__auto__' ? '' : nextKeyPath,
+      legacy_rsa: Boolean((existing && existing.legacy_rsa) || hop.needs_legacy_rsa),
+      legacy_kex: Boolean((existing && existing.legacy_kex) || hop.needs_legacy_kex),
+    }});
+
+    // If a raw jump IP was converted into a managed jump alias, update target's ProxyJump to reference it
+    if (hop.role === 'jump' && targetAlias !== hop.alias && selectedAlias) {{
+      const curTarget = (appState.managed || []).find(m => m.alias === selectedAlias);
+      if (curTarget) {{
+        await callAction('upsert_host', {{
+          ...curTarget,
+          proxy_jump: targetAlias,
+        }});
+        $('f-jump').value = targetAlias;
+      }}
+    }}
+    if (hop.role === 'target') {{
+      $('f-legacy-rsa').checked = true;
+      if (nextKeyPath && [...$('f-key').options].some(o => o.value === nextKeyPath)) $('f-key').value = nextKeyPath;
+    }}
+    renderAll();
+    return true;
+  }}
+
+  async function scanFingerprintsForHop(hop) {{
+    if (!hop) return;
     scannedEntries = [];
     const box = $('fp-results');
     box.replaceChildren();
     $('btn-trust-retry').disabled = true;
     const loading = document.createElement('div');
     loading.className = 'sub';
-    loading.textContent = '正在获取服务器指纹…';
+    loading.textContent = '正在获取 ' + hop.hostname + ':' + (hop.port || 22) + ' 的主机指纹…';
     box.appendChild(loading);
     try {{
       const res = await callAction('scan_host_key', {{
-        hostname: $('f-hostname').value.trim(),
-        port: Number($('f-port').value || 22),
-        jump_alias: $('f-use-jump').checked ? $('f-jump').value.trim() : '',
+        hostname: hop.hostname,
+        port: Number(hop.port || 22),
+        jump_alias: hop.proxy_jump || '',
       }});
       const scan = res.scan || {{}};
       scannedEntries = scan.entries || [];
@@ -716,7 +850,42 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     }}
   }}
 
-  async function runDiagnosis(alias) {{
+  function renderAltKeyButtonsForHop(hop) {{
+    const box = $('dp-alt-keys');
+    box.replaceChildren();
+    const hopManaged = (appState.managed || []).find(m => m.alias === hop.alias);
+    const curKey = hopManaged ? hopManaged.identity_file : '';
+    const candidates = (appState.keys || []).filter(k =>
+      k.has_private && k.config_path !== curKey && (!hop.legacy_rsa || k.key_type === 'ssh-rsa')
+    );
+    if (!candidates.length || !hopManaged) {{
+      box.classList.add('hidden');
+      return;
+    }}
+    box.classList.remove('hidden');
+    const lbl = document.createElement('span');
+    lbl.className = 'sub';
+    lbl.textContent = '本机已有其他密钥（若该服务器已授权可直接切换免输密码）：';
+    box.appendChild(lbl);
+    for (const k of candidates) {{
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip-btn';
+      btn.textContent = '改用 ' + k.name + ' (' + k.key_type + ') 重测';
+      btn.addEventListener('click', async () => {{
+        try {{
+          await callAction('upsert_host', {{...hopManaged, identity_file: k.config_path}});
+          if (hop.role === 'target') $('f-key').value = k.config_path;
+          renderAll();
+          await runDiagnosis(selectedAlias || hop.alias, 0);
+        }} catch (e) {{ setMsg($('deploy-msg'), e.message, 'err'); }}
+      }});
+      box.appendChild(btn);
+    }}
+  }}
+
+  async function runDiagnosis(alias, autoHealDepth) {{
+    const depth = autoHealDepth || 0;
     const target = (alias || selectedAlias || $('f-alias').value || '').trim();
     if (!target) return;
     $('busy-text').textContent = '正在测试连接 ' + target + '…';
@@ -729,6 +898,19 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       const res = await callAction('diagnose', {{alias: target}});
       const d = res.diagnosis || {{}};
       lastDiagnosis = d;
+      activeHop = d.failing_hop || null;
+
+      // Auto-heal legacy OpenSSH (ssh-rsa / old KEX) without making the user debug algorithms!
+      if (!d.ok && d.code === 'legacy_ssh_negotiation' && activeHop && depth < 2) {{
+        const roleName = activeHop.role === 'jump' ? ('跳板机 ' + activeHop.hostname) : ('目标机 ' + activeHop.hostname);
+        setMsg($('global-msg'), '检测到 ' + roleName + ' 为旧版 OpenSSH（仅支持 ssh-rsa），正在自动启用 RSA 兼容模式并重试…', 'warn');
+        const fixed = await autoFixLegacyHop(activeHop);
+        if (fixed) {{
+          await runDiagnosis(target, depth + 1);
+          return;
+        }}
+      }}
+
       for (const s of (d.steps || [])) {{
         const li = document.createElement('li');
         li.className = 'step-row ' + (s.ok ? 'ok' : 'fail');
@@ -745,19 +927,32 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
         li.append(ic, body);
         ul.appendChild(li);
       }}
+
+      const hop = activeHop;
+      const hopLabel = hop ? ((hop.role === 'jump' ? '跳板机 ' : '目标机 ') + hop.hostname) : target;
+
       if (d.ok) {{
         selectedAlias = target;
         setMsg($('global-msg'), '✅ 连接成功！' + target + ' 已全部就绪，点击底部「完成并返回网页工作台」即可直接使用。', 'ok');
-      }} else if (d.code === 'need_host_key') {{
-        setMsg($('global-msg'), '首次连接该服务器，确认下方指纹后即可继续。', 'warn');
+      }} else if (d.code === 'need_host_key' && hop) {{
+        setMsg($('global-msg'), '首次连接 ' + hopLabel + '，请核对下方指纹后点信任即可继续。', 'warn');
+        $('hk-title').textContent = '🔑 首次连接' + hopLabel + '：确认指纹';
         $('assist-hostkey').classList.remove('hidden');
-        if ($('f-hostname').value.trim()) await scanFingerprintsForCurrent();
-      }} else if (d.code === 'need_key_deploy') {{
-        setMsg($('global-msg'), '网络已通，只需把免密公钥写入远端服务器即可（下面输入一次密码自动完成，或手动复制）。', 'warn');
-        await ensureKeySilently();
+        await scanFingerprintsForHop(hop);
+      }} else if (d.code === 'need_key_deploy' && hop) {{
+        const hopManaged = (appState.managed || []).find(m => m.alias === hop.alias);
+        let keyObj = hopManaged && hopManaged.identity_file
+          ? (appState.keys || []).find(k => k.config_path === hopManaged.identity_file)
+          : null;
+        if (!keyObj) keyObj = await ensureKeyOfType(hop.legacy_rsa ? 'rsa' : 'ed25519');
+        syncPubKeyBox(keyObj);
+        $('dp-title').textContent = '🔐 为' + hopLabel + '配置免密登录（账号 ' + (hop.username || $('f-user').value.trim()) + '）';
+        $('dp-desc').textContent = '只需配置这一次免密，之后永久免密码。输入一次登录密码可自动写入公钥（密码用完即销毁）；若本机已有授权密钥也可一键切换。';
+        renderAltKeyButtonsForHop(hop);
+        setMsg($('global-msg'), hopLabel + ' 网络与指纹均已通过，只需完成下方免密密钥配置即可！', 'warn');
         $('assist-deploy').classList.remove('hidden');
       }} else {{
-        setMsg($('global-msg'), '连接未通过，请查看上方红色步骤提示（如需内网中转，请勾选「需要经过跳板机中转」）。', 'err');
+        setMsg($('global-msg'), '连接未通过，请查看上方红色步骤提示。', 'err');
       }}
     }} catch (e) {{
       setMsg($('global-msg'), e.message, 'err');
@@ -767,14 +962,14 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     }}
   }}
 
-  async function copyText(text, okLabel) {{
+  async function copyText(text, targetEl, okLabel) {{
     if (!text) return;
-    try {{ await navigator.clipboard.writeText(text); setMsg($('deploy-msg'), okLabel, 'ok'); }}
+    try {{ await navigator.clipboard.writeText(text); setMsg(targetEl, okLabel, 'ok'); }}
     catch {{
       const ta = document.createElement('textarea');
       ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
       document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
-      setMsg($('deploy-msg'), okLabel, 'ok');
+      setMsg(targetEl, okLabel, 'ok');
     }}
   }}
 
@@ -792,6 +987,13 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     $('jump-box').classList.toggle('hidden', !$('f-use-jump').checked);
     renderJumpChips();
   }});
+  $('f-key').addEventListener('change', () => syncPubKeyBox());
+  $('btn-quick-copy-key').addEventListener('click', async () => {{
+    let k = findSelectedKeyObj();
+    if (!k) k = await ensureKeyOfType($('f-legacy-rsa').checked ? 'rsa' : 'ed25519');
+    syncPubKeyBox(k);
+    await copyText(k.public_key, $('global-msg'), '已复制公钥 (' + k.name + ' · ' + k.fingerprint + ')。');
+  }});
   $('btn-new-host').addEventListener('click', resetNewForm);
 
   $('host-form').addEventListener('submit', async (ev) => {{
@@ -801,7 +1003,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     setMsg($('global-msg'), '', '');
     try {{
       const host = await saveCurrentHost();
-      await runDiagnosis(host.alias);
+      await runDiagnosis(host.alias, 0);
     }} catch (e) {{
       setMsg($('global-msg'), e.message, 'err');
       $('busy-text').textContent = '';
@@ -812,17 +1014,17 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   $('btn-save-only').addEventListener('click', async () => {{
     try {{
       const host = await saveCurrentHost();
-      setMsg($('global-msg'), '已保存 ' + host.alias + '（如需接着配置目标机，点左上角「+ 新增」并勾选跳板机即可）。', 'ok');
+      setMsg($('global-msg'), '已保存 ' + host.alias + '。', 'ok');
     }} catch (e) {{ setMsg($('global-msg'), e.message, 'err'); }}
   }});
 
-  $('btn-rescan-fp').addEventListener('click', scanFingerprintsForCurrent);
+  $('btn-rescan-fp').addEventListener('click', () => scanFingerprintsForHop(activeHop));
   $('btn-trust-retry').addEventListener('click', async () => {{
     if (!scannedEntries.length) return;
     $('btn-trust-retry').disabled = true;
     try {{
       await callAction('trust_host_keys', {{entries: scannedEntries}});
-      await runDiagnosis(selectedAlias || $('f-alias').value.trim());
+      await runDiagnosis(selectedAlias || $('f-alias').value.trim(), 0);
     }} catch (e) {{
       setMsg($('global-msg'), e.message, 'err');
       $('btn-trust-retry').disabled = false;
@@ -833,24 +1035,40 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     const pwEl = $('f-password');
     const pw = pwEl.value;
     if (!pw) {{ setMsg($('deploy-msg'), '请输入一次性登录密码。', 'warn'); return; }}
+    const hop = activeHop || {{
+      role: 'target',
+      alias: selectedAlias || $('f-alias').value.trim(),
+      hostname: $('f-hostname').value.trim(),
+      port: Number($('f-port').value || 22),
+      username: $('f-user').value.trim(),
+      proxy_jump: $('f-use-jump').checked ? $('f-jump').value.trim() : '',
+      legacy_rsa: $('f-legacy-rsa').checked,
+      legacy_kex: false,
+    }};
     $('btn-deploy-retry').disabled = true;
-    setMsg($('deploy-msg'), '正在通过临时免落盘通道写入公钥…', '');
+    setMsg($('deploy-msg'), '正在向 ' + hop.hostname + ' 安全写入公钥（密码用完即销毁）…', '');
     try {{
-      const mk = await ensureKeySilently();
+      const hopManaged = (appState.managed || []).find(m => m.alias === hop.alias);
+      let keyObj = hopManaged && hopManaged.identity_file
+        ? (appState.keys || []).find(k => k.config_path === hopManaged.identity_file)
+        : null;
+      if (!keyObj) keyObj = await ensureKeyOfType(hop.legacy_rsa ? 'rsa' : 'ed25519');
       const res = await callAction('deploy_key', {{
-        hostname: $('f-hostname').value.trim(),
-        port: Number($('f-port').value || 22),
-        username: $('f-user').value.trim(),
-        proxy_jump: $('f-use-jump').checked ? $('f-jump').value.trim() : '',
-        public_key: mk.public_key,
+        hostname: hop.hostname,
+        port: Number(hop.port || 22),
+        username: hop.username || $('f-user').value.trim(),
+        proxy_jump: hop.proxy_jump || '',
+        public_key: keyObj.public_key,
         password: pw,
         accept_new_host_key: true,
+        legacy_rsa: Boolean(hop.legacy_rsa),
+        legacy_kex: Boolean(hop.legacy_kex),
       }});
       pwEl.value = '';
       const info = res.deploy || {{}};
       if (res.ok) {{
-        setMsg($('deploy-msg'), info.message || '公钥写入成功，正在自动重测…', 'ok');
-        await runDiagnosis(selectedAlias || $('f-alias').value.trim());
+        setMsg($('deploy-msg'), info.message || '公钥写入成功，正在自动继续测试…', 'ok');
+        await runDiagnosis(selectedAlias || $('f-alias').value.trim(), 0);
       }} else {{
         setMsg($('deploy-msg'), info.message || '自动写入未成功，可展开下方手动复制公钥。', 'err');
       }}
@@ -862,14 +1080,14 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     }}
   }});
 
-  $('btn-copy-pub').addEventListener('click', () => copyText($('pub-key-box').value.trim(), '已复制公钥。'));
+  $('btn-copy-pub').addEventListener('click', () => copyText($('pub-key-box').value.trim(), $('deploy-msg'), '已复制公钥。'));
   $('btn-copy-cmd').addEventListener('click', () => {{
     const pub = $('pub-key-box').value.trim();
     if (!pub) return;
     const cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && printf '%s\\n' '" + pub.replace(/'/g, "'\\''") + "' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys";
-    copyText(cmd, '已复制终端安装命令，在远端粘贴执行后点右侧「重新测试」。');
+    copyText(cmd, $('deploy-msg'), '已复制终端安装命令，在远端粘贴执行后点右侧「我已粘贴，重新测试」。');
   }});
-  $('btn-retest-after-copy').addEventListener('click', () => runDiagnosis(selectedAlias || $('f-alias').value.trim()));
+  $('btn-retest-after-copy').addEventListener('click', () => runDiagnosis(selectedAlias || $('f-alias').value.trim(), 0));
 
   $('btn-close-only').addEventListener('click', () => window.close());
   $('btn-done-return').addEventListener('click', () => {{
@@ -893,11 +1111,11 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   renderAll();
   if (BOOT.initialAlias) {{
     const found = (appState.managed || []).find(h => h.alias === BOOT.initialAlias);
-    if (found) {{ fillFormFromManaged(found); runDiagnosis(found.alias); }}
+    if (found) {{ fillFormFromManaged(found); runDiagnosis(found.alias, 0); }}
     else if ((appState.existing_aliases || []).includes(BOOT.initialAlias)) {{
       selectedAlias = BOOT.initialAlias;
       renderHosts();
-      runDiagnosis(BOOT.initialAlias);
+      runDiagnosis(BOOT.initialAlias, 0);
     }}
   }}
 }})();

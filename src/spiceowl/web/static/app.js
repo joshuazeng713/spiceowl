@@ -4543,6 +4543,9 @@ function receiveCodexEvent(event) {
       status: params.success === true ? 'completed' : 'failed',
       ownerReview: typeof params.result?.details?.review_url === 'string'
         || typeof params.result?.error?.details?.review_url === 'string'});
+    if (params.success === true && ['spiceowl_library_open', 'spiceowl_ui_configure'].includes(params.tool)) {
+      void syncAgentUiPatches(Number(params.result?.revision) || 0);
+    }
   } else if (event.method === 'approval/required' && typeof params.approval_id === 'string') {
     if (liveEvent || !codexPanelState.approvals.has(params.approval_id)) {
       codexPanelState.approvals.set(params.approval_id, {...params, thread_id: params.thread_id || threadId});
@@ -4555,10 +4558,8 @@ function receiveCodexEvent(event) {
     }
   } else if (event.method === 'ui/workspace_patch') {
     const rev = Number(params.revision) || 0;
-    if (liveEvent) {
+    if (rev > codexPanelState.uiPatchRevision) {
       void syncAgentUiPatches(rev);
-    } else if (rev > codexPanelState.uiPatchRevision) {
-      codexPanelState.uiPatchRevision = rev;
     }
   } else if (event.method === 'bridge/interrupted') {
     const tId = params.thread_id || threadId;
@@ -4648,8 +4649,9 @@ async function refreshCodexStatus() {
     setCodexStatus(await api('/api/codex/status'));
     codexPanelState.error = null;
     openCodexEvents();
-    if (codexPanelState.status?.connected && location.hash === '#direct' && !codexPanelState.modelsLoaded) {
-      void loadCodexCatalogAndAuth();
+    if (codexPanelState.status?.connected && location.hash === '#direct') {
+      if (!codexPanelState.modelsLoaded) void loadCodexCatalogAndAuth();
+      void syncAgentUiPatches();
     }
   } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
   finally { codexPanelState.loading = false; if (!location.hash || ['#quickstart', '#agents', '#direct'].includes(location.hash)) render(); }

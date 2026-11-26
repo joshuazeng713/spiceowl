@@ -90,12 +90,14 @@ class PagesBuildTests(unittest.TestCase):
         self.assertIn('data-public-demo="true"', index)
         self.assertIn("connect-src http://127.0.0.1:8765", index)
         self.assertIn("frame-src spiceowl:", index)
-        self.assertIn('src="./demo-data.js"', index)
-        self.assertLess(index.index('src="./demo-data.js"'), index.index('src="./demo.js"'))
-        self.assertLess(index.index('src="./demo.js"'), index.index('src="./app.js"'))
+        metadata = json.loads((self.output / "build.json").read_text())
+        ver = metadata["build_id"][:10]
+        self.assertIn(f'src="./demo-data.js?v={ver}"', index)
+        self.assertIn(f'href="./app.css?v={ver}"', index)
+        self.assertLess(index.index('./demo-data.js?v='), index.index('./demo.js?v='))
+        self.assertLess(index.index('./demo.js?v='), index.index('./app.js?v='))
         for name in ("app.js", "app.css", "owl.svg"):
             self.assertNotIn('"/' + name + '"', index)
-        metadata = json.loads((self.output / "build.json").read_text())
         self.assertEqual(metadata["commit"], "b" * 40)
         self.assertEqual(metadata["source_branch"], "feat/demo")
         self.assertEqual(metadata, self.data()["metadata"])

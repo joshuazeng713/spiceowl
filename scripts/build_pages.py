@@ -174,13 +174,16 @@ def build(output=None, *, commit="local", repository_url=REPOSITORY, build_date=
     index = index.replace("<html", '<html data-public-demo="true"', 1)
     policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src http://127.0.0.1:8765; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src spiceowl:"
     index = index.replace('<meta charset="utf-8">', '<meta charset="utf-8">\n  <meta http-equiv="Content-Security-Policy" content="' + policy + '">', 1)
+    cache_v = metadata["build_id"][:10]
     for name in ("app.js", "app.css", "owl.svg"):
         index = index.replace('"/' + name + '"', '"./' + name + '"')
     match = list(re.finditer(r'<script\b[^>]*\bsrc="(?:\./)?app\.js"[^>]*></script>', index))
     if len(match) != 1 or "demo-data.js" in index or 'src="./demo.js"' in index:
         raise ValueError("The local index must contain one app.js entry and no injected demo scripts.")
-    insertion = '<script src="./demo-data.js"></script>\n  <script src="./demo.js"></script>\n  '
+    insertion = f'<script src="./demo-data.js?v={cache_v}"></script>\n  <script src="./demo.js?v={cache_v}"></script>\n  '
     index = index[:match[0].start()] + insertion + index[match[0].start():]
+    index = index.replace('href="./app.css"', f'href="./app.css?v={cache_v}"', 1)
+    index = index.replace('src="./app.js"', f'src="./app.js?v={cache_v}"', 1)
     assets["index.html"] = index.encode("utf-8")
     assets["demo-data.js"] = ("window.__SPICEOWL_DEMO_DATA__=" + encoded(data).replace("<", "\\u003c") + ";\n").encode()
     assets["build.json"] = (json.dumps(metadata, indent=2) + "\n").encode()

@@ -2018,7 +2018,7 @@ function renderLibraryManagerDialog() {
         </div>
         <div class="lib-mgr-pathbar">
           <button type="button" class="button secondary small" data-action="lib-mgr-cd" data-path="${escape(libMgrState.parent || '')}" ${libMgrState.busy || !libMgrState.parent ? 'disabled' : ''}>↑ 上级</button>
-          <input id="lib-mgr-path" type="text" value="${escape(libMgrState.path)}" placeholder="~ 或 /home/user/sim_project" aria-label="远端目录路径">
+          <input id="lib-mgr-path" type="text" value="${escape(libMgrState.path)}" placeholder="~ 或 ~/sim_project" aria-label="远端目录路径">
           <button type="button" class="button secondary small" data-action="lib-mgr-browse" ${libMgrState.busy ? 'disabled' : ''}>前往</button>
           <input id="lib-mgr-filter" type="search" value="${escape(libMgrState.filter)}" placeholder="过滤名称…" aria-label="过滤当前目录">
         </div>

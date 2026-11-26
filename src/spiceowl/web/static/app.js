@@ -2381,7 +2381,6 @@ function renderHostLiveCard(host) {
 function hosts() {
   if (isPublicDemo()) return publicHostPage();
   syncHostSelection();
-  const count = selectedHostIds?.size || 0;
   let html = heading(
     'SERVER POOL & LIVE SIMULATIONS',
     '服务器池资源与运行中仿真',
@@ -2425,16 +2424,6 @@ function hosts() {
     html += `<div class="pool-live-grid">${state.hosts.map(renderHostLiveCard).join('')}</div>`;
   }
 
-  html += `<details class="host-details"><summary>高级：智能选机、执行计划、手动登记与工具版本详情</summary><div style="margin-top:12px;display:flex;flex-direction:column;gap:14px"><div class="host-page-actions"><button class="button secondary small" data-action="add-host">手动登记</button><button class="button secondary small" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button secondary small" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>${poolOverview()}<div class="connections-list">${state.hosts.map(host => {
-    const probe = host.last_probe;
-    const evidence = connectionEvidence(host), status = connectionStatus(evidence);
-    const fields = [['SSH transport', evidence?.transport || 'unchecked'], ['Host identity', evidence?.identity?.verified === true ? 'matched at last check' : 'unverified'], ['Tool check', observationTime(probe)], ['Simulation readiness', 'not tested']];
-    const toolRows = host.tools.map(tool => {
-      const result = probe?.tools?.find(item => item.kind === tool.kind);
-      return `<div class="host-tool"><strong>${escape(title(tool.kind))}</strong>${chip(result?.status || 'unchecked', result?.status === 'available' ? 'green' : result ? 'amber' : '')}<span class="host-version">${escape(result?.version || 'Version unverified')}</span>${result?.error ? `<p class="error-text">${escape(result.error.message)}</p>` : ''}</div>`;
-    }).join('');
-    return `<article class="panel connection-card"><div class="connection-main"><div class="provider-icon" aria-hidden="true">▤</div><div class="connection-name"><h3>${escape(host.label)} ${chip(status.label, status.color)}</h3><p>Registered host · ${escape(host.host_id)}</p></div><div class="connection-actions"><button class="button primary small" data-action="host-probe" data-id="${escape(host.host_id)}">Check connection</button></div></div><div class="connection-readiness">${fields.map(([label, value]) => `<div class="readiness-field"><span>${label}</span><strong>${escape(title(value))}</strong></div>`).join('')}</div><div class="host-tools">${toolRows || '<p class="subtle-note">No simulator executable configured. Connection checks verify identity only.</p>'}</div>${status.help ? `<div class="host-error">${escape(status.help)}</div>` : ''}<div class="connection-bottom"><span>Connection evidence: ${escape(observationTime(evidence))}</span><span>Saved result · no automatic remote polling</span></div></article>`;
-  }).join('')}</div></div></details>`;
   return html;
 }
 

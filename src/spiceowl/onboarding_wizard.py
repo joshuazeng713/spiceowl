@@ -25,7 +25,7 @@ from spiceowl.agent_eval import compare_baselines
 from spiceowl.batch import DirectBatchManager
 from spiceowl.direct import DirectExecutionManager
 from spiceowl.domain.common import DomainError, utcnow
-from spiceowl.hosts import HostRegistry
+from spiceowl.hosts import HostRegistry, host_summary
 
 
 WIZARD_SCHEMA = "spiceowl.onboarding-wizard.v1"
@@ -264,8 +264,27 @@ def diagnose_local_environment(
     has_numpy = importlib.util.find_spec("numpy") is not None
     ssh_aliases = parse_ssh_config_aliases(ssh_config_path)
 
-    host_rows = hosts_reg.list()
-    verified_hosts = [h for h in host_rows if (h.get("last_probe") or {}).get("identity", {}).get("verified")]
+    raw_hosts = hosts_reg.store.list("host")
+    host_rows = [host_summary(record) for record in raw_hosts]
+    alias_set = {a["alias"] for a in ssh_aliases}
+    verified_targets = {
+        record.get("ssh_target")
+        for record in raw_hosts
+        if (record.get("last_probe") or {}).get("identity", {}).get("verified")
+    }
+    registered_by_target = {
+        record.get("ssh_target"): record["host_id"]
+        for record in raw_hosts
+        if record.get("ssh_target")
+    }
+    for entry in ssh_aliases:
+        entry["verified"] = entry["alias"] in verified_targets
+        entry["registered_host_id"] = registered_by_target.get(entry["alias"])
+    verified_hosts = [
+        record for record in raw_hosts
+        if (record.get("last_probe") or {}).get("identity", {}).get("verified")
+        and record.get("ssh_target") in alias_set
+    ]
     run_rows = dm.list()
     batch_rows = bm.list()
 

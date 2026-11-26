@@ -314,11 +314,11 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       <form id="host-form" autocomplete="off">
         <div class="grid2">
           <label class="field">目标服务器地址（IP 或主机名）
-            <input id="f-hostname" required maxlength="253" placeholder="例如：10.0.1.25 或 thu-shu">
+            <input id="f-hostname" required maxlength="253" placeholder="例如：10.0.1.25 或 eda-sim-01">
             <small>支持直接粘贴 <code>用户名@地址</code>，会自动拆开填好。</small>
           </label>
           <label class="field">登录用户名
-            <input id="f-user" required maxlength="64" placeholder="例如：zengsy">
+            <input id="f-user" required maxlength="64" placeholder="例如：researcher">
             <small>你在该服务器上的 Linux 账号名。</small>
           </label>
         </div>
@@ -333,7 +333,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
         <div id="jump-box" class="jump-box hidden" style="margin-top:9px">
           <div class="grid2">
             <label class="field">跳板机地址或已有别名
-              <input id="f-jump" maxlength="320" placeholder="例如：101.6.68.50 或 bastion">
+              <input id="f-jump" maxlength="320" placeholder="例如：10.0.0.1 或 jump-host">
               <small id="jump-hint">支持填 IP/域名（自动托管），也支持多跳逗号分隔。</small>
             </label>
             <label id="jump-user-field" class="field">跳板机用户名（选填）
@@ -856,7 +856,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       if (rawJump) {{
         const existingSet = new Set(appState.existing_aliases || []);
         if (!rawJump.includes(',') && !existingSet.has(rawJump)) {{
-          // User typed a raw jump host IP/domain (e.g. 101.6.68.50) -> auto-create managed jump entry!
+          // User typed a raw jump host IP/domain (e.g. 10.0.0.1) -> auto-create managed jump entry!
           const parsedJump = parseRawHostSpec(rawJump, $('f-jump-user').value.trim() || user);
           const jumpAlias = deriveAlias(parsedJump.host, 'jump');
           const prevJump = (appState.managed || []).find(m => m.alias === jumpAlias);

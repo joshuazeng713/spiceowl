@@ -410,7 +410,16 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 entry = ssh_setup_sessions.get(req_id) if isinstance(req_id, str) else None
                 if entry is None or entry[2] < time.monotonic() or not isinstance(req_csrf, str) or not secrets.compare_digest(req_csrf, entry[1]):
                     raise DomainError("SSH setup session expired or invalid; reopen the SSH Setup Wizard.", "forbidden")
-                return self.reply(dispatch_ssh_setup_action(ssh_dir, req.get("action", ""), req.get("payload")))
+                action = req.get("action", "")
+                payload = req.get("payload")
+                result = dispatch_ssh_setup_action(ssh_dir, action, payload)
+                if action == "delete_host" and isinstance(payload, dict) and result.get("deleted"):
+                    alias = payload.get("alias")
+                    if isinstance(alias, str) and alias.strip():
+                        remaining = set((result.get("state") or {}).get("existing_aliases") or [])
+                        if alias.strip() not in remaining:
+                            result["removed_registered_hosts"] = controller.hosts.remove_by_ssh_target(alias.strip())
+                return self.reply(result)
             static = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/owl.svg": ("owl.svg", "image/svg+xml")}
             static.update({'/workflow.html': ('workflow.html', 'text/html; charset=utf-8'),
                 '/workflow.js': ('workflow.js', 'text/javascript; charset=utf-8'),

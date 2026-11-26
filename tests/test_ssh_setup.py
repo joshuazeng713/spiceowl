@@ -448,6 +448,10 @@ class TestSshSetupUiAndServerRoutes(unittest.TestCase):
             self.assertIn(f'nonce="{nonce}"', html)
             self.assertIn("circuitgit.ssh.updated", html)
             self.assertNotIn("onclick=", html)
+            # Public open-source UI must never embed private lab hostnames, IPs, or personal usernames
+            self.assertIsNone(re.search(r"\bthu-[a-z]+\b", html))
+            self.assertNotIn("101.6.68.50", html)
+            self.assertNotIn("zengsy", html)
             self.assertEqual(
                 SSH_SETUP_ACTIONS,
                 frozenset({"state", "ensure_key", "delete_key", "upsert_host", "delete_host", "scan_host_key", "trust_host_keys", "deploy_key", "diagnose"}),
@@ -596,6 +600,42 @@ class TestSshSetupUiAndServerRoutes(unittest.TestCase):
                 self.assertEqual(qc_ok["host"]["host_id"], "eda-lab-1")
                 self.assertEqual(qc_ok["host"]["expected_host"], "sim-node-08")
                 self.assertEqual(qc_ok["host"]["expected_user"], "edauser")
+
+                # Mark host verified in store and confirm /api/wizard/status annotates verified=True
+                ctrl.hosts.store.update(
+                    "host",
+                    "eda-lab-1",
+                    lambda cur: cur | {"last_probe": {"transport": "reachable", "identity": {"verified": True}, "tools": []}},
+                )
+                st_w2, _, wiz2_bytes = raw_req("GET", "/api/wizard/status")
+                self.assertEqual(st_w2, 200)
+                wiz2 = json.loads(wiz2_bytes.decode("utf-8"))
+                self.assertEqual(wiz2["workspace"]["verified_host_count"], 1)
+                self.assertTrue(next(a for a in wiz2["ssh_aliases"] if a["alias"] == "eda-lab-1")["verified"])
+
+                # Deleting the managed SSH host via wizard also removes its registered host so no phantom "1 台已验证" remains
+                st_del, _, del_bytes = raw_req(
+                    "POST",
+                    "/ssh/setup/action",
+                    {"Origin": f"http://127.0.0.1:{port}"},
+                    {
+                        "request_id": boot["requestId"],
+                        "csrf": boot["csrf"],
+                        "action": "delete_host",
+                        "payload": {"alias": "eda-lab-1"},
+                    },
+                )
+                self.assertEqual(st_del, 200)
+                del_res = json.loads(del_bytes.decode("utf-8"))
+                self.assertTrue(del_res["deleted"])
+                self.assertEqual(del_res["removed_registered_hosts"], ["eda-lab-1"])
+
+                st_w3, _, wiz3_bytes = raw_req("GET", "/api/wizard/status")
+                self.assertEqual(st_w3, 200)
+                wiz3 = json.loads(wiz3_bytes.decode("utf-8"))
+                self.assertEqual(wiz3["ssh_aliases"], [])
+                self.assertEqual(wiz3["workspace"]["verified_host_count"], 0)
+                self.assertEqual(wiz3["workspace"]["hosts"], [])
             finally:
                 srv.shutdown()
                 srv.server_close()

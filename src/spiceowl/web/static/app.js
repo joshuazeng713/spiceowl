@@ -290,7 +290,7 @@ window.addEventListener('message', async event => {
     if (event.origin !== expectedOrigin) return;
     if (!isPublicDemo()) {
       wizardState.loaded = false;
-      await refreshWizard();
+      await Promise.all([refresh(), refreshWizard()]);
       if (msg.diagnosis_ok && msg.selected_alias) {
         await quickConnectSshAlias(msg.selected_alias, {silentOnFail: true});
       } else {
@@ -440,7 +440,16 @@ function quickstartPage() {
   const st = wizardState.status;
   const aliases = st?.ssh_aliases || [];
   const hosts = st?.workspace?.hosts || state.hosts || [];
-  const verifiedHosts = hosts.filter(h => h.last_probe?.identity?.verified);
+  const isAliasVerified = a => {
+    if (a.verified === true) return true;
+    const norm = String(a.alias || '').replace(/[^A-Za-z0-9_-]/g, '-');
+    return hosts.some(h => h.last_probe?.identity?.verified && (
+      h.host_id === a.alias
+      || h.host_id === norm
+      || (a.registered_host_id && h.host_id === a.registered_host_id)
+    ));
+  };
+  const verifiedAliasCount = pub ? 0 : aliases.filter(isAliasVerified).length;
 
   const codexStatusTag = codexConnected
     ? '<span class="home-status-tag ready">● 已连接</span>'
@@ -492,17 +501,8 @@ function quickstartPage() {
         </div>
       </div>`;
   } else {
-    // Merge discovered SSH aliases with any already-registered hosts so verified servers never disappear
-    const seenAliases = new Set(aliases.map(a => a.alias));
-    const mergedAliases = [
-      ...aliases,
-      ...hosts
-        .filter(h => h.ssh_target && !seenAliases.has(h.ssh_target))
-        .map(h => ({alias: h.ssh_target, hostname: h.expected_host || h.ssh_target, user: h.expected_user || ''})),
-    ];
-    const aliasChips = mergedAliases.map(a => {
-      const matched = hosts.find(h => h.ssh_target === a.alias);
-      const isOk = Boolean(matched?.last_probe?.identity?.verified);
+    const aliasChips = aliases.map(a => {
+      const isOk = isAliasVerified(a);
       return `<button type="button" class="home-alias-btn ${isOk ? 'verified' : ''}" data-action="home-quick-ssh" data-alias="${escape(a.alias)}" ${wizardState.busy ? 'disabled' : ''}><span>${isOk ? '✓ ' : ''}${escape(a.alias)}</span>${a.hostname ? `<small>${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)}</small>` : ''}</button>`;
     }).join('');
     const diagFailed = wizardState.lastDiag && !wizardState.lastDiag.ok;
@@ -514,14 +514,14 @@ function quickstartPage() {
       : wizardState.lastProbe?.error
       ? `<div class="wf-mode-banner preview">${chip('未通过', 'red')}<span>${escape(wizardState.lastProbe.error.message || '请核对 SSH 别名与免密配置。')}</span></div>`
       : '';
-    serverInner = wizardState.loading && !wizardState.loaded && !mergedAliases.length
+    serverInner = wizardState.loading && !wizardState.loaded && !aliases.length
       ? `<div class="home-server-row"><div class="home-server-copy"><h3>正在识别本机 SSH 服务器…</h3><p>正在读取你的 <code>~/.ssh/config</code> 与已保存的服务器列表。</p></div></div>`
-      : mergedAliases.length
+      : aliases.length
       ? `
       <div class="home-server-row">
         <div class="home-server-copy">
-          <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : `已发现 ${mergedAliases.length} 个 SSH 服务器，点一下直接连通`}</h3>
-          <p>${verifiedHosts.length ? '点击任意服务器可立即验证或切换；需要加新服务器或跳板机，点右侧配置向导。' : '点击下方任意服务器即可自动识别主机与仿真器并完成连通（无需填写复杂表单）。'}</p>
+          <h3>${verifiedAliasCount ? `已就绪 ${verifiedAliasCount} 台 EDA 服务器` : `已发现 ${aliases.length} 个 SSH 服务器，点一下直接连通`}</h3>
+          <p>${verifiedAliasCount ? '点击任意服务器可立即验证或切换；需要加新服务器或跳板机，点右侧配置向导。' : '点击下方任意服务器即可自动识别主机与仿真器并完成连通（无需填写复杂表单）。'}</p>
         </div>
         <div class="direct-actions">
           <button type="button" class="button primary small" data-action="open-ssh-setup-wizard">+ 配置新服务器 ↗</button>
@@ -553,7 +553,7 @@ function quickstartPage() {
     <section class="home-section" aria-label="连接 EDA 服务器">
       <div class="home-section-head">
         <h2><span class="home-step-num">2</span> 连接你的 EDA 仿真服务器</h2>
-        <span class="home-status-tag ${verifiedHosts.length ? 'ready' : ''}">${verifiedHosts.length ? `● ${verifiedHosts.length} 台已验证` : '复用本机 OpenSSH · 零密钥上云'}</span>
+        <span class="home-status-tag ${verifiedAliasCount ? 'ready' : ''}">${verifiedAliasCount ? `● ${verifiedAliasCount} 台已验证` : '复用本机 OpenSSH · 零密钥上云'}</span>
       </div>
       <div class="home-server-card">${serverInner}</div>
     </section>`;
@@ -2871,7 +2871,7 @@ document.addEventListener('click', async event => {
     return;
   }
   if (isPublicDemo()) return;
-  if (action === 'refresh') { await refreshWizard(); return; }
+  if (action === 'refresh') { await Promise.all([refresh(), refreshWizard()]); return; }
   if (wizardState.busy) return;
   if (action === 'demo') {
     wizardState.busy = true; wizardState.error = null; render();

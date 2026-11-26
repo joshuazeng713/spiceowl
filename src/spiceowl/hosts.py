@@ -142,6 +142,24 @@ class HostRegistry:
     def inspect(self, host_id):
         return self.store.get("host", require_id(host_id, "host ID"))
 
+    def remove(self, host_id):
+        return self.store.delete("host", require_id(host_id, "host ID"))
+
+    def remove_by_ssh_target(self, ssh_target):
+        """Remove registered host profiles bound to an SSH alias that was deleted."""
+        if not isinstance(ssh_target, str) or not ssh_target.strip():
+            return []
+        target = ssh_target.strip()
+        removed = []
+        with self.store.transaction() as db:
+            rows = db.execute("SELECT id, body FROM records WHERE kind='host'").fetchall()
+            for row in rows:
+                record = json.loads(row["body"])
+                if record.get("ssh_target") == target:
+                    db.execute("DELETE FROM records WHERE kind='host' AND id=?", (row["id"],))
+                    removed.append(row["id"])
+        return removed
+
     def _selected_records(self, host_ids):
         """Validate one explicit batch before probing or evaluating any host."""
         if (not isinstance(host_ids, list) or not 1 <= len(host_ids) <= 32

@@ -79,6 +79,11 @@ class Store:
             self._put(db, kind, identifier, value)
         return value
 
+    def delete(self, kind, identifier):
+        with self.transaction() as db:
+            cur = db.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, identifier))
+            return cur.rowcount > 0
+
     @staticmethod
     def _event(db, session_id, turn_id, kind, payload):
         db.execute("INSERT INTO events(event_id,session_id,turn_id,kind,body,observed_at) VALUES(?,?,?,?,?,?)", (new_id("event"), session_id, turn_id, kind, encode(payload), utcnow()))

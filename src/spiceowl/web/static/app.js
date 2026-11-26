@@ -2427,6 +2427,10 @@ function renderHostLiveCard(host) {
 
   const renderProcRow = p => `<tr class="${p.is_me ? 'is-me' : ''}"><td><strong>${escape(p.tool)}</strong></td><td>${escape(p.user)}${p.is_me ? '<span class="pool-me-pill">我</span>' : ''}</td><td>${escape(formatCpuWithCores(p.cpu_percent))}</td><td>${escape(formatBytesHuman(p.rss_bytes))}</td><td>${escape(p.elapsed)}</td></tr>`;
 
+  const mySimProcs = processes.filter(p => p.is_me && p.category === 'simulation');
+  const otherProcs = processes.filter(p => !(p.is_me && p.category === 'simulation'));
+  const otherSimCount = Math.max(0, simCount - mySimCount);
+
   let simsBody = '';
   if (!live && hostLiveState.loading) {
     simsBody = '<p class="subtle-note">正在实时读取 CPU、内存与仿真进程…</p>';
@@ -2439,26 +2443,27 @@ function renderHostLiveCard(host) {
     if (activeManagedRuns.length) {
       parts.push(`<div class="pool-managed-list">${activeManagedRuns.map(r => `<div class="pool-managed-item"><span><strong>${escape(r.run_id)}</strong> · ${escape(r.simulator)} (${escape(r.backend)})</span><div>${chip(r.state, 'blue')} <button type="button" class="button secondary small" data-action="host-open-run" data-id="${escape(r.run_id)}">盯守 →</button></div></div>`).join('')}</div>`);
     }
-    if (processes.length) {
-      const topProcs = processes.slice(0, 6);
-      const moreProcs = processes.slice(6);
-      parts.push(`<div class="pool-proc-wrap"><table class="pool-proc-table"><thead><tr><th>进程</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${topProcs.map(renderProcRow).join('')}</tbody></table></div>`);
-      if (moreProcs.length) {
-        parts.push(`<details class="home-advanced"><summary>展开其余 ${moreProcs.length} 个 EDA 进程</summary><div class="pool-proc-wrap" style="margin-top:6px"><table class="pool-proc-table"><thead><tr><th>进程</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${moreProcs.map(renderProcRow).join('')}</tbody></table></div></details>`);
-      }
-    } else if (!activeManagedRuns.length) {
+    if (mySimProcs.length) {
+      parts.push(`<div class="pool-proc-wrap"><table class="pool-proc-table"><thead><tr><th>我的仿真</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${mySimProcs.map(renderProcRow).join('')}</tbody></table></div>`);
+    }
+    if (otherProcs.length) {
+      const otherLabel = otherSimCount > 0
+        ? `查看其他用户仿真与 EDA 进程（${otherSimCount} 个仿真 · 共 ${otherProcs.length} 个进程）`
+        : `查看本机其他 EDA 工具进程（${otherProcs.length} 个）`;
+      parts.push(`<details class="home-advanced"><summary>${escape(otherLabel)}</summary>${toolTags ? `<div class="pool-tool-tags" style="margin-top:8px">${toolTags}</div>` : ''}<div class="pool-proc-wrap" style="margin-top:8px"><table class="pool-proc-table"><thead><tr><th>进程</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${otherProcs.map(renderProcRow).join('')}</tbody></table></div></details>`);
+    } else if (!hasMySim) {
       parts.push('<div class="pool-sim-idle">✓ 当前无活跃仿真进程，空闲可直接提交仿真</div>');
     }
     simsBody = parts.join('');
   }
 
   const simSummaryText = !live || !live.ok
-    ? '当前正在跑的仿真'
-    : simCount > 0
-    ? `当前正在跑的仿真：${simCount} 个（共占 ${escape(formatCpuWithCores(sims.total_sim_cpu_percent))} · ${escape(formatBytesHuman(sims.total_sim_rss_bytes))}${mySimCount ? ` · 我的 ${mySimCount} 个` : ''}）`
-    : edaToolCount > 0
-    ? `当前正在跑的仿真：0 个（另有 ${edaToolCount} 个 EDA 工具会话）`
-    : '当前正在跑的仿真：0 个';
+    ? '仿真状态'
+    : hasMySim
+    ? `我的仿真运行中：${mySimCount + activeManagedRuns.length} 个（占 ${escape(formatCpuWithCores(sims?.my_sim_cpu_percent || 0))} · ${escape(formatBytesHuman(myMemBytes))}）`
+    : otherSimCount > 0
+    ? `暂无我的仿真（他人仿真 ${otherSimCount} 个）`
+    : '暂无仿真运行';
 
   const obsStamp = live?.observed_at || host.last_resources?.observed_at || host.last_probe?.observed_at || null;
   const obsTime = obsStamp && Number.isFinite(Date.parse(obsStamp)) ? new Date(obsStamp).toLocaleTimeString() : '尚未采样';
@@ -2503,7 +2508,6 @@ function renderHostLiveCard(host) {
         <div class="pool-sims-head">
           <strong>${simSummaryText}</strong>
         </div>
-        ${toolTags ? `<div class="pool-tool-tags">${toolTags}</div>` : ''}
         ${simsBody}
       </div>
       <div class="pool-live-foot">
@@ -2565,15 +2569,13 @@ function hosts() {
       .map((host, idx) => {
         const live = hostLiveState.byId.get(host.host_id);
         const mySims = (live?.simulations?.my_active_count || 0) + (live?.managed_runs || []).filter(r => r.active).length;
-        const myTools = live?.simulations?.my_eda_tool_count || 0;
         const myCpu = live?.simulations?.my_sim_cpu_percent || 0;
-        return {host, idx, mySims, myTools, myCpu};
+        return {host, idx, mySims, myCpu};
       })
       .sort((a, b) =>
         (b.mySims > 0 ? 1 : 0) - (a.mySims > 0 ? 1 : 0)
         || b.mySims - a.mySims
         || b.myCpu - a.myCpu
-        || (b.myTools > 0 ? 1 : 0) - (a.myTools > 0 ? 1 : 0)
         || a.idx - b.idx
       )
       .map(item => item.host);

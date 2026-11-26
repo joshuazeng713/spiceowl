@@ -172,11 +172,11 @@ async function remotePages(page, report, label) {
 }
 
 async function interactiveTutorialAndWorkbench(page, report, label) {
-  // 0. Minimalist First Page (#quickstart): topbar connector pill, 3 Agent cards, 1 SSH card, 3 core shortcuts
+  // 0. Minimalist First Page (#quickstart): topbar connector pill, 2 Agent cards, 1 SSH card, 3 core shortcuts
   await page.locator('#connector-trigger').waitFor({state: 'visible'});
   await page.locator('[data-nav="quickstart"]').click();
   await page.locator('.home-shell').waitFor();
-  assert.equal(await page.locator('.home-agent-card').count(), 3, 'Expected 3 clean Agent connect cards');
+  assert.equal(await page.locator('.home-agent-card').count(), 2, 'Expected 2 clean Agent connect cards');
   await page.locator('[data-action="home-connect-codex"]').waitFor({state: 'visible'});
   await page.locator('[data-action="home-connect-ssh"]').waitFor({state: 'visible'});
   assert.equal(await page.locator('.home-flow-tile').count(), 3, 'Expected 3 core workflow tiles');

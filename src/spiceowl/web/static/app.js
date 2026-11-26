@@ -413,14 +413,6 @@ function quickstartPage() {
           </div>
           <a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">前往 CircuitGit ↗</a>
         </article>
-        <article class="home-agent-card">
-          <div>
-            <div class="home-agent-top"><span class="home-agent-icon" aria-hidden="true">⌘</span><span class="home-status-tag">标准工具</span></div>
-            <h3>其他 Agent / 评测</h3>
-            <p>通过标准工具接入本地 Agent，或先一键跑 10 项确定性安全护栏评测。</p>
-          </div>
-          <a class="button secondary" href="#agents">查看接入与评测 →</a>
-        </article>
       </div>
     </section>`;
 

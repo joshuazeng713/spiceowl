@@ -479,6 +479,43 @@ class TestSshSetupUiAndServerRoutes(unittest.TestCase):
                 self.assertEqual(st, 200)
                 wiz = json.loads(wiz_bytes.decode("utf-8"))
                 self.assertIn("eda-lab-1", [a["alias"] for a in wiz["ssh_aliases"]])
+
+                # Quick-connect fails cleanly when host is unreachable without requiring 6-field form
+                with patch.object(ssh_setup, "_tcp_probe", return_value=(False, "timeout")):
+                    st_fail, _, qc_fail_bytes = raw_req(
+                        "POST",
+                        "/api/wizard/quick-connect",
+                        {"Origin": f"http://127.0.0.1:{port}", "X-SpiceOwl-Token": json.loads(raw_req("GET", "/api/state")[2].decode("utf-8"))["csrf_token"]},
+                        {"alias": "eda-lab-1"},
+                    )
+                self.assertEqual(st_fail, 200)
+                qc_fail = json.loads(qc_fail_bytes.decode("utf-8"))
+                self.assertFalse(qc_fail["ok"])
+                self.assertEqual(qc_fail["diagnosis"]["code"], "network_unreachable")
+
+                # Quick-connect succeeds and auto-registers host with discovered hostname & username
+                fake_diag = {
+                    "ok": True,
+                    "alias": "eda-lab-1",
+                    "code": "ready",
+                    "steps": [{"id": "target_auth", "label": "ok", "ok": True, "detail": "ok"}],
+                    "remote": {"username": "edauser", "hostname": "sim-node-08", "python3": "/usr/bin/python3", "python": None, "spectre": "/opt/cadence/bin/spectre", "ngspice": None},
+                }
+                csrf_tok = json.loads(raw_req("GET", "/api/state")[2].decode("utf-8"))["csrf_token"]
+                with patch("spiceowl.onboarding.ssh_setup.diagnose_connection", return_value=fake_diag), \
+                        patch.object(ctrl.hosts, "probe", return_value={"identity": {"verified": True, "actual_host": "sim-node-08", "actual_user": "edauser"}, "tools": []}):
+                    st_ok, _, qc_ok_bytes = raw_req(
+                        "POST",
+                        "/api/wizard/quick-connect",
+                        {"Origin": f"http://127.0.0.1:{port}", "X-SpiceOwl-Token": csrf_tok},
+                        {"alias": "eda-lab-1"},
+                    )
+                self.assertEqual(st_ok, 200)
+                qc_ok = json.loads(qc_ok_bytes.decode("utf-8"))
+                self.assertTrue(qc_ok["ok"])
+                self.assertEqual(qc_ok["host"]["host_id"], "eda-lab-1")
+                self.assertEqual(qc_ok["host"]["expected_host"], "sim-node-08")
+                self.assertEqual(qc_ok["host"]["expected_user"], "edauser")
             finally:
                 srv.shutdown()
                 srv.server_close()

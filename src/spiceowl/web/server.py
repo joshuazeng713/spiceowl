@@ -389,6 +389,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 setup_csrf = secrets.token_urlsafe(24)
                 csp_nonce = secrets.token_urlsafe(18)
                 ssh_setup_sessions[request_id] = (target, setup_csrf, now_mono + 1800.0)
+                initial_alias = (query.get("alias") or [""])[0][:96]
                 page = ssh_setup_html(
                     target,
                     request_id,
@@ -398,6 +399,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     brand="SpiceOwl",
                     action_path="/ssh/setup/action",
                     post_message_type="spiceowl.ssh.updated",
+                    initial_alias=initial_alias,
                 )
                 return self.send_content(200, page, "text/html; charset=utf-8", csp=ssh_setup_csp(csp_nonce))
             if self.command == "POST" and path == "/ssh/setup/action":
@@ -546,6 +548,44 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     raise DomainError("Wizard demo bootstrap takes an empty object.")
                 from spiceowl.onboarding_wizard import bootstrap_vivid_demo
                 return self.reply(bootstrap_vivid_demo(controller, direct_manager, batch_manager), 201)
+            if path == "/api/wizard/quick-connect" and self.command == "POST":
+                from spiceowl.onboarding.ssh_discovery import validate_alias
+                from spiceowl.onboarding.ssh_setup import diagnose_connection
+                from spiceowl.onboarding_wizard import quick_register_eda_host
+                req = self.body()
+                if set(req) - {"alias"} or "alias" not in req:
+                    raise DomainError("Quick connect requires only an SSH alias.")
+                alias = validate_alias(req["alias"])
+                diag = diagnose_connection(ssh_dir, alias)
+                remote = diag.get("remote") or {}
+                r_host = remote.get("hostname")
+                r_user = remote.get("username")
+                if not r_host or not r_user:
+                    return self.reply({"ok": False, "diagnosis": diag})
+                host_id = re.sub(r"[^A-Za-z0-9_-]", "-", alias).strip("-") or "eda-host"
+                if not host_id[0].isalnum():
+                    host_id = "h-" + host_id
+                sim = "spectre" if remote.get("spectre") else ("ngspice" if remote.get("ngspice") else "spectre")
+                sim_exe = remote.get("spectre") or remote.get("ngspice") or None
+                host, created = quick_register_eda_host(
+                    controller.hosts,
+                    host_id=host_id[:96],
+                    label=f"EDA ({alias})",
+                    ssh_target=alias,
+                    expected_host=r_host,
+                    expected_user=r_user,
+                    simulator=sim,
+                    simulator_executable=sim_exe,
+                )
+                probe_res = controller.hosts.probe(host["host_id"])
+                host = controller.hosts.inspect(host["host_id"])
+                return self.reply({
+                    "ok": bool(diag.get("ok")),
+                    "host": host,
+                    "created": created,
+                    "probe": probe_res,
+                    "diagnosis": diag,
+                })
             if path == "/api/wizard/register-host" and self.command == "POST":
                 from spiceowl.onboarding_wizard import quick_register_eda_host
                 req = self.body()

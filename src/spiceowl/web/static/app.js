@@ -243,12 +243,43 @@ function openConnectorAuthorizationPopup() {
   }
 }
 
-function openSshSetupWizard() {
+function openSshSetupWizard(alias = '') {
   const base = isConnectorLive() ? connectorState.baseUrl : '';
-  const url = `${base}/ssh/setup?origin=${encodeURIComponent(location.origin)}`;
-  const popup = window.open(url, 'spiceowl_ssh_setup', 'width=1020,height=780,resizable=yes,scrollbars=yes');
+  const extra = alias ? `&alias=${encodeURIComponent(alias)}` : '';
+  const url = `${base}/ssh/setup?origin=${encodeURIComponent(location.origin)}${extra}`;
+  const popup = window.open(url, 'spiceowl_ssh_setup', 'width=940,height=740,resizable=yes,scrollbars=yes');
   if (!popup) {
     toast('浏览器拦截了 SSH 配置向导窗口，请允许弹出窗口后重试。');
+  }
+}
+
+async function quickConnectSshAlias(aliasName, {silentOnFail = false} = {}) {
+  if (!aliasName || wizardState.busy) return null;
+  wizardState.busy = true;
+  wizardState.lastDiag = null;
+  render();
+  try {
+    const res = await api('/api/wizard/quick-connect', {method: 'POST', body: {alias: aliasName}});
+    wizardState.lastDiag = res.diagnosis || null;
+    wizardState.lastProbe = res.probe || null;
+    await refresh();
+    await refreshWizard();
+    if (res.host?.host_id) {
+      wizardDraft.selected_host_id = res.host.host_id;
+    }
+    if (res.ok && res.host) {
+      toast(`🟢 ${aliasName} 已自动验证并加入服务器池！`);
+    } else if (!silentOnFail) {
+      const failStep = (res.diagnosis?.steps || []).find(s => !s.ok);
+      toast(failStep ? `${aliasName}：${failStep.detail}` : `${aliasName} 尚未连通，可在配置向导中一键修复。`);
+    }
+    return res;
+  } catch (error) {
+    if (!silentOnFail) toast(error.message);
+    return null;
+  } finally {
+    wizardState.busy = false;
+    render();
   }
 }
 
@@ -260,10 +291,14 @@ window.addEventListener('message', async event => {
     if (!isPublicDemo()) {
       wizardState.loaded = false;
       await refreshWizard();
-      render();
-      toast(msg.selected_alias
-        ? `🟢 已同步 SSH 配置（${msg.selected_alias}），现在可直接点选测试连通性！`
-        : '🟢 已同步本机最新 SSH 服务器配置！');
+      if (msg.diagnosis_ok && msg.selected_alias) {
+        await quickConnectSshAlias(msg.selected_alias, {silentOnFail: true});
+      } else {
+        render();
+        toast(msg.selected_alias
+          ? `🟢 已同步 SSH 配置（${msg.selected_alias}），点击即可连通测试！`
+          : '🟢 已同步本机最新 SSH 服务器配置！');
+      }
     }
     return;
   }
@@ -448,12 +483,12 @@ function quickstartPage() {
     serverInner = `
       <div class="home-server-row">
         <div class="home-server-copy">
-          <h3>自动识别或图形化配置本机 SSH 服务器</h3>
-          <p>无需手写 <code>~/.ssh/config</code> 或命令行。连上本机连接器即可自动列出已有别名，或打开本机图形化向导配跳板机、免密密钥与指纹。</p>
+          <h3>连接你的 EDA 仿真服务器</h3>
+          <p>无需手写配置文件或复杂表单。连上本机连接器后，已有 SSH 别名点一下即通；新服务器在向导里只需填地址和用户名。</p>
         </div>
         <div class="direct-actions">
           <button type="button" class="button primary" data-action="home-connect-ssh">一键识别我的 SSH 服务器</button>
-          <button type="button" class="button secondary" data-action="open-ssh-setup-wizard">SSH 图形化配置向导 ↗</button>
+          <button type="button" class="button secondary" data-action="open-ssh-setup-wizard">新增服务器向导 ↗</button>
         </div>
       </div>`;
   } else {
@@ -462,26 +497,46 @@ function quickstartPage() {
       const isOk = Boolean(matched?.last_probe?.identity?.verified);
       return `<button type="button" class="home-alias-btn ${isOk ? 'verified' : ''}" data-action="home-quick-ssh" data-alias="${escape(a.alias)}" ${wizardState.busy ? 'disabled' : ''}><span>${isOk ? '✓ ' : ''}${escape(a.alias)}</span>${a.hostname ? `<small>${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)}</small>` : ''}</button>`;
     }).join('');
-    serverInner = `
+    const diagFailed = wizardState.lastDiag && !wizardState.lastDiag.ok;
+    const failedStep = diagFailed ? (wizardState.lastDiag.steps || []).find(s => !s.ok) : null;
+    const statusBanner = wizardState.lastProbe?.identity?.verified && !wizardState.lastProbe?.error
+      ? `<div class="wf-mode-banner exact">${chip('SSH 已连通 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code></span></div>`
+      : diagFailed
+      ? `<div class="wf-mode-banner preview">${chip('需要配置', 'amber')}<span>${escape(failedStep?.detail || '尚未连通，请在配置向导中完成指纹或免密设置。')}</span><button type="button" class="button primary small" data-action="open-ssh-setup-wizard" data-alias="${escape(wizardState.lastDiag.alias || '')}">在向导中一键修复 ↗</button></div>`
+      : wizardState.lastProbe?.error
+      ? `<div class="wf-mode-banner preview">${chip('未通过', 'red')}<span>${escape(wizardState.lastProbe.error.message || '请核对 SSH 别名与免密配置。')}</span></div>`
+      : '';
+    serverInner = aliases.length
+      ? `
       <div class="home-server-row">
         <div class="home-server-copy">
-          <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : aliases.length ? `已发现 ${aliases.length} 个本机 SSH 别名，点一下直接连通测试` : '尚未检测到 ~/.ssh/config 别名'}</h3>
-          <p>${verifiedHosts.length ? '点击任意别名可重新校验，或打开图形化向导新增跳板机与免密服务器。' : '点击下方别名即可免表单自动登记并验证；首次配置新服务器或跳板机，直接点右侧图形化向导。'}</p>
+          <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : `已发现 ${aliases.length} 个 SSH 服务器，点一下直接连通`}</h3>
+          <p>${verifiedHosts.length ? '点击任意服务器可立即验证或切换；需要加新服务器或跳板机，点右侧配置向导。' : '点击下方任意服务器即可自动识别主机与仿真器并完成连通（无需填写复杂表单）。'}</p>
         </div>
         <div class="direct-actions">
-          <button type="button" class="button primary small" data-action="open-ssh-setup-wizard">SSH 图形化配置向导 ↗</button>
-          <button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>刷新识别</button>
-          <a class="button secondary small" href="#hosts">管理服务器池 →</a>
+          <button type="button" class="button primary small" data-action="open-ssh-setup-wizard">+ 配置新服务器 ↗</button>
+          <button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>刷新</button>
+          <a class="button secondary small" href="#hosts">服务器池 →</a>
         </div>
       </div>
-      ${aliasChips ? `<div class="home-alias-list">${aliasChips}</div>` : ''}
-      ${wizardState.lastProbe ? (wizardState.lastProbe.identity?.verified && !wizardState.lastProbe.error
-        ? `<div class="wf-mode-banner exact">${chip('SSH 连通 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code></span></div>`
-        : `<div class="wf-mode-banner preview">${chip('未通过', 'red')}<span>${escape(wizardState.lastProbe.error?.message || '请核对 SSH 别名与免密配置。')}</span></div>`) : ''}
-      <details class="home-advanced" ${!aliases.length || wizardState.firstSim?.run ? 'open' : ''}>
-        <summary>展开：手动填写服务器 / 运行零 PDK 首条烟雾仿真</summary>
+      <div class="home-alias-list">${aliasChips}</div>
+      ${statusBanner}
+      <details class="home-advanced" ${wizardState.firstSim?.run ? 'open' : ''}>
+        <summary>进阶：跑一条零 PDK 烟雾仿真测试 / 高级手动配置</summary>
         ${renderLocalEdaOnboardingPanel()}
-      </details>`;
+      </details>`
+      : `
+      <div class="home-server-row">
+        <div class="home-server-copy">
+          <h3>还没有配置 SSH 服务器</h3>
+          <p>打开图形化向导，只需填服务器地址和用户名（可选跳板机），密钥、指纹和连通校验全自动搞定。</p>
+        </div>
+        <div class="direct-actions">
+          <button type="button" class="button primary" data-action="open-ssh-setup-wizard">+ 打开 SSH 配置向导 ↗</button>
+          <button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>刷新</button>
+        </div>
+      </div>
+      ${statusBanner}`;
   }
 
   const serverSection = `
@@ -531,31 +586,22 @@ function quickstartPage() {
 
 function renderLocalEdaOnboardingPanel() {
   const st = wizardState.status;
-  const checks = st?.checks || [];
   const aliases = st?.ssh_aliases || [];
   const hosts = st?.workspace?.hosts || state.hosts || [];
   const templates = st?.templates || [];
   const activeTpl = templates.find(t => t.id === wizardDraft.template_id) || templates[0] || null;
   const fRun = wizardState.firstSim?.run || null;
-
-  let html = `<section class="panel wizard-eda-panel"><div class="section-title"><h2>连接你的远程 EDA 服务器并跑通首个仿真（4 步向导）</h2><button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>重新体检</button></div>`;
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">1</span> 本地环境自检（自动识别 macOS / Linux / Windows 与 SSH 别名）</h3><div class="wizard-check-grid">${checks.map(c => `<div class="wizard-check-card status-${escape(c.status)}"><strong>${escape(c.label)}</strong>${chip(c.status === 'ok' ? '就绪' : c.status === 'missing' ? '缺失' : '提示', c.status === 'ok' ? 'green' : c.status === 'missing' ? 'red' : 'amber')}<p>${escape(c.detail)}</p></div>`).join('') || '<p class="subtle-note">正在体检本地环境…</p>'}</div><details class="host-form-details"><summary>还没有配置 SSH 免密登录？查看 ~/.ssh/config 配置模板（支持跳板机）</summary><pre class="direct-rec-md">${escape(st?.ssh_config_example || '')}</pre><p class="subtle-note">配好后确认 <code>ssh eda-sim "hostname &amp;&amp; id -un &amp;&amp; which spectre"</code> 无需输密码即可返回，再点击上方「重新体检」，别名就会自动出现在第 2 步下拉框中。</p></details></div>`;
-
-  const probeBadge = wizardState.lastProbe
-    ? (wizardState.lastProbe.identity?.verified && !wizardState.lastProbe.error
-      ? `<div class="wf-mode-banner exact">${chip('SSH 身份验证通过 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code> · 工具状态：${(wizardState.lastProbe.tools || []).map(t => `${escape(t.kind)}=${escape(t.status)}${t.version ? ` (${escape(t.version)})` : ''}`).join(', ') || '仅身份校验'}</span></div>`
-      : `<div class="wf-mode-banner preview">${chip('连接未通过', 'red')}<span>${escape(wizardState.lastProbe.error?.message || '请核对 SSH 别名、主机名或用户名是否与远端 hostname / id -un 一致。')}</span></div>`)
-    : '';
-
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">2</span> 登记并验证你的 EDA 服务器（只用本机 OpenSSH 别名，绝不存密码）</h3><form id="wizard-host-form"><div class="direct-grid">${aliases.length ? `<label class="direct-wide">从本机 ~/.ssh/config 一键选择别名（共发现 ${aliases.length} 个）<select id="wiz-alias-pick"><option value="">— 手动填写或从列表选择 —</option>${aliases.map(a => `<option value="${escape(a.alias)}" ${a.alias === wizardDraft.alias_pick ? 'selected' : ''}>${escape(a.alias)}${a.hostname ? ` (${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)})` : ''}</option>`).join('')}</select></label>` : ''}<label>OpenSSH 别名 (ssh_target)<input id="wiz-ssh-target" value="${escape(wizardDraft.ssh_target)}" required placeholder="eda-sim"></label><label>服务器 ID (host_id)<input id="wiz-host-id" value="${escape(wizardDraft.host_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="eda-sim-01"></label><label>期望远端主机名 (hostname)<input id="wiz-expected-host" value="${escape(wizardDraft.expected_host)}" required placeholder="sim-node-01"></label><label>期望远端用户名 (id -un)<input id="wiz-expected-user" value="${escape(wizardDraft.expected_user)}" required placeholder="your_user"></label><label>主仿真器<select id="wiz-simulator"><option value="spectre" ${wizardDraft.simulator === 'spectre' ? 'selected' : ''}>Cadence Spectre</option><option value="ngspice" ${wizardDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice (开源)</option></select></label><label>远端仿真器绝对路径（可选）<input id="wiz-sim-exe" value="${escape(wizardDraft.simulator_executable)}" placeholder="${wizardDraft.simulator === 'spectre' ? '/opt/cadence/tools/bin/spectre' : '/usr/bin/ngspice'}"></label></div><div class="direct-actions"><button type="submit" class="button secondary small" data-probe="0" ${wizardState.busy ? 'disabled' : ''}>仅保存服务器档案</button><button type="button" class="button primary small" data-action="wizard-register-probe" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '连接验证中…' : '保存并立即测试 SSH 与仿真器'}</button></div></form>${probeBadge}</div>`;
-
   const selHostId = wizardDraft.selected_host_id || hosts[0]?.host_id || '';
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">3</span> 准备你的第一个仿真（内置零 PDK 烟雾网表，开箱即测）</h3><form id="wizard-first-sim-form"><div class="direct-grid"><label>目标 EDA 服务器<select id="wiz-target-host" ${hosts.length ? '' : 'disabled'}>${hosts.length ? hosts.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === selHostId ? 'selected' : ''}>${escape(h.label)} (${escape(h.host_id)})${h.last_probe?.identity?.verified ? ' · 已验证 ✓' : ''}</option>`).join('') : '<option value="">请先在第 2 步登记服务器</option>'}</select></label><label>执行后端<select id="wiz-backend"><option value="ssh_direct" ${wizardDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连托管进程 (单机工作站)</option><option value="lsf" ${wizardDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${wizardDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>测试网表模板<select id="wiz-template">${templates.map(t => `<option value="${escape(t.id)}" ${t.id === wizardDraft.template_id ? 'selected' : ''}>${escape(t.title)}</option>`).join('')}<option value="custom" ${wizardDraft.template_id === 'custom' ? 'selected' : ''}>自定义粘贴我的网表 (.scs / .sp)</option></select></label>${wizardDraft.backend === 'lsf' ? `<label>LSF Queue（必填）<input id="wiz-queue" value="${escape(wizardDraft.queue)}" required placeholder="analog_short"></label>` : wizardDraft.backend === 'slurm' ? `<label>Slurm Partition（必填）<input id="wiz-partition" value="${escape(wizardDraft.partition)}" required placeholder="sim_compute"></label>` : `<label>远端工作目录<input id="wiz-remote-root" value="${escape(wizardDraft.remote_root)}" placeholder=".spiceowl-runs"></label>`}</div>${activeTpl && wizardDraft.template_id !== 'custom' ? `<p class="subtle-note">${escape(activeTpl.description)}</p><pre class="direct-rec-md" style="max-height:160px">${escape(activeTpl.netlist)}</pre>` : `<textarea id="wiz-custom-netlist" class="direct-netlist" placeholder="在此粘贴你的 Spectre 或 ngspice 网表…">${escape(wizardDraft.custom_netlist)}</textarea>`}<div class="direct-actions"><button type="submit" class="button primary small" ${wizardState.busy || !hosts.length ? 'disabled' : ''}>冻结我的第一个仿真计划 (Prepare)</button></div></form></div>`;
-
   const fTerminal = fRun && ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed', 'input_hash_failure'].includes(fRun.state);
-  html += `<div class="wizard-step-block"><h3><span class="wizard-step-num">4</span> 跑通首个仿真并查看波形与五维报告</h3>${fRun ? `<div class="direct-rec-card"><div class="section-title"><strong>当前首个仿真：<code>${escape(fRun.run_id)}</code>（主机 ${escape(fRun.host_id)} · ${escape(fRun.backend)} · ${escape(fRun.simulator)}）</strong>${directRunChip(fRun)}</div><div class="direct-actions"><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="stage" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !['prepared', 'stage_incomplete'].includes(fRun.state) ? 'disabled' : ''}>① 上传输入 (Stage)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="launch" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state !== 'staged' || fRun.dispatch_claimed ? 'disabled' : ''}>② 启动仿真 (Launch)</button><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="status" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state === 'prepared' ? 'disabled' : ''}>③ 查询状态 (Status)</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="collect" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !fTerminal || fRun.collection_phase === 'complete' ? 'disabled' : ''}>④ 收集报告与波形 (Collect)</button><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="runs" data-run="${escape(fRun.run_id)}" data-batch="">去工作台看完整报告 →</button></div>${fRun.last_error ? `<p class="error-text">${escape(fRun.last_error.message || fRun.last_error.code)}</p>` : ''}${fRun.collection_phase === 'complete' ? '<p class="wf-mode-banner exact"><strong>恭喜！你的第一个真实仿真已收集完成。</strong> 点击右侧「去工作台看完整报告 →」即可查看五维诊断报告与交互式波形！</p>' : ''}</div>` : '<p class="subtle-note">完成第 3 步「冻结我的第一个仿真计划」后，这里会出现 ① 上传 → ② 启动 → ③ 状态查询 → ④ 收集并查看波形 的一键执行栏。</p>'}</div>`;
 
-  html += `<details class="host-form-details"><summary>关于已退役的历史兼容层（spiceowl mcp 与旧版 Q&amp;A）</summary><p class="subtle-note">早期 <code>spiceowl mcp</code> 启动器与旧版 Q&amp;A 均已归档为只读/兼容层，新用户请直接使用本向导、<code>#direct</code> 仿真工作台与 <code>#agents</code> 通道。详见 <code>docs/legacy-compatibility.md</code>。</p></details></section>`;
+  let html = `<section class="panel wizard-eda-panel">`;
+  html += `<div class="wizard-step-block"><h3>跑一条零 PDK 烟雾仿真（1-3 秒验证远端仿真器）</h3><form id="wizard-first-sim-form"><div class="direct-grid"><label>目标服务器<select id="wiz-target-host" ${hosts.length ? '' : 'disabled'}>${hosts.length ? hosts.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === selHostId ? 'selected' : ''}>${escape(h.label)}${h.last_probe?.identity?.verified ? ' · 已就绪 ✓' : ''}</option>`).join('') : '<option value="">请先点击上方服务器完成连通</option>'}</select></label><label>执行方式<select id="wiz-backend"><option value="ssh_direct" ${wizardDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连工作站</option><option value="lsf" ${wizardDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${wizardDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label><label>烟雾网表<select id="wiz-template">${templates.map(t => `<option value="${escape(t.id)}" ${t.id === wizardDraft.template_id ? 'selected' : ''}>${escape(t.title)}</option>`).join('')}<option value="custom" ${wizardDraft.template_id === 'custom' ? 'selected' : ''}>自定义粘贴网表 (.scs / .sp)</option></select></label>${wizardDraft.backend === 'lsf' ? `<label>LSF Queue<input id="wiz-queue" value="${escape(wizardDraft.queue)}" required placeholder="analog_short"></label>` : wizardDraft.backend === 'slurm' ? `<label>Slurm Partition<input id="wiz-partition" value="${escape(wizardDraft.partition)}" required placeholder="sim_compute"></label>` : `<label>远端目录<input id="wiz-remote-root" value="${escape(wizardDraft.remote_root)}" placeholder=".spiceowl-runs"></label>`}</div>${wizardDraft.template_id === 'custom' ? `<textarea id="wiz-custom-netlist" class="direct-netlist" placeholder="在此粘贴你的 Spectre 或 ngspice 网表…">${escape(wizardDraft.custom_netlist)}</textarea>` : (activeTpl ? `<p class="subtle-note">${escape(activeTpl.description)}</p>` : '')}<div class="direct-actions"><button type="submit" class="button primary small" ${wizardState.busy || !hosts.length ? 'disabled' : ''}>准备烟雾仿真 (Prepare)</button></div></form>`;
+  if (fRun) {
+    html += `<div class="direct-rec-card" style="margin-top:10px"><div class="section-title"><strong><code>${escape(fRun.run_id)}</code>（${escape(fRun.host_id)} · ${escape(fRun.simulator)}）</strong>${directRunChip(fRun)}</div><div class="direct-actions"><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="stage" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !['prepared', 'stage_incomplete'].includes(fRun.state) ? 'disabled' : ''}>① 上传</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="launch" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state !== 'staged' || fRun.dispatch_claimed ? 'disabled' : ''}>② 启动</button><button type="button" class="button secondary small" data-action="wizard-sim-op" data-op="status" data-id="${escape(fRun.run_id)}" ${wizardState.busy || fRun.state === 'prepared' ? 'disabled' : ''}>③ 状态</button><button type="button" class="button primary small" data-action="wizard-sim-op" data-op="collect" data-id="${escape(fRun.run_id)}" ${wizardState.busy || !fTerminal || fRun.collection_phase === 'complete' ? 'disabled' : ''}>④ 收集波形</button><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="runs" data-run="${escape(fRun.run_id)}" data-batch="">查看完整报告 →</button></div>${fRun.last_error ? `<p class="error-text">${escape(fRun.last_error.message || fRun.last_error.code)}</p>` : ''}</div>`;
+  }
+  html += `</div>`;
+  html += `<details class="host-form-details"><summary>高级：手动覆盖远端身份或自定义仿真器绝对路径</summary><form id="wizard-host-form" style="margin-top:10px"><div class="direct-grid">${aliases.length ? `<label class="direct-wide">SSH 别名<select id="wiz-alias-pick"><option value="">— 选择别名 —</option>${aliases.map(a => `<option value="${escape(a.alias)}" ${a.alias === wizardDraft.alias_pick ? 'selected' : ''}>${escape(a.alias)}</option>`).join('')}</select></label>` : ''}<label>SSH 别名<input id="wiz-ssh-target" value="${escape(wizardDraft.ssh_target)}" required placeholder="eda-sim"></label><label>服务器 ID<input id="wiz-host-id" value="${escape(wizardDraft.host_id)}" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="eda-sim-01"></label><label>远端 hostname<input id="wiz-expected-host" value="${escape(wizardDraft.expected_host)}" required placeholder="sim-node-01"></label><label>远端用户名<input id="wiz-expected-user" value="${escape(wizardDraft.expected_user)}" required placeholder="your_user"></label><label>仿真器<select id="wiz-simulator"><option value="spectre" ${wizardDraft.simulator === 'spectre' ? 'selected' : ''}>Cadence Spectre</option><option value="ngspice" ${wizardDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option></select></label><label>仿真器绝对路径（可选）<input id="wiz-sim-exe" value="${escape(wizardDraft.simulator_executable)}" placeholder="/opt/cadence/tools/bin/spectre"></label></div><div class="direct-actions"><button type="submit" class="button secondary small" data-probe="0" ${wizardState.busy ? 'disabled' : ''}>仅保存</button><button type="button" class="button primary small" data-action="wizard-register-probe" ${wizardState.busy ? 'disabled' : ''}>保存并校验</button></div></form></details>`;
+  html += `</section>`;
   return html;
 }
 
@@ -2067,10 +2113,10 @@ function hosts() {
   if (isPublicDemo()) return publicHostPage();
   syncHostSelection();
   const count = selectedHostIds?.size || 0;
-  let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Register your servers, verify each connection, then compare saved resource observations.', `<div class="host-page-actions"><button class="button secondary" data-action="add-host">＋ Add host</button><button class="button secondary" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button primary" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>`);
-  html += `<div class="host-onboarding"><div><strong>1. Register</strong><span>Add an existing SSH alias or import a list using a route template.</span></div><div><strong>2. Verify</strong><span>Check the route, SSH trust and remote identity for each host.</span></div><div><strong>3. Check resources</strong><span>Run a pool check when you need fresh CPU and memory observations.</span></div></div>`;
+  let html = heading('SIMULATION HOSTS', 'Your simulation server pool.', 'Register your servers, verify each connection, then compare saved resource observations.', `<div class="host-page-actions"><button class="button primary" data-action="open-ssh-setup-wizard">＋ SSH 配置向导 ↗</button><button class="button secondary" data-action="add-host">手动登记</button><button class="button secondary" data-action="import-pool" ${!state.hosts.length ? 'disabled' : ''}>Import pool</button><button class="button secondary" data-action="pool-scan" ${poolScanning || !count || count > 32 ? 'disabled' : ''}>${poolScanning ? 'Checking selected hosts…' : 'Check selected hosts'}</button></div>`);
+  html += `<div class="host-onboarding"><div><strong>1. 向导配置</strong><span>只需填服务器地址与用户名，密钥、跳板机与指纹全自动引导。</span></div><div><strong>2. 自动识别</strong><span>连通后自动识别远端主机身份与 Spectre / ngspice，无需手填复杂表单。</span></div><div><strong>3. 资源扫描</strong><span>按需探测各节点 CPU 与内存余量，为夜间值守提供实时选机依据。</span></div></div>`;
   html += poolOverview();
-  if (!state.hosts.length) html += `<div class="empty"><h2>No simulation hosts registered.</h2><p>Add a host to start. Registration saves local configuration; Check connection is a separate action.</p><button class="button primary" data-action="add-host">Add your first host</button></div>`;
+  if (!state.hosts.length) html += `<div class="empty"><h2>尚未接入 EDA 服务器</h2><p>打开图形化向导，只需填写地址和用户名即可一键配好免密并加入服务器池。</p><button class="button primary" data-action="open-ssh-setup-wizard">＋ 打开 SSH 配置向导 ↗</button></div>`;
   html += `<details class="host-details" ${state.hosts.length <= 1 ? 'open' : ''}><summary>Host identity and tool versions</summary><div class="connections-list">${state.hosts.map(host => {
     const probe = host.last_probe;
     const evidence = connectionEvidence(host), status = connectionStatus(evidence);
@@ -2656,12 +2702,13 @@ document.addEventListener('click', async event => {
     return;
   }
   if (action === 'open-ssh-setup-wizard') {
+    const alias = button.dataset.alias || '';
     if (isPublicDemo()) {
       connectorState.afterConnect = 'ssh_setup';
       await startConnectorFlow({openModal: true});
       return;
     }
-    openSshSetupWizard();
+    openSshSetupWizard(alias);
     return;
   }
   if (action === 'home-connect-ssh') {
@@ -2676,15 +2723,8 @@ document.addEventListener('click', async event => {
   }
   if (action === 'home-quick-ssh') {
     const aliasName = button.dataset.alias;
-    const aliasObj = (wizardState.status?.ssh_aliases || []).find(a => a.alias === aliasName);
-    if (!aliasObj) return;
-    applySshAliasToDraft(aliasObj);
-    if (!wizardDraft.expected_host || !wizardDraft.expected_user) {
-      render();
-      toast(`已预填别名 ${aliasName}，请在下方展开项补全期望主机名或用户名后测试。`);
-      return;
-    }
-    await submitWizardHost(true);
+    if (!aliasName) return;
+    await quickConnectSshAlias(aliasName);
     return;
   }
   if (action === 'connector-open' || action === 'connector-retry') {

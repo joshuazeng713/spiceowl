@@ -12,28 +12,28 @@
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <aside class="sidebar">
-    <a class="brand" href="#overview"><img src="./owl.svg" width="42" height="42" alt="SpiceOwl"><span>SpiceOwl<small>SIMULATION WORKSPACE</small></span></a>
+    <a class="brand" href="#quickstart"><img src="./owl.svg" width="42" height="42" alt="SpiceOwl"><span>SpiceOwl<small>SIMULATION WORKSPACE</small></span></a>
     <div class="workspace-label"><span class="dot"></span><span id="workspace-scope">Personal workspace</span><span class="local-tag">LOCAL</span></div>
     <nav aria-label="Main navigation">
-      <div class="nav-group-label">快速入门与核心功能</div>
-      <a href="#quickstart" data-nav="quickstart"><span aria-hidden="true">✦</span> 新手步步教程</a>
+      <div class="nav-group-label">工作区</div>
+      <a href="#quickstart" data-nav="quickstart"><span aria-hidden="true">✦</span> 首页与连接</a>
+      <a href="#direct" data-nav="direct"><span aria-hidden="true">▷</span> 仿真与波形 <span id="direct-count" class="nav-count">0</span></a>
       <a href="#overview" data-nav="overview"><span aria-hidden="true">▦</span> 仿真总览</a>
-      <a href="#direct" data-nav="direct"><span aria-hidden="true">▷</span> 仿真 · 波形 · 批量 <span id="direct-count" class="nav-count">0</span></a>
-      <a href="#agents" data-nav="agents"><span aria-hidden="true">✧</span> AI 助手与评测 <span id="native-count" class="nav-count" title="Saved legacy questions">0</span></a>
-      <div class="nav-group-label">环境配置与诊断沙箱</div>
-      <a href="#hosts" data-nav="hosts"><span aria-hidden="true">▤</span> EDA 服务器管理 <span id="host-count" class="nav-count">0</span></a>
-      <a href="#connections" data-nav="connections"><span aria-hidden="true">⌁</span> 连接测试沙箱 <span id="connection-count" class="nav-count">0</span></a>
-      <a href="#live" data-nav="live"><span aria-hidden="true">◉</span> CircuitGit 网关（可选）</a>
+      <a href="#agents" data-nav="agents"><span aria-hidden="true">✧</span> AI 助手 <span id="native-count" class="nav-count" title="Agent threads">0</span></a>
+      <div class="nav-group-label">环境与更多</div>
+      <a href="#hosts" data-nav="hosts"><span aria-hidden="true">▤</span> 服务器池 <span id="host-count" class="nav-count">0</span></a>
+      <a href="#connections" data-nav="connections"><span aria-hidden="true">⌁</span> 故障沙箱 <span id="connection-count" class="nav-count">0</span></a>
+      <a href="#live" data-nav="live"><span aria-hidden="true">◉</span> CircuitGit 网关</a>
     </nav>
     <div class="sidebar-caption">RECENT RUNS</div>
     <nav id="recent-runs" class="recent-runs" aria-label="Recent runs"></nav>
     <div class="sidebar-bottom"><div class="moon" aria-hidden="true">☾</div><p>You sleep.<br>SpiceOwl keeps watch.</p><div class="build"><span class="dot"></span> Connectivity alpha <span id="version">0.2</span></div></div>
   </aside>
   <div class="shell">
-    <header class="topbar"><div><span class="breadcrumb">Workspace</span><span class="slash">/</span><span id="location">Overview</span></div><span class="prototype-badge">Engine console</span><button id="connector-trigger" class="button primary small" type="button" data-action="connector-open" hidden>🔌 连接本机连接器</button><a id="quickstart-link" class="button secondary small workflow-link" href="#quickstart">✦ 网页教程</a><a id="workflow-link" class="button secondary small workflow-link" href="./workflow.html">原理导览 <span aria-hidden="true">↗</span></a><a id="public-github-link" class="button secondary small public-github-link" href="https://github.com/spiceowl-dev/spiceowl" target="_blank" rel="noopener noreferrer" aria-label="View SpiceOwl on GitHub (opens in a new tab)" hidden>GitHub</a></header>
-    <section id="public-demo-banner" class="public-demo-banner" aria-label="SpiceOwl Web status" hidden>
-      <div class="public-demo-copy"><strong>SpiceOwl 网页工作台（当前为浏览器预览模式 · 无需离开本页）</strong><p>您现在即可直接在浏览器内使用 <strong>5 步网页教程、500 周期大波形与毛刺钻取、双游标与无损量测、27-Corner PVT / 40 样本 MC、夜间 Agent 交接演练与 10 项安全评测</strong>。需要连接自己的 SSH/EDA 服务器或本机 Codex Agent 时，点右侧一键唤起本机连接器即可在本页无缝切换为真实环境。</p><small id="demo-storage-notice"></small></div>
-      <div class="public-demo-actions"><button class="button primary small" type="button" data-action="connector-open">🔌 连接本机连接器</button><a class="button secondary small" href="#local">安装说明</a><a class="button secondary small" href="#quickstart">✦ 5 步教程</a><button class="button secondary small" type="button" data-action="demo-reset">重置预览数据</button><span id="demo-build" class="demo-build"></span></div>
+    <header class="topbar"><div><span class="breadcrumb">SpiceOwl</span><span class="slash">/</span><span id="location">首页与连接</span></div><span class="prototype-badge" hidden>Engine console</span><button id="connector-trigger" class="conn-pill" type="button" data-action="connector-open" hidden><i class="conn-dot" aria-hidden="true"></i><span>本机未连接</span></button><a id="workflow-link" class="topbar-link" href="./workflow.html">原理导览 ↗</a><a id="public-github-link" class="topbar-link" href="https://github.com/spiceowl-dev/spiceowl" target="_blank" rel="noopener noreferrer" aria-label="View SpiceOwl on GitHub (opens in a new tab)" hidden>GitHub</a></header>
+    <section id="public-demo-banner" class="public-demo-banner slim" aria-label="SpiceOwl Web status" hidden>
+      <div class="public-demo-copy"><span class="slim-dot" aria-hidden="true"></span><span>浏览器预览模式</span><span class="slim-sep">·</span><small id="demo-storage-notice"></small></div>
+      <div class="public-demo-actions"><a class="slim-link" href="#local">安装连接器</a><button class="slim-link" type="button" data-action="demo-reset">重置预览</button><span id="demo-build" class="demo-build"></span></div>
     </section>
     <main id="main" tabindex="-1"><div class="empty"><h1>Opening your workspace…</h1><p>Reading local records.</p></div></main>
     <footer class="page-footer"><span>Local state · Explicit SSH checks</span><span>Execution · Observation · Validity · Specification</span></footer>

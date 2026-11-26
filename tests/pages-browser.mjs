@@ -149,7 +149,7 @@ async function ready(page, origin) {
   await page.goto(origin + PREFIX, {waitUntil: 'networkidle'});
   await page.locator('#public-demo-banner').waitFor();
   await page.waitForFunction(() => typeof window.SpiceOwlDemo?.request === 'function');
-  await page.locator('.run-card').first().waitFor();
+  await page.locator('.home-shell').waitFor();
   assert.ok(new URL(page.url()).pathname.startsWith(PREFIX));
   const state = await demoState(page);
   assert.equal(state.public_demo, true, 'Build must identify public demo state');
@@ -172,20 +172,18 @@ async function remotePages(page, report, label) {
 }
 
 async function interactiveTutorialAndWorkbench(page, report, label) {
-  // 0. Formal web workbench chrome: topbar connector trigger must be visible (zero unsolicited loopback calls)
+  // 0. Minimalist First Page (#quickstart): topbar connector pill, 3 Agent cards, 1 SSH card, 3 core shortcuts
   await page.locator('#connector-trigger').waitFor({state: 'visible'});
-
-  // 1. 5-step interactive Web UI tutorial (#quickstart)
   await page.locator('[data-nav="quickstart"]').click();
-  await page.locator('.tut-stepper').waitFor();
-  assert.equal(await page.locator('.tut-step-pill').count(), 5, 'Expected 5 interactive tutorial steps');
-  for (const stepNum of [2, 3, 4, 5, 2]) {
-    await page.locator(`.tut-step-pill[data-step="${stepNum}"]`).click();
-    assert.equal(await page.locator(`.tut-step-pill[data-step="${stepNum}"]`).getAttribute('aria-selected'), 'true');
-  }
+  await page.locator('.home-shell').waitFor();
+  assert.equal(await page.locator('.home-agent-card').count(), 3, 'Expected 3 clean Agent connect cards');
+  await page.locator('[data-action="home-connect-codex"]').waitFor({state: 'visible'});
+  await page.locator('[data-action="home-connect-ssh"]').waitFor({state: 'visible'});
+  assert.equal(await page.locator('.home-flow-tile').count(), 3, 'Expected 3 core workflow tiles');
   await noOverflow(page, report, `${label}-quickstart`);
-  // Click Step 2 CTA directly into #direct waveforms
-  await page.locator('[data-action="wizard-goto"]').first().click();
+  if (label === 'desktop') await snapshot(page, report, `${label}-home`);
+  // Click first core workflow tile directly into #direct waveforms
+  await page.locator('.home-flow-tile').first().click();
 
   // 2. #direct Tab 1: 500-cycle PSF Binary waveforms, Dual Cursors A/B, Lossless Analog Metrics, Multi-Corner Overlay & Cycle Slicer #317
   await page.locator('.direct-tabs').waitFor();
@@ -338,6 +336,7 @@ async function storageFallback(page, origin, report) {
   const initial = await ready(page, origin);
   assert.match(await page.locator('#demo-storage-notice').innerText(), /reset.*refresh|memory/i,
     'Unavailable storage must show an explicit refresh-reset notice');
+  await page.locator('[data-nav="overview"]').click();
   const first = initial.runs[0];
   await page.locator(`.run-card[href="#run/${first.run_id}"]`).click();
   await page.locator('[data-action="advance"]').click();

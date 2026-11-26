@@ -83,6 +83,7 @@ const connectorState = {
   version: '',
   phase: 'idle', // idle | probing | waking | ready_to_pair | not_installed | connected
   note: '',
+  afterConnect: '', // '' | 'codex' | 'ssh'
 };
 const isHostedPages = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
 const isConnectorLive = () => Boolean(connectorState.connected && connectorState.baseUrl && connectorState.token);
@@ -260,9 +261,26 @@ window.addEventListener('message', async event => {
   live.loaded = false;
   codexPanelState.loaded = false;
   try {
+    const intent = connectorState.afterConnect;
+    connectorState.afterConnect = '';
     await refresh();
+    if (!isPublicDemo()) {
+      await refreshWizard();
+      if (isStandaloneAgent()) {
+        await refreshCodexStatus();
+        if (intent === 'codex' && !codexPanelState.status?.connected) {
+          await api('/api/codex/connect', {method: 'POST', body: {}});
+          await refreshCodexStatus();
+          toast('🟢 本机连接器与 Codex 已全部连好！');
+          render();
+          return;
+        }
+      }
+    }
     render();
-    toast('🟢 已连接到本机 SpiceOwl Connector！现在可直接在当前网页使用真实 SSH、远端仿真与本机 Codex Agent。');
+    toast(intent === 'ssh'
+      ? '🟢 本机连接器已连好，已自动识别你的 ~/.ssh/config 服务器列表！'
+      : '🟢 已连接到本机 SpiceOwl Connector！现在可直接在当前网页使用真实 SSH 与本机 Agent。');
   } catch (error) {
     disconnectConnector();
     render();
@@ -281,26 +299,24 @@ function publicDemoChrome() {
   const connBtn = $('#connector-trigger');
   if (connBtn) {
     connBtn.hidden = !hosted;
-    connBtn.textContent = liveConn ? '🟢 本机已连接' : '🔌 连接本机连接器';
-    connBtn.className = liveConn ? 'button secondary small' : 'button primary small';
+    connBtn.classList.toggle('is-live', liveConn);
+    connBtn.innerHTML = `<i class="conn-dot" aria-hidden="true"></i><span>${liveConn ? '本机已连接' : '连接本机'}</span>`;
   }
   if (!hosted) return;
   $('#workspace-scope').textContent = liveConn ? 'Local Connector · Live' : 'Web Workbench';
   $('.local-tag').textContent = liveConn ? 'LIVE' : 'WEB';
-  $('.breadcrumb').textContent = liveConn ? 'SpiceOwl · 本机已连接' : 'SpiceOwl Web';
-  $('.prototype-badge').textContent = liveConn ? 'Connector live · SSH & Agent' : '网页预览 · 点击连接本机';
+  $('.breadcrumb').textContent = 'SpiceOwl';
   $('.page-footer span').textContent = liveConn ? 'Connected to local SpiceOwl Connector · Explicit SSH checks' : 'SpiceOwl Web · Browser preview until Connector paired';
   const metadata = window.SpiceOwlDemo?.metadata || {};
   const commit = /^[a-f0-9]{7,40}$/i.test(metadata.commit || '') ? metadata.commit.slice(0, 8) : 'unversioned';
   const date = typeof metadata.build_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(metadata.build_date) ? metadata.build_date.slice(0, 10) : 'date unavailable';
-  if ($('#demo-build')) $('#demo-build').textContent = `Build ${commit} · ${date}`;
+  if ($('#demo-build')) $('#demo-build').textContent = `${commit} · ${date}`;
   if (typeof window.SpiceOwlDemo?.request !== 'function' && $('[data-action="demo-reset"]')) $('[data-action="demo-reset"]').disabled = true;
   if ($('#demo-storage-notice')) {
     $('#demo-storage-notice').textContent = (state.demo_storage || window.SpiceOwlDemo?.storage_mode) === 'memory'
-      ? '预览数据仅存于当前内存 (memory; resets on refresh)。'
-      : '预览数据保存在当前浏览器标签页；连接本机连接器后将自动切换为您的真实工作区。';
+      ? '仅存于内存 (memory; resets on refresh)'
+      : '连上本机连接器后自动切为真实工作区';
   }
-  // Keep #host-dialog and #pool-dialog mounted so connecting the local Connector unlocks them seamlessly in-place!
   const connMuted = $('#connection-dialog .muted');
   if (connMuted && preview) connMuted.textContent = '在浏览器内安全演练不同 AI 故障场景。不会连接任何外部 API，也无需填写密钥。';
 }
@@ -353,139 +369,136 @@ function applySshAliasToDraft(aliasObj) {
 
 function quickstartPage() {
   const pub = isPublicDemo();
-  const step = Math.max(1, Math.min(5, Number(wizardState.tutorialStep) || 1));
-  const steps = [
-    {
-      num: 1,
-      short: '看懂仿真总览',
-      badge: '约 30 秒 · 入门必看',
-      title: '第 1 步：看懂「仿真总览」与四维状态诊断',
-      goal: 'SpiceOwl 最大的特点是把「仿真跑完了」和「数据可信 / 指标达标」彻底分开，防止误把断连或异常数据当成合格结果。',
-      bullets: [
-        '点击左侧「▦ 仿真总览」，你会看到 4 个典型仿真场景卡片（正常运行、指标超标、仿真崩溃、中途断连）。',
-        '点开任意一张卡片，点击右上角「Next observation →」逐步回放事件与内存曲线，观察 4 个状态块的变化。',
-        '在右侧「诊断助手」框直接点击「✧ Diagnose snapshot」，体验基于冻结证据的只读 AI 诊断（不会私自改网表或重跑）。',
-      ],
-      ctaLabel: '立即前往仿真总览亲手试一试 →',
-      route: '#overview',
-      tab: '',
-      run: '',
-      batch: '',
-    },
-    {
-      num: 2,
-      short: '玩转大波形缩放',
-      badge: '核心亮点 · 零卡顿不丢毛刺',
-      title: '第 2 步：体验 500 周期大波形拖拽放大与毛刺钻取',
-      goal: '面对几百上千个周期的大波形，直接全量传回浏览器会卡死；如果粗暴隔点采样又会漏掉毛刺。SpiceOwl 采用包络预览 + 按需无损放大 + 逐周期切片。',
-      bullets: [
-        '进入「▷ 仿真 · 波形 · 批量」的「1. 大波形与周期切片」标签，系统已预置 500 周期（20,000 点）且在第 #317 周期埋有隐藏毛刺的 PSF Binary 波形。',
-        '在上方波形图上用鼠标「横向拖拽框选」任意区域放大，注意顶部横幅会从琥珀色（Min-Max 包络预览）自动切换为绿色（100% 无损原始采样点）。',
-        '往下看「逐周期趋势图」：红圈自动标出了最差异常周期 #317，点击趋势图任意位置或切换「Eye Overlay 多周期叠画」即可秒看单周期内部细节。',
-      ],
-      ctaLabel: '立即打开 500 周期大波形工作台 →',
-      route: '#direct',
-      tab: 'waveforms',
-      run: 'demo-psfbin-500c',
-      batch: '',
-    },
-    {
-      num: 3,
-      short: 'PVT 与 MC 批量',
-      badge: '批量验证 · 保守良率',
-      title: '第 3 步：体验 27-Corner PVT 矩阵与 40 样本 Monte Carlo',
-      goal: '把零散的工艺角和蒙特卡洛仿真统一成彩色矩阵与直方图，并且绝不悄悄丢弃跑挂的种子（失败/缺失样本始终计入分母）。',
-      bullets: [
-        '打开「2. PVT / MC 批量实验」标签，直接切换查看「27-Corner PVT 演示矩阵」与「40 样本 Monte Carlo 演示」。',
-        'PVT 矩阵用绿 / 琥珀 / 红三色一目了然区分：规格通过、有效测量但慢角超标（ss/1.08V/125°C）、以及确认 OOM 崩溃样本（ff/1.32V/-40°C）。',
-        '点击任意一块 Corner 卡片即可钻取该样本的五维报告；点击「下载 Markdown / 导出 CSV」可一键生成汇报表格。',
-      ],
-      ctaLabel: '立即打开 PVT / MC 批量矩阵 →',
-      route: '#direct',
-      tab: 'batches',
-      run: '',
-      batch: 'demo-pvt-27',
-    },
-    {
-      num: 4,
-      short: '任务流程与 AI 评测',
-      badge: '安全护栏 · 防重复提交',
-      title: '第 4 步：体验单次仿真四步流、OOM 恢复与 10 项 AI 安全评测',
-      goal: '让你放心把仿真交给工具或 AI：上传→启动→查状态→收集全流程可对账，且 AI 永远不能越权盲目重跑。',
-      bullets: [
-        '在「▷ 仿真 · 波形 · 批量 → 3. 单次仿真与控制」里选中 demo-sandbox-rc，依次点击 ① 上传 → ② 启动 → ③ 查询状态 → ④ 收集报告，完整走一遍真实执行流。',
-        '切换到「4. 异常自动恢复报告」，查看 Slurm 作业因 OOM 触发内存翻倍自动恢复后的完整审计谱系（网表 SHA-256 全程未改）。',
-        '打开「✧ AI 助手与评测」，点击一键运行 10 项冻结安全评测，直观对比确定性编排器（100% 通过、0 违规）与弱模型的差距。',
-      ],
-      ctaLabel: '前往体验单次仿真四步流 →',
-      route: '#direct',
-      tab: 'runs',
-      run: 'demo-sandbox-rc',
-      batch: '',
-      secondaryLabel: '或直接去跑 10 项 AI 评测 →',
-      secondaryRoute: '#agents',
-    },
-    {
-      num: 5,
-      short: '连自己的 EDA 服务器',
-      badge: pub ? '一键唤起本机连接器 · 无需换网页' : '本机连接器已就绪 · 4 步开跑',
-      title: '第 5 步：连接你自己的远程 EDA 服务器并跑通首个仿真',
-      goal: pub
-        ? '您无需离开当前网页或另开本地界面：只需安装一次无界面本机连接器（注册 spiceowl:// 协议，免管理员），然后直接在本页点击「连接本机连接器」，即可识别 ~/.ssh/config 并驱动您自己的 Spectre / ngspice / LSF / Slurm 服务器。'
-        : '全程网页点选：自动体检本机环境与 SSH 别名 → 验证远端主机与仿真器 → 一键冻结零 PDK 烟雾网表 → 网页端启动并看波形。',
-      bullets: pub
-        ? [
-          '前面 1 ~ 4 步的所有核心功能都可以在当前网页直接体验，零安装、零命令行。',
-          '需要连真实 SSH 服务器或本机 Codex 时，点下方「🔌 连接本机连接器」：若已安装过连接器，网页会自动通过 spiceowl://start 在后台唤起并秒连；若首次使用，会给出 Windows / macOS 一键安装引导。',
-          '连上后直接留在当前网页的第 5 步，即可识别您的 ~/.ssh/config 别名并用零 PDK 烟雾网表跑通首个真实仿真。',
-        ]
-        : [
-          '第 ① 步自动检测本机操作系统、OpenSSH 客户端以及 ~/.ssh/config 中已有的主机别名（绝不读取私钥或密码）。',
-          '第 ② 步从下拉框选中别名并点击「保存并立即测试」，验证 SSH 身份和 Spectre / ngspice 路径。',
-          '第 ③~④ 步直接用内置零 PDK 的 RC 烟雾网表冻结计划，再依次点 ① 上传 → ② 启动 → ③ 查状态 → ④ 收集看波形。',
-        ],
-      ctaLabel: pub ? '' : '',
-      connectorCta: pub,
-      route: '',
-      tab: '',
-      run: '',
-      batch: '',
-    },
-  ];
-  const cur = steps[step - 1];
+  const codexConnected = !pub && Boolean(codexPanelState.status?.connected);
+  const st = wizardState.status;
+  const aliases = st?.ssh_aliases || [];
+  const hosts = st?.workspace?.hosts || state.hosts || [];
+  const verifiedHosts = hosts.filter(h => h.last_probe?.identity?.verified);
 
-  let html = heading(
-    'INTERACTIVE TUTORIAL · 网页端新手步步教程',
-    '3 分钟看懂 SpiceOwl 怎么用',
-    pub
-      ? '无需命令行！按下方 1 → 5 步点击即可在浏览器内亲手体验全部核心功能；每一步都配有直达按钮。'
-      : '按下方 1 → 5 步快速熟悉界面；第 5 步可直接把你自己的远程 EDA 服务器接进来跑通首个真实仿真。',
-  );
-  if (wizardState.error) html += `<p class="error-text" role="alert">${escape(wizardState.error)}</p>`;
+  const codexStatusTag = codexConnected
+    ? '<span class="home-status-tag ready">● 已连接</span>'
+    : pub
+    ? '<span class="home-status-tag">网页一键授权</span>'
+    : '<span class="home-status-tag">待连接</span>';
 
-  // Horizontal 5-step interactive stepper
-  html += `<section class="panel tut-shell"><div class="tut-stepper" role="tablist" aria-label="新手教程步骤">${steps.map(s => `<button type="button" role="tab" aria-selected="${s.num === step ? 'true' : 'false'}" class="tut-step-pill ${s.num === step ? 'active' : s.num < step ? 'done' : ''}" data-action="wizard-step" data-step="${s.num}"><span class="tut-step-index">${s.num}</span><span class="tut-step-text">${escape(s.short)}</span></button>`).join('')}</div>`;
+  const codexBtn = codexConnected
+    ? '<a class="button primary" href="#agents">打开 Codex 对话 →</a>'
+    : `<button type="button" class="button primary" data-action="home-connect-codex" ${codexPanelState.busy ? 'disabled' : ''}>${codexPanelState.busy ? '正在连接 Codex…' : '一键连接 Codex'}</button>`;
 
-  // Active step card
-  html += `<div class="tut-card"><div class="tut-card-head"><div><span class="chip blue">${escape(cur.badge)}</span><h2>${escape(cur.title)}</h2></div><span class="section-note">步骤 ${step} / ${steps.length}</span></div><p class="tut-goal">${escape(cur.goal)}</p><ol class="tut-list">${cur.bullets.map(b => `<li>${escape(b)}</li>`).join('')}</ol><div class="tut-actions">${cur.connectorCta ? '<button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器（唤起或安装）</button><a class="button secondary" href="#local">查看安装说明</a>' : ''}${cur.ctaLabel ? `<button type="button" class="button primary" data-action="wizard-goto" data-route="${escape(cur.route)}" data-tab="${escape(cur.tab)}" data-run="${escape(cur.run)}" data-batch="${escape(cur.batch)}">${escape(cur.ctaLabel)}</button>` : ''}${cur.secondaryLabel ? `<button type="button" class="button secondary" data-action="wizard-goto" data-route="${escape(cur.secondaryRoute)}" data-tab="" data-run="" data-batch="">${escape(cur.secondaryLabel)}</button>` : ''}<div class="tut-nav-pair"><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.max(1, step - 1)}" ${step <= 1 ? 'disabled' : ''}>← 上一步</button><button type="button" class="button secondary small" data-action="wizard-step" data-step="${Math.min(5, step + 1)}" ${step >= 5 ? 'disabled' : ''}>下一步 →</button></div></div></div></section>`;
+  const agentSection = `
+    <section class="home-section" aria-label="连接 AI Agent">
+      <div class="home-section-head">
+        <h2><span class="home-step-num">1</span> 连接你的 AI Agent</h2>
+        <span class="home-status-tag ${codexConnected ? 'ready' : ''}">${codexConnected ? '● Codex 已就绪，可接收夜间异常交接' : '只需点选你正在用的 Agent，零 API Key 手填'}</span>
+      </div>
+      <div class="home-agent-grid">
+        <article class="home-agent-card featured ${codexConnected ? 'is-connected' : ''}">
+          <div>
+            <div class="home-agent-top"><span class="home-agent-icon" aria-hidden="true">✧</span>${codexStatusTag}</div>
+            <h3>Codex</h3>
+            <p>直接授权本机已登录的 Codex，排队超时或 OOM 时自动交给它查资源并重提。</p>
+          </div>
+          ${codexBtn}
+        </article>
+        <article class="home-agent-card">
+          <div>
+            <div class="home-agent-top"><span class="home-agent-icon" aria-hidden="true">◉</span><span class="home-status-tag">协同模式</span></div>
+            <h3>CircuitGit</h3>
+            <p>与原理图和 Git 共用同一条 Agent 对话窗口，不重复启动第二个助手。</p>
+          </div>
+          <a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">前往 CircuitGit ↗</a>
+        </article>
+        <article class="home-agent-card">
+          <div>
+            <div class="home-agent-top"><span class="home-agent-icon" aria-hidden="true">⌘</span><span class="home-status-tag">标准工具</span></div>
+            <h3>其他 Agent / 评测</h3>
+            <p>通过标准工具接入本地 Agent，或先一键跑 10 项确定性安全护栏评测。</p>
+          </div>
+          <a class="button secondary" href="#agents">查看接入与评测 →</a>
+        </article>
+      </div>
+    </section>`;
 
-  // On step 5, show either local EDA server onboarding (local mode) or clean local-connect explanation (public demo)
-  if (step === 5) {
-    if (pub) {
-      html += `<section class="panel wizard-eda-panel"><div class="section-title"><h2>连接真实 EDA 服务器（本地运行模式）</h2>${chip('安全边界 · 零密钥上云', 'green')}</div><p class="subtle-note">当前页面托管在 GitHub Pages 上，所有 1~4 步体验完全在你的浏览器内存里运行。要连接实验室或公司内网的 Spectre / ngspice / LSF / Slurm 服务器，只需在本机启动 SpiceOwl 控制台（macOS / Linux / 原生 Windows 均支持）：</p><div class="public-feature-grid"><article><h3>① 零密钥泄露</h3><p>复用你本机已有的 <code>~/.ssh/config</code> 别名与跳板机，网页端绝不要求输入密码或上传私钥。</p></article><article><h3>② 开箱即测网表</h3><p>内置零 PDK 依赖的 RC 烟雾网表，连上机器后 1 分钟内即可确认 Spectre/ngspice 与波形链路全部打通。</p></article><article><h3>③ 界面完全一致</h3><p>本地启动后打开的正是你现在看到的这套网页界面，没有任何额外学习成本。</p></article></div><div class="direct-actions"><a class="button primary" href="#local">查看 macOS / Windows 一键启动命令</a><button type="button" class="button secondary" data-action="wizard-step" data-step="2">回到第 2 步继续体验大波形</button></div></section>`;
-    } else {
-      html += renderLocalEdaOnboardingPanel();
-    }
-  } else if (!pub) {
-    // In local mode on steps 1-4, also provide 1-click full demo workspace seeding if not yet seeded
-    const st = wizardState.status;
-    const demoReady = !!(wizardState.demo || (st?.workspace?.has_demo_waveform && st?.workspace?.has_demo_pvt && st?.workspace?.has_demo_mc));
-    html += `<section class="panel wizard-hero"><div class="section-title"><h2>本地演示数据一键准备</h2>${chip(demoReady ? '全套演示数据已就绪 ✓' : '建议先点一次生成演示数据', demoReady ? 'green' : 'blue')}</div><p class="subtle-note">如果你还没有在本地生成 500 周期波形、27-Corner PVT 和 40 样本 MC 演示数据，点击下方按钮 1 秒生成，即可按上方 1 → 4 步逐一体验。</p><div class="direct-actions"><button type="button" class="button primary small" data-action="wizard-demo" ${wizardState.busy ? 'disabled' : ''}>${wizardState.busy ? '正在生成全套演示数据…' : demoReady ? '✦ 重新刷新本地全套演示数据' : '✦ 一键生成本地全套演示数据'}</button><button type="button" class="button secondary small" data-action="wizard-step" data-step="5">直接跳到第 5 步：连接真实 EDA 服务器 →</button></div></section>`;
+  let serverInner = '';
+  if (pub) {
+    serverInner = `
+      <div class="home-server-row">
+        <div class="home-server-copy">
+          <h3>自动识别本机 <code>~/.ssh/config</code> 别名</h3>
+          <p>无需手填密码、端口或跳板机配置。网页授权一次本机连接器，即刻列出你的 EDA 服务器并一键验证 Spectre / ngspice。</p>
+        </div>
+        <button type="button" class="button primary" data-action="home-connect-ssh">一键识别我的 SSH 服务器</button>
+      </div>`;
+  } else {
+    const aliasChips = aliases.map(a => {
+      const matched = hosts.find(h => h.ssh_target === a.alias);
+      const isOk = Boolean(matched?.last_probe?.identity?.verified);
+      return `<button type="button" class="home-alias-btn ${isOk ? 'verified' : ''}" data-action="home-quick-ssh" data-alias="${escape(a.alias)}" ${wizardState.busy ? 'disabled' : ''}><span>${isOk ? '✓ ' : ''}${escape(a.alias)}</span>${a.hostname ? `<small>${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)}</small>` : ''}</button>`;
+    }).join('');
+    serverInner = `
+      <div class="home-server-row">
+        <div class="home-server-copy">
+          <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : aliases.length ? `已发现 ${aliases.length} 个本机 SSH 别名，点一下直接连通测试` : '尚未检测到 ~/.ssh/config 别名'}</h3>
+          <p>${verifiedHosts.length ? '点击任意别名可重新校验，或展开下方直接跑一次零 PDK 烟雾仿真。' : '点击下方别名即可免表单自动登记并验证远端主机身份与仿真器（零密码、零私钥上传）。'}</p>
+        </div>
+        <div class="direct-actions">
+          <button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>刷新识别</button>
+          <a class="button secondary small" href="#hosts">管理服务器池 →</a>
+        </div>
+      </div>
+      ${aliasChips ? `<div class="home-alias-list">${aliasChips}</div>` : ''}
+      ${wizardState.lastProbe ? (wizardState.lastProbe.identity?.verified && !wizardState.lastProbe.error
+        ? `<div class="wf-mode-banner exact">${chip('SSH 连通 ✓', 'green')}<span>主机 <code>${escape(wizardState.lastProbe.identity.actual_host || '')}</code> · 用户 <code>${escape(wizardState.lastProbe.identity.actual_user || '')}</code></span></div>`
+        : `<div class="wf-mode-banner preview">${chip('未通过', 'red')}<span>${escape(wizardState.lastProbe.error?.message || '请核对 SSH 别名与免密配置。')}</span></div>`) : ''}
+      <details class="home-advanced" ${!aliases.length || wizardState.firstSim?.run ? 'open' : ''}>
+        <summary>展开：手动填写服务器 / 运行零 PDK 首条烟雾仿真</summary>
+        ${renderLocalEdaOnboardingPanel()}
+      </details>`;
   }
 
-  // Quick 4-card overview directory so newcomers can also jump anywhere in 1 click
-  html += `<section class="panel wizard-hero"><div class="section-title"><h2>网页各模块速查地图</h2><span class="section-note">点击任意卡片直接跳转</span></div><div class="wizard-station-grid"><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">▦</span>${chip('基础必看', 'blue')}</div><h3>仿真总览</h3><p>查看所有实验的四维状态（执行/观测/测量/指标），体验单步回放与只读诊断。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#overview" data-tab="" data-run="" data-batch="">打开总览 →</button></article><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">📈</span>${chip('大波形', 'green')}</div><h3>500 周期波形与周期切片</h3><p>Min-Max 包络防丢毛刺、拖拽框选自动切无损、Cycle Slicer 自动定位 #317 异常。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="waveforms" data-run="demo-psfbin-500c" data-batch="">打开大波形 →</button></article><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">▦</span>${chip('批量统计', 'amber')}</div><h3>PVT 矩阵 &amp; MC 良率</h3><p>27-Corner 彩色工艺角与 40 样本直方图，失败种子显式保留，支持导出 MD/CSV。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#direct" data-tab="batches" data-run="" data-batch="demo-pvt-27">打开批量矩阵 →</button></article><article class="wizard-station"><div class="wizard-station-head"><span class="wizard-step-num">✧</span>${chip('AI 护栏', 'blue')}</div><h3>AI 助手与 10 项安全评测</h3><p>运行 10 项冻结评测，验证 0 越权派发、0 重复提交、0 虚假科学通过。</p><button type="button" class="button secondary small" data-action="wizard-goto" data-route="#agents" data-tab="" data-run="" data-batch="">打开 AI 评测 →</button></article></div></section>`;
-  return html;
+  const serverSection = `
+    <section class="home-section" aria-label="连接 EDA 服务器">
+      <div class="home-section-head">
+        <h2><span class="home-step-num">2</span> 连接你的 EDA 仿真服务器</h2>
+        <span class="home-status-tag ${verifiedHosts.length ? 'ready' : ''}">${verifiedHosts.length ? `● ${verifiedHosts.length} 台已验证` : '复用本机 OpenSSH · 零密钥上云'}</span>
+      </div>
+      <div class="home-server-card">${serverInner}</div>
+    </section>`;
+
+  const coreFlows = `
+    <section class="home-section" aria-label="核心功能入口">
+      <div class="home-section-head">
+        <h2>连好后，核心就这 3 件事</h2>
+        <span class="home-status-tag">未连接时也可以直接点进去体验</span>
+      </div>
+      <div class="home-flow-grid">
+        <button type="button" class="home-flow-tile" data-action="wizard-goto" data-route="#direct" data-tab="waveforms" data-run="demo-psfbin-500c" data-batch="">
+          <strong><span>📈 大波形与周期切片</span><span>→</span></strong>
+          <span>原位缩放 500 周期二进制 PSF、双游标与一键无损量测</span>
+        </button>
+        <button type="button" class="home-flow-tile" data-action="wizard-goto" data-route="#direct" data-tab="batches" data-run="" data-batch="demo-pvt-27">
+          <strong><span>▦ PVT / MC 批量扫描</span><span>→</span></strong>
+          <span>27-Corner 彩色矩阵、40 样本直方图与保守良率统计</span>
+        </button>
+        <button type="button" class="home-flow-tile" data-action="wizard-goto" data-route="#direct" data-tab="recovery" data-run="" data-batch="">
+          <strong><span>☾ 夜间 Agent 值守</span><span>→</span></strong>
+          <span>排队超时 / OOM 自动推送给你的 Agent，早起网页安静验收</span>
+        </button>
+      </div>
+    </section>`;
+
+  return `
+    <div class="home-shell">
+      <header class="home-hero">
+        <div class="home-hero-kicker">🦉 SPICEOWL · AGENT SIMULATION MANAGER</div>
+        <h1>你去休息，仿真我盯。</h1>
+        <p>只需在当前网页完成两步授权连接：接入你的 AI Agent 和 EDA 服务器，其余的排队盯守、查资源与重提全部交给它们。</p>
+      </header>
+      ${wizardState.error ? `<p class="error-text" role="alert">${escape(wizardState.error)}</p>` : ''}
+      ${agentSection}
+      ${serverSection}
+      ${coreFlows}
+    </div>`;
 }
 
 function renderLocalEdaOnboardingPanel() {
@@ -2502,13 +2515,16 @@ function runDetail(run) {
 function render() {
   routeEpoch++;
   sessionView = null;
-  const page = location.hash.slice(1) || 'overview';
+  const page = location.hash.slice(1) || 'quickstart';
   if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? '本地运行指南' : page === 'quickstart' ? '新手步步教程' : page === 'direct' ? '仿真 · 波形 · 批量工作台' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '连接测试沙箱' : page === 'hosts' ? 'EDA 服务器管理' : page === 'agents' ? 'AI 助手与评测' : run ? run.label : '仿真总览';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? '仿真与波形' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
-  if (page === 'quickstart' && !isPublicDemo() && !wizardState.loaded && !wizardState.loading) refreshWizard();
+  if (page === 'quickstart' && !isPublicDemo()) {
+    if (!wizardState.loaded && !wizardState.loading) refreshWizard();
+    if (isStandaloneAgent() && !codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
+  }
   if (page === 'direct' && !directState.loaded && !directState.loading) refreshDirect();
   if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
@@ -2577,6 +2593,52 @@ document.addEventListener('click', async event => {
       toast('已完成 10 项 Agent 安全闭环评测！确定性编排器 100% 通过且 0 违规。');
     } catch (error) { toast(error.message); }
     finally { codexPanelState.evalBusy = false; render(); }
+    return;
+  }
+  if (action === 'home-connect-codex') {
+    if (isPublicDemo()) {
+      connectorState.afterConnect = 'codex';
+      await startConnectorFlow({openModal: true});
+      return;
+    }
+    if (!isStandaloneAgent()) {
+      location.hash = '#agents';
+      return;
+    }
+    if (codexPanelState.busy) return;
+    codexPanelState.busy = true; render();
+    try {
+      await api('/api/codex/connect', {method: 'POST', body: {}});
+      await refreshCodexStatus();
+      toast('🟢 已一键连接本机 Codex Agent！');
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      codexPanelState.busy = false; render();
+    }
+    return;
+  }
+  if (action === 'home-connect-ssh') {
+    if (isPublicDemo()) {
+      connectorState.afterConnect = 'ssh';
+      await startConnectorFlow({openModal: true});
+      return;
+    }
+    await refreshWizard();
+    render();
+    return;
+  }
+  if (action === 'home-quick-ssh') {
+    const aliasName = button.dataset.alias;
+    const aliasObj = (wizardState.status?.ssh_aliases || []).find(a => a.alias === aliasName);
+    if (!aliasObj) return;
+    applySshAliasToDraft(aliasObj);
+    if (!wizardDraft.expected_host || !wizardDraft.expected_user) {
+      render();
+      toast(`已预填别名 ${aliasName}，请在下方展开项补全期望主机名或用户名后测试。`);
+      return;
+    }
+    await submitWizardHost(true);
     return;
   }
   if (action === 'connector-open' || action === 'connector-retry') {

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -62,6 +63,7 @@ class TestSshImportValidation(unittest.TestCase):
             validate_remote_path("~/projects/notes.pdf", require_circuit_ext=True)
 
 
+@unittest.skipIf(sys.platform == "win32", "Local POSIX /bin/sh remote-script execution tests require POSIX")
 class TestSshBrowseAndImportExecution(unittest.TestCase):
     def test_browse_lists_dirs_netlists_and_parses_cds_lib(self):
         with tempfile.TemporaryDirectory() as tmp:

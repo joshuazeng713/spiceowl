@@ -325,6 +325,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     raise DomainError("Cross-origin preflight is not permitted.", "forbidden")
                 self.send_response(204)
                 self.send_header("Access-Control-Allow-Origin", cors_origin)
+                self.send_header("Access-Control-Allow-Private-Network", "true")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type, X-SpiceOwl-Token")
                 self.send_header("Access-Control-Max-Age", "600")

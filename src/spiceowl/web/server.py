@@ -123,10 +123,12 @@ document.getElementById('approve').onclick = async () => {{
 
 def make_server(controller, port=0, live_client_config=None, *, codex_executable=None,
                 codex_model=None, pdk_lut_path=None, circuitgit_client_config=None,
-                circuitgit_sdk_path=None, enable_direct_exec=False, allowed_origins=None):
+                circuitgit_sdk_path=None, enable_direct_exec=False, allowed_origins=None,
+                ssh_dir=None):
     token = secrets.token_urlsafe(32)
     extra_origins = frozenset(allowed_origins) if allowed_origins is not None else DEFAULT_WEB_ORIGINS
     pairing_nonces: dict[str, tuple[str, float]] = {}
+    ssh_setup_sessions: dict[str, tuple[str, str, float]] = {}
     live_client = None
     if live_client_config is not None:
         from spiceowl.integrations.live import LiveSimulationClient
@@ -219,9 +221,9 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 return
             if path == "/health" and self.command == "GET":
                 return
-            if path in ("/connect", "/connect/approve"):
+            if path in ("/connect", "/connect/approve", "/ssh/setup", "/ssh/setup/action"):
                 if is_web_origin:
-                    raise DomainError("Pairing confirmation must occur inside the local connector popup.", "forbidden")
+                    raise DomainError("Local confirmation or SSH setup must occur inside the loopback popup.", "forbidden")
                 return
             # Cross-origin web app MUST present the paired session token for EVERY API call (including GET & SSE).
             if is_web_origin:
@@ -369,6 +371,44 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 if entry is None or entry[0] != target or entry[1] < time.monotonic():
                     raise DomainError("Pairing session expired or invalid; reopen from SpiceOwl Web.", "forbidden")
                 return self.reply({"authorized": True, "token": token, "version": __version__})
+            if self.command == "GET" and path == "/ssh/setup":
+                from spiceowl.onboarding.ssh_setup_ui import build_ssh_setup_state, ssh_setup_csp, ssh_setup_html
+                query = parse_qs(url.query, keep_blank_values=True)
+                actual_port = self.server.server_address[1]
+                loopback_origins = {f"http://127.0.0.1:{actual_port}", f"http://localhost:{actual_port}"}
+                target = (query.get("origin") or [f"http://127.0.0.1:{actual_port}"])[0]
+                if target not in extra_origins and target not in loopback_origins:
+                    raise DomainError("This origin is not permitted to open the local SSH setup wizard.", "forbidden")
+                now_mono = time.monotonic()
+                for stale in [k for k, (_, _, exp) in ssh_setup_sessions.items() if exp < now_mono]:
+                    ssh_setup_sessions.pop(stale, None)
+                if len(ssh_setup_sessions) >= 32:
+                    oldest = min(ssh_setup_sessions, key=lambda k: ssh_setup_sessions[k][2])
+                    ssh_setup_sessions.pop(oldest, None)
+                request_id = secrets.token_urlsafe(18)
+                setup_csrf = secrets.token_urlsafe(24)
+                csp_nonce = secrets.token_urlsafe(18)
+                ssh_setup_sessions[request_id] = (target, setup_csrf, now_mono + 1800.0)
+                page = ssh_setup_html(
+                    target,
+                    request_id,
+                    setup_csrf,
+                    build_ssh_setup_state(ssh_dir),
+                    csp_nonce,
+                    brand="SpiceOwl",
+                    action_path="/ssh/setup/action",
+                    post_message_type="spiceowl.ssh.updated",
+                )
+                return self.send_content(200, page, "text/html; charset=utf-8", csp=ssh_setup_csp(csp_nonce))
+            if self.command == "POST" and path == "/ssh/setup/action":
+                from spiceowl.onboarding.ssh_setup_ui import dispatch_ssh_setup_action
+                req = self.body(max_bytes=32768)
+                req_id = req.get("request_id")
+                req_csrf = req.get("csrf")
+                entry = ssh_setup_sessions.get(req_id) if isinstance(req_id, str) else None
+                if entry is None or entry[2] < time.monotonic() or not isinstance(req_csrf, str) or not secrets.compare_digest(req_csrf, entry[1]):
+                    raise DomainError("SSH setup session expired or invalid; reopen the SSH Setup Wizard.", "forbidden")
+                return self.reply(dispatch_ssh_setup_action(ssh_dir, req.get("action", ""), req.get("payload")))
             static = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/owl.svg": ("owl.svg", "image/svg+xml")}
             static.update({'/workflow.html': ('workflow.html', 'text/html; charset=utf-8'),
                 '/workflow.js': ('workflow.js', 'text/javascript; charset=utf-8'),
@@ -492,12 +532,14 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 )
                 return self.reply({"run": run}, 201)
             if path == "/api/wizard/status" and self.command == "GET":
+                from pathlib import Path as _Path
                 from spiceowl.onboarding_wizard import diagnose_local_environment
                 return self.reply(diagnose_local_environment(
                     controller.store.directory,
                     hosts=controller.hosts,
                     direct_manager=direct_manager,
                     batch_manager=batch_manager,
+                    ssh_config_path=(_Path(ssh_dir) / "config") if ssh_dir is not None else None,
                 ))
             if path == "/api/wizard/demo" and self.command == "POST":
                 if self.body():

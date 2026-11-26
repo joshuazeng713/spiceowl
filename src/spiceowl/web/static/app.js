@@ -243,10 +243,32 @@ function openConnectorAuthorizationPopup() {
   }
 }
 
+function openSshSetupWizard() {
+  const base = isConnectorLive() ? connectorState.baseUrl : '';
+  const url = `${base}/ssh/setup?origin=${encodeURIComponent(location.origin)}`;
+  const popup = window.open(url, 'spiceowl_ssh_setup', 'width=1020,height=780,resizable=yes,scrollbars=yes');
+  if (!popup) {
+    toast('浏览器拦截了 SSH 配置向导窗口，请允许弹出窗口后重试。');
+  }
+}
+
 window.addEventListener('message', async event => {
+  const msg = event.data;
+  if (msg && msg.type === 'spiceowl.ssh.updated') {
+    const expectedOrigin = isHostedPages() ? connectorState.baseUrl : location.origin;
+    if (event.origin !== expectedOrigin) return;
+    if (!isPublicDemo()) {
+      wizardState.loaded = false;
+      await refreshWizard();
+      render();
+      toast(msg.selected_alias
+        ? `🟢 已同步 SSH 配置（${msg.selected_alias}），现在可直接点选测试连通性！`
+        : '🟢 已同步本机最新 SSH 服务器配置！');
+    }
+    return;
+  }
   if (!isHostedPages()) return;
   if (event.origin !== connectorState.baseUrl) return;
-  const msg = event.data;
   if (!msg || msg.type !== 'spiceowl.connector.authorized' || typeof msg.token !== 'string' || !msg.token) return;
   connectorState.connected = true;
   connectorState.token = msg.token;
@@ -283,6 +305,11 @@ window.addEventListener('message', async event => {
       }
     }
     render();
+    if (intent === 'ssh_setup') {
+      toast('🟢 本机连接器已连好，正在打开本机 SSH 图形化配置向导…');
+      openSshSetupWizard();
+      return;
+    }
     toast(intent === 'ssh'
       ? '🟢 本机连接器已连好，已自动识别你的 ~/.ssh/config 服务器列表！'
       : '🟢 已连接到本机 SpiceOwl Connector！现在可直接在当前网页使用真实 SSH 与本机 Agent。');
@@ -421,10 +448,13 @@ function quickstartPage() {
     serverInner = `
       <div class="home-server-row">
         <div class="home-server-copy">
-          <h3>自动识别本机 <code>~/.ssh/config</code> 别名</h3>
-          <p>无需手填密码、端口或跳板机配置。网页授权一次本机连接器，即刻列出你的 EDA 服务器并一键验证 Spectre / ngspice。</p>
+          <h3>自动识别或图形化配置本机 SSH 服务器</h3>
+          <p>无需手写 <code>~/.ssh/config</code> 或命令行。连上本机连接器即可自动列出已有别名，或打开本机图形化向导配跳板机、免密密钥与指纹。</p>
         </div>
-        <button type="button" class="button primary" data-action="home-connect-ssh">一键识别我的 SSH 服务器</button>
+        <div class="direct-actions">
+          <button type="button" class="button primary" data-action="home-connect-ssh">一键识别我的 SSH 服务器</button>
+          <button type="button" class="button secondary" data-action="open-ssh-setup-wizard">SSH 图形化配置向导 ↗</button>
+        </div>
       </div>`;
   } else {
     const aliasChips = aliases.map(a => {
@@ -436,9 +466,10 @@ function quickstartPage() {
       <div class="home-server-row">
         <div class="home-server-copy">
           <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : aliases.length ? `已发现 ${aliases.length} 个本机 SSH 别名，点一下直接连通测试` : '尚未检测到 ~/.ssh/config 别名'}</h3>
-          <p>${verifiedHosts.length ? '点击任意别名可重新校验，或展开下方直接跑一次零 PDK 烟雾仿真。' : '点击下方别名即可免表单自动登记并验证远端主机身份与仿真器（零密码、零私钥上传）。'}</p>
+          <p>${verifiedHosts.length ? '点击任意别名可重新校验，或打开图形化向导新增跳板机与免密服务器。' : '点击下方别名即可免表单自动登记并验证；首次配置新服务器或跳板机，直接点右侧图形化向导。'}</p>
         </div>
         <div class="direct-actions">
+          <button type="button" class="button primary small" data-action="open-ssh-setup-wizard">SSH 图形化配置向导 ↗</button>
           <button type="button" class="button secondary small" data-action="wizard-refresh" ${wizardState.loading ? 'disabled' : ''}>刷新识别</button>
           <a class="button secondary small" href="#hosts">管理服务器池 →</a>
         </div>
@@ -2622,6 +2653,15 @@ document.addEventListener('click', async event => {
     } finally {
       codexPanelState.busy = false; render();
     }
+    return;
+  }
+  if (action === 'open-ssh-setup-wizard') {
+    if (isPublicDemo()) {
+      connectorState.afterConnect = 'ssh_setup';
+      await startConnectorFlow({openModal: true});
+      return;
+    }
+    openSshSetupWizard();
     return;
   }
   if (action === 'home-connect-ssh') {

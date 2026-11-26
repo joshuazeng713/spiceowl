@@ -155,66 +155,92 @@ LEGACY_COMPATIBILITY_NOTICES: tuple[dict, ...] = (
 def parse_ssh_config_aliases(ssh_config_path: str | Path | None = None) -> list[dict]:
     """Safely parse explicit non-wildcard OpenSSH ``Host`` aliases (read-only, zero secrets).
 
-    Reads at most 256 KiB and extracts only ``alias``, ``hostname``, ``user``,
-    ``port``, and ``proxy_jump`` metadata so new users can select an existing
-    EDA server alias in one click. Never reads private keys or credentials.
+    Reads at most 256 KiB across ``~/.ssh/config`` and bounded relative ``Include``
+    files (such as ``spiceowl_hosts.conf``), extracting only ``alias``, ``hostname``,
+    ``user``, ``port``, and ``proxy_jump`` metadata. Never reads private keys.
     """
-    path = Path(ssh_config_path) if ssh_config_path is not None else (Path.home() / ".ssh" / "config")
-    try:
-        if not path.is_file() or path.is_symlink():
-            return []
-        if path.stat().st_size > MAX_SSH_CONFIG_BYTES:
-            return []
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
+    root_path = Path(ssh_config_path) if ssh_config_path is not None else (Path.home() / ".ssh" / "config")
+    ssh_dir = root_path.parent
     aliases: list[dict] = []
     seen: set[str] = set()
-    current: list[dict] = []
+    visited: set[Path] = set()
+    bytes_read = 0
 
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Strip inline comments conservatively only when preceded by whitespace
-        if " #" in line:
-            line = line.split(" #", 1)[0].strip()
-        parts = line.split(None, 1)
-        if len(parts) < 2:
-            continue
-        key, val = parts[0].lower(), parts[1].strip()
-        if key == "host":
-            current = []
-            for token in val.split():
-                if any(ch in token for ch in "*?!"):
-                    continue
-                if _SAFE_ALIAS.fullmatch(token) and token not in seen:
-                    entry = {
-                        "alias": token,
-                        "hostname": None,
-                        "user": None,
-                        "port": None,
-                        "proxy_jump": None,
-                    }
-                    seen.add(token)
-                    aliases.append(entry)
-                    current.append(entry)
-                    if len(aliases) >= 64:
-                        return aliases
-        elif current:
-            if key == "hostname" and not any(ch in val for ch in " \t"):
-                for entry in current:
-                    entry["hostname"] = entry["hostname"] or val[:253]
-            elif key == "user" and not any(ch in val for ch in " \t"):
-                for entry in current:
-                    entry["user"] = entry["user"] or val[:64]
-            elif key == "port" and val.isdigit():
-                for entry in current:
-                    entry["port"] = entry["port"] or int(val)
-            elif key == "proxyjump":
-                for entry in current:
-                    entry["proxy_jump"] = entry["proxy_jump"] or val[:253]
+    def _scan_file(file_path: Path, depth: int) -> None:
+        nonlocal bytes_read
+        if depth > 4 or len(visited) >= 16 or len(aliases) >= 64:
+            return
+        try:
+            if not file_path.is_file() or file_path.is_symlink():
+                return
+            resolved = file_path.resolve()
+            if resolved in visited:
+                return
+            size = resolved.stat().st_size
+            if size > MAX_SSH_CONFIG_BYTES or bytes_read + size > MAX_SSH_CONFIG_BYTES:
+                return
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        visited.add(resolved)
+        bytes_read += size
+        current: list[dict] = []
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if " #" in line:
+                line = line.split(" #", 1)[0].strip()
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                continue
+            key, val = parts[0].lower(), parts[1].strip()
+            if key == "include":
+                for target in val.split():
+                    if any(ch in target for ch in "*?[]$%`\x00\n\r") or ".." in target:
+                        continue
+                    if target.startswith("~/"):
+                        inc_path = Path.home() / target[2:]
+                    elif Path(target).is_absolute():
+                        inc_path = Path(target)
+                    else:
+                        inc_path = ssh_dir / target
+                    if inc_path.suffix.lower() in (".conf", ".config") or inc_path.name in ("config", "ssh_config", "hosts"):
+                        _scan_file(inc_path, depth + 1)
+            elif key == "host":
+                current = []
+                for token in val.split():
+                    if any(ch in token for ch in "*?!"):
+                        continue
+                    if _SAFE_ALIAS.fullmatch(token) and token not in seen:
+                        entry = {
+                            "alias": token,
+                            "hostname": None,
+                            "user": None,
+                            "port": None,
+                            "proxy_jump": None,
+                        }
+                        seen.add(token)
+                        aliases.append(entry)
+                        current.append(entry)
+                        if len(aliases) >= 64:
+                            return
+            elif current:
+                if key == "hostname" and not any(ch in val for ch in " \t"):
+                    for entry in current:
+                        entry["hostname"] = entry["hostname"] or val[:253]
+                elif key == "user" and not any(ch in val for ch in " \t"):
+                    for entry in current:
+                        entry["user"] = entry["user"] or val[:64]
+                elif key == "port" and val.isdigit():
+                    for entry in current:
+                        entry["port"] = entry["port"] or int(val)
+                elif key == "proxyjump":
+                    for entry in current:
+                        entry["proxy_jump"] = entry["proxy_jump"] or val[:253]
+
+    _scan_file(root_path, 0)
     return aliases
 
 

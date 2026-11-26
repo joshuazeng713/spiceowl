@@ -1221,7 +1221,12 @@ def _tcp_probe(host: str, port: int, timeout: float = DEFAULT_TCP_TIMEOUT) -> tu
 def _classify_ssh_failure(err_bytes: bytes, *, role: str) -> tuple[str, str, dict]:
     raw_text = err_bytes.decode("utf-8", errors="replace").strip()
     low = raw_text.lower()
-    first_line = next((ln.strip()[:180] for ln in raw_text.splitlines() if ln.strip()), "")
+    # Skip OpenSSH advisory banners (e.g. macOS OpenSSH 10 "** WARNING: ... post-quantum ...")
+    meaningful_lines = [
+        ln.strip() for ln in raw_text.splitlines()
+        if ln.strip() and not ln.strip().startswith("** ")
+    ]
+    first_line = (meaningful_lines[-1] if meaningful_lines else "")[:180]
     flags = {"needs_legacy_rsa": False, "needs_legacy_kex": False, "raw_hint": first_line}
     if "no matching host key type found" in low or ("their offer:" in low and "ssh-rsa" in low):
         flags["needs_legacy_rsa"] = True
@@ -1330,17 +1335,18 @@ def diagnose_connection(ssh_dir: str | Path | None, alias: str) -> dict:
                 },
             }
 
-    probe_cmd = (
-        "printf 'USER=%s\\nHOST=%s\\nPY3=%s\\nPY=%s\\nSPECTRE=%s\\nNGSPICE=%s\\n' "
-        '"$(id -un 2>/dev/null || true)" '
-        '"$(hostname 2>/dev/null || true)" '
-        '"$(command -v python3 2>/dev/null || true)" '
-        '"$(command -v python 2>/dev/null || true)" '
-        '"$(command -v spectre 2>/dev/null || true)" '
-        '"$(command -v ngspice 2>/dev/null || true)"'
-    )
-    target_argv = _base_batch_ssh_argv(cfg_path) + ["--", clean_alias, probe_cmd]
-    t_rc, t_out, t_err = _run_bounded(target_argv, timeout=DEFAULT_SSH_TIMEOUT)
+    # Feed POSIX sh script over stdin to `/bin/sh -s` so csh/tcsh/fish EDA login shells
+    # never choke on POSIX `$(...)` or `2>/dev/null` syntax!
+    probe_script = (
+        "printf 'USER=%s\\n' \"$(id -un 2>/dev/null || true)\"\n"
+        "printf 'HOST=%s\\n' \"$(hostname 2>/dev/null || true)\"\n"
+        "printf 'PY3=%s\\n' \"$(command -v python3 2>/dev/null || true)\"\n"
+        "printf 'PY=%s\\n' \"$(command -v python 2>/dev/null || true)\"\n"
+        "printf 'SPECTRE=%s\\n' \"$(command -v spectre 2>/dev/null || true)\"\n"
+        "printf 'NGSPICE=%s\\n' \"$(command -v ngspice 2>/dev/null || true)\"\n"
+    ).encode("utf-8")
+    target_argv = _base_batch_ssh_argv(cfg_path) + ["--", clean_alias, "/bin/sh -s"]
+    t_rc, t_out, t_err = _run_bounded(target_argv, stdin_bytes=probe_script, timeout=DEFAULT_SSH_TIMEOUT)
     if t_rc != 0:
         code, detail, flags = _classify_ssh_failure(t_err, role=f"目标机 ({clean_alias}) ")
         steps.append({"id": "target_auth", "label": f"目标机免密认证 ({clean_alias})", "ok": False, "detail": detail})

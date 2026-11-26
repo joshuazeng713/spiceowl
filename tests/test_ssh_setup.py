@@ -341,18 +341,24 @@ class TestSshHostKeysDeployAndDiagnostics(unittest.TestCase):
                 r_kd = diagnose_connection(ssh_dir, "eda-direct")
             self.assertEqual(r_kd["code"], "need_key_deploy")
 
-            # 4. Jump host + full ready
+            # 4. Jump host + full ready (verifies csh/tcsh-safe `/bin/sh -s` + stdin script!)
+            ssh_calls: list[tuple[list[str], bytes | None]] = []
             ssh_replies = [
                 (0, b"", b""),
                 (0, b"USER=alice\nHOST=sim-02\nPY3=/usr/bin/python3\nPY=\nSPECTRE=/opt/cadence/bin/spectre\nNGSPICE=\n", b""),
             ]
+            def fake_diag_run(argv, *, stdin_bytes=None, **_kwargs):
+                ssh_calls.append((list(argv), stdin_bytes))
+                return ssh_replies[len(ssh_calls) - 1]
             with patch.object(ssh_setup, "_tcp_probe", return_value=(True, "ok")), \
-                    patch.object(ssh_setup, "_run_bounded", side_effect=ssh_replies):
+                    patch.object(ssh_setup, "_run_bounded", side_effect=fake_diag_run):
                 r_ok = diagnose_connection(ssh_dir, "eda-jumped")
             self.assertTrue(r_ok["ok"])
             self.assertEqual(r_ok["code"], "ready")
             self.assertEqual(r_ok["remote"]["hostname"], "sim-02")
             self.assertEqual(r_ok["remote"]["spectre"], "/opt/cadence/bin/spectre")
+            self.assertEqual(ssh_calls[1][0][-1], "/bin/sh -s")
+            self.assertIn(b"id -un", ssh_calls[1][1] or b"")
             self.assertEqual([s["id"] for s in r_ok["steps"]], ["jump_tcp", "jump_auth", "target_auth", "remote_python", "remote_simulators"])
 
             # 5. Missing python

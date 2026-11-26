@@ -142,7 +142,7 @@ def validate_remote_path(path: object, *, allow_empty: bool = False, require_cir
 
 
 # Python 2.7 + Python 3.x compatible remote helper (many RHEL7 EDA nodes ship Python 2.7 only).
-_REMOTE_PY = r"""
+_REMOTE_PY = r"""# -*- coding: utf-8 -*-
 from __future__ import print_function
 import base64
 import io
@@ -1155,32 +1155,72 @@ def _discover_si_binary_direct():
     return found[0][1] if found else None
 
 
-def _run_si_netlist(work_dir):
-    '''Invoke Cadence 'si -batch -command nl' inside work_dir using discovered environment or binary.'''
-    direct_si = _find_on_path('si')
-    attempts = []
-    if direct_si:
-        attempts.append(('path', None, None, [direct_si, '-batch', '-command', 'nl']))
+def _extract_cadence_error(out_s, err_s, rc):
+    '''Extract the most informative Cadence ERROR lines instead of trailing warnings.'''
+    combined = ((out_s or '') + '\n' + (err_s or '')).strip()
+    lines = combined.splitlines()
+    picked = []
+    for idx, ln in enumerate(lines):
+        s = ln.strip()
+        if s.startswith('ERROR (') or 'ERROR (OSSHNL-' in s or 'ERROR (ELI-' in s:
+            picked.append(s)
+            if idx + 1 < len(lines):
+                nxt = lines[idx + 1].strip()
+                if nxt and not nxt.startswith(('*', 'ERROR', 'End ', 'Begin ', 'INFO ')):
+                    picked.append(nxt)
+            if len(picked) >= 4:
+                break
+    if picked:
+        return ' '.join(picked)[:360]
+    snippet = ((err_s or '').strip() or (out_s or '').strip() or ('exit code %d' % rc))[-280:]
+    return snippet
 
-    for _, skind, script_path in _discover_cadence_setup_scripts():
-        if skind == 'csh':
-            csh_bin = _find_on_path('csh') or _find_on_path('tcsh')
-            if csh_bin:
+
+def _run_si_netlist(work_dir, forced_env=None):
+    '''Invoke Cadence 'si -batch -command nl' inside work_dir using discovered environment or binary.
+
+    Returns ``(label, env_hint, err_msg, raw_output)``.
+    '''
+    csh_bin = _find_on_path('csh') or _find_on_path('tcsh')
+    sh_bin = _find_on_path('bash') or '/bin/sh'
+    attempts = []
+
+    if forced_env is not None:
+        flabel, fhint = forced_env
+        fskind, fscript = fhint if fhint else (None, None)
+        if fscript and fskind == 'csh' and csh_bin:
+            cmd = 'source "%s" >& /dev/null; si -batch -command nl' % fscript.replace('"', '\\"')
+            attempts.append((flabel, 'csh', fscript, [csh_bin, '-f', '-c', cmd]))
+        elif fscript and fskind == 'sh':
+            cmd = '. "%s" >/dev/null 2>&1; si -batch -command nl' % fscript.replace('"', '\\"')
+            attempts.append((flabel, 'sh', fscript, [sh_bin, '-c', cmd]))
+        else:
+            dsi = _find_on_path('si') or _discover_si_binary_direct()
+            if dsi:
+                attempts.append((flabel or dsi, None, None, [dsi, '-batch', '-command', 'nl']))
+    else:
+        direct_si = _find_on_path('si')
+        if direct_si:
+            attempts.append(('path', None, None, [direct_si, '-batch', '-command', 'nl']))
+
+        for _, skind, script_path in _discover_cadence_setup_scripts():
+            if skind == 'csh' and csh_bin:
                 cmd = 'source "%s" >& /dev/null; si -batch -command nl' % script_path.replace('"', '\\"')
                 attempts.append((script_path, 'csh', script_path, [csh_bin, '-f', '-c', cmd]))
-        else:
-            sh_bin = _find_on_path('bash') or '/bin/sh'
-            cmd = '. "%s" >/dev/null 2>&1; si -batch -command nl' % script_path.replace('"', '\\"')
-            attempts.append((script_path, 'sh', script_path, [sh_bin, '-c', cmd]))
+            elif skind != 'csh':
+                cmd = '. "%s" >/dev/null 2>&1; si -batch -command nl' % script_path.replace('"', '\\"')
+                attempts.append((script_path, 'sh', script_path, [sh_bin, '-c', cmd]))
 
-    fallback_si = _discover_si_binary_direct()
-    if fallback_si and fallback_si != direct_si:
-        attempts.append((fallback_si, None, None, [fallback_si, '-batch', '-command', 'nl']))
+        fallback_si = _discover_si_binary_direct()
+        if fallback_si and fallback_si != direct_si:
+            attempts.append((fallback_si, None, None, [fallback_si, '-batch', '-command', 'nl']))
 
     if not attempts:
-        return None, None, 'No Cadence si netlister found on PATH, shell rc setup scripts, or standard EDA install directories.'
+        return None, None, 'No Cadence si netlister found on PATH, shell rc setup scripts, or standard EDA install directories.', ''
 
     last_err = ''
+    preferred_err = ''
+    last_out = ''
     for label, skind, script_path, argv in attempts:
         try:
             proc = subprocess.Popen(
@@ -1192,14 +1232,153 @@ def _run_si_netlist(work_dir):
             out_b, err_b = proc.communicate()
             out_s = (out_b or b'').decode('utf-8', 'replace')
             err_s = (err_b or b'').decode('utf-8', 'replace')
+            combined = out_s + '\n' + err_s
             nl_path = os.path.join(work_dir, 'netlist')
             if proc.returncode == 0 and os.path.isfile(nl_path) and os.path.getsize(nl_path) > 0:
-                return label, (skind, script_path), None
-            snippet = (err_s.strip() or out_s.strip() or ('exit code %d' % proc.returncode))[-260:]
-            last_err = '[%s] %s' % (os.path.basename(label), snippet)
+                return label, (skind, script_path), None, combined
+            err_snippet = _extract_cadence_error(out_s, err_s, proc.returncode)
+            formatted = '[%s] %s' % (os.path.basename(label), err_snippet)
+            last_err = formatted
+            last_out = combined
+            # If Cadence si actually launched with a valid license and reported a real
+            # schematic/netlist error (e.g. OSSHNL-109), stop immediately instead of
+            # letting unlicensed fallback binaries mask the real diagnostic!
+            if (
+                'OSSHNL-' in combined
+                or 'Begin Incremental Netlisting' in combined
+                or 'License (111) was checked out' in combined
+                or 'End netlisting' in combined
+            ):
+                return label, (skind, script_path), 'Cadence si netlist export failed: ' + formatted, combined
+            if script_path and not preferred_err:
+                preferred_err = formatted
         except Exception as exc:
             last_err = '[%s] %s' % (os.path.basename(label), str(exc))
-    return None, None, 'Cadence si netlist export failed: ' + last_err
+    return None, None, 'Cadence si netlist export failed: ' + (preferred_err or last_err), last_out
+
+
+def _parse_osshnl109_cellviews(text):
+    '''Extract (lib, cell, view) triples reported by Cadence ERROR (OSSHNL-109).'''
+    found = []
+    seen = set()
+    for m in re.finditer(r"OSSHNL-109\):\s+The cellview\s+'([^/'\s]+)/([^/'\s]+)/([^/'\s]+)'", text or ''):
+        triple = (m.group(1), m.group(2), m.group(3))
+        if triple not in seen:
+            seen.add(triple)
+            found.append(triple)
+    return found
+
+
+def _shadow_check_and_save(work_dir, cds_lib, lib_name, lib_dir, specs, env_hint):
+    '''Copy only unchecked cell(s) into work_dir/shadow_libs, run schCheck+dbSave there (never touching originals).'''
+    if not specs:
+        return False, 'No unchecked cellviews identified'
+    lib_dirs = {lib_name: lib_dir}
+    if cds_lib and os.path.isfile(cds_lib):
+        for entry in parse_cds_lib(os.path.dirname(cds_lib)):
+            ename = entry.get('name')
+            epath = entry.get('path')
+            if ename and epath and os.path.isdir(epath) and ename not in lib_dirs:
+                lib_dirs[ename] = epath
+
+    by_lib = {}
+    for s_lib, s_cell, s_view in specs:
+        if s_lib not in lib_dirs:
+            return False, 'Cannot locate library directory for %s' % s_lib
+        by_lib.setdefault(s_lib, []).append((s_cell, s_view))
+
+    shadow_root = os.path.join(work_dir, 'shadow_libs')
+    if not os.path.isdir(shadow_root):
+        os.makedirs(shadow_root)
+
+    override_lines = []
+    for s_lib, cell_views in by_lib.items():
+        orig_lib_dir = lib_dirs[s_lib]
+        target_cells = set([c for c, _ in cell_views])
+        sh_lib = os.path.join(shadow_root, s_lib)
+        if os.path.isdir(sh_lib):
+            shutil.rmtree(sh_lib)
+        os.makedirs(sh_lib)
+        for item in os.listdir(orig_lib_dir):
+            src = os.path.join(orig_lib_dir, item)
+            dst = os.path.join(sh_lib, item)
+            if item in target_cells and os.path.isdir(src):
+                shutil.copytree(src, dst, symlinks=True)
+                # Strip stale .cdslck lock files ONLY inside our isolated temp copy
+                for r_dir, _, r_files in os.walk(dst):
+                    for fn in r_files:
+                        if '.cdslck' in fn:
+                            try:
+                                os.unlink(os.path.join(r_dir, fn))
+                            except OSError:
+                                pass
+            else:
+                try:
+                    os.symlink(src, dst)
+                except OSError:
+                    pass
+        override_lines.append('UNDEFINE %s' % s_lib)
+        override_lines.append('DEFINE %s %s' % (s_lib, sh_lib))
+
+    cds_lines = []
+    if cds_lib and os.path.isfile(cds_lib):
+        cds_lines.append('SOFTINCLUDE %s' % cds_lib)
+    cds_lines.extend(override_lines)
+    with io.open(os.path.join(work_dir, 'cds.lib'), 'w', encoding='utf-8') as fh:
+        fh.write('\n'.join(cds_lines) + '\n')
+
+    skill_items = []
+    for s_lib, s_cell, s_view in specs:
+        skill_items.append('list("%s" "%s" "%s")' % (
+            s_lib.replace('\\', '\\\\').replace('"', '\\"'),
+            s_cell.replace('\\', '\\\\').replace('"', '\\"'),
+            s_view.replace('\\', '\\\\').replace('"', '\\"'),
+        ))
+    marker = os.path.join(work_dir, 'shadow_check.ok')
+    skill_code = (
+        'let((allOk cv)\n'
+        '  allOk = t\n'
+        '  foreach(spec list(' + ' '.join(skill_items) + ')\n'
+        '    errset(\n'
+        '      progn(\n'
+        '        cv = dbOpenCellViewByType(car(spec) cadr(spec) caddr(spec) "" "a")\n'
+        '        if(cv then\n'
+        '          schCheck(cv)\n'
+        '          dbSave(cv)\n'
+        '          dbClose(cv)\n'
+        '        else\n'
+        '          allOk = nil\n'
+        '        )\n'
+        '      )\n'
+        '      t\n'
+        '    )\n'
+        '  )\n'
+        '  when(allOk\n'
+        '    let((p) p = outfile("' + marker.replace('\\', '\\\\').replace('"', '\\"') + '" "w") when(p fprintf(p "OK\\n") close(p)))\n'
+        '  )\n'
+        ')\n'
+        'exit()\n'
+    )
+    chk_il = os.path.join(work_dir, 'shadow_check.il')
+    with io.open(chk_il, 'w', encoding='utf-8') as fh:
+        fh.write(skill_code)
+
+    skind, script_path = env_hint if env_hint else (None, None)
+    csh_bin = _find_on_path('csh') or _find_on_path('tcsh')
+    sh_bin = _find_on_path('bash') or '/bin/sh'
+    vcmd = 'virtuoso -nograph -nocdsinit -replay "%s" -log "%s"' % (chk_il, os.path.join(work_dir, 'shadow_check.log'))
+    if script_path and skind == 'csh' and csh_bin:
+        argv = [csh_bin, '-f', '-c', 'source "%s" >& /dev/null; %s' % (script_path.replace('"', '\\"'), vcmd)]
+    elif script_path and skind == 'sh':
+        argv = [sh_bin, '-c', '. "%s" >/dev/null 2>&1; %s' % (script_path.replace('"', '\\"'), vcmd)]
+    else:
+        argv = [sh_bin, '-c', vcmd]
+    try:
+        proc = subprocess.Popen(argv, cwd=work_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc.communicate()
+    except Exception as exc:
+        return False, str(exc)
+    return os.path.isfile(marker), None
 
 
 def _run_oa_geometry_dump(work_dir, env_hint, skill_text):
@@ -1320,7 +1499,34 @@ def do_export_schematic():
         with io.open(os.path.join(work_dir, 'si.env'), 'w', encoding='utf-8') as fh:
             fh.write(si_env)
 
-        si_tool, env_hint, err = _run_si_netlist(work_dir)
+        si_tool, env_hint, err, raw_si_out = _run_si_netlist(work_dir)
+        # Auto-recover from OSSHNL-109 (schematic saved without Check & Save) in an
+        # isolated temporary shadow copy inside work_dir -- NEVER modifying original files!
+        if err and 'OSSHNL-109' in raw_si_out and env_hint is not None:
+            accum_unchecked = []
+            for _pass in range(2):
+                new_unchecked = [
+                    spec for spec in _parse_osshnl109_cellviews(raw_si_out)
+                    if spec not in accum_unchecked
+                ]
+                if not new_unchecked:
+                    break
+                accum_unchecked.extend(new_unchecked)
+                ok_shadow, _ = _shadow_check_and_save(work_dir, cds_lib, lib_name, lib_dir, accum_unchecked, env_hint)
+                if not ok_shadow:
+                    break
+                si_tool2, env_hint2, err2, raw_si_out2 = _run_si_netlist(work_dir, forced_env=(si_tool, env_hint))
+                if not err2:
+                    si_tool, env_hint, err = si_tool2, env_hint2, None
+                    cells_str = ', '.join(['%s/%s' % (c, v) for _, c, v in accum_unchecked[:4]])
+                    warnings.append(
+                        'Auto-extracted unchecked schematic (%s) in an isolated temp copy (OSSHNL-109); original design files were not modified.'
+                        % cells_str
+                    )
+                    break
+                err, raw_si_out = err2, raw_si_out2
+                if 'OSSHNL-109' not in raw_si_out:
+                    break
         if err:
             return {'error': err}
 

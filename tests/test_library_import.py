@@ -320,6 +320,66 @@ class TestSshBrowseAndImportExecution(unittest.TestCase):
             self.assertNotIn("tran tran stop=50n", exp_pure["text"])
             self.assertEqual(len(exp_pure["detected_maestro"]), 1)
 
+    def test_osshnl109_auto_shadow_recovery_preserves_original_files(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            lib_dir = root / "my_adc_lib"
+            sch_dir = lib_dir / "tb_unchecked" / "schematic"
+            bin_dir = root / "bin"
+            sch_dir.mkdir(parents=True)
+            bin_dir.mkdir(parents=True)
+            (root / "cds.lib").write_text(f"DEFINE my_adc_lib {lib_dir}\n", encoding="utf-8")
+            (sch_dir / "sch.oa").write_bytes(b"OA_UNTOUCHED")
+            (sch_dir / "sch.oa.cdslck").write_text("stale lock", encoding="utf-8")
+
+            # Fake `si` that fails with OSSHNL-109 until cds.lib points to shadow_libs (after shadow check)
+            fake_si = bin_dir / "si"
+            fake_si.write_text(
+                "#!/bin/sh\n"
+                "if ! grep -q 'shadow_libs' cds.lib 2>/dev/null; then\n"
+                "  echo 'Virtuoso Framework License (111) was checked out successfully.'\n"
+                "  echo \"ERROR (OSSHNL-109): The cellview 'my_adc_lib/tb_unchecked/schematic' has been modified since the last extraction.\"\n"
+                "  echo 'End netlisting'\n"
+                "  exit 255\n"
+                "fi\n"
+                "cat > netlistHeader <<'H'\n"
+                "// Generated for: spectre\n"
+                "simulator lang=spectre\n"
+                "global 0\n"
+                "H\n"
+                "cat > netlist <<'N'\n"
+                "R0 (IN OUT) resistor r=1k\n"
+                "N\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_si.chmod(0o755)
+
+            # Fake `virtuoso` that simulates schCheck+dbSave and writes shadow_check.ok
+            fake_virtuoso = bin_dir / "virtuoso"
+            fake_virtuoso.write_text(
+                "#!/bin/sh\n"
+                "echo OK > shadow_check.ok\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_virtuoso.chmod(0o755)
+
+            def runner(argv, *, input=b"", capture_output=True, timeout=25):
+                env = dict(os.environ)
+                env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+                return subprocess.run(["/bin/sh", "-s"], input=input, capture_output=capture_output, timeout=timeout, env=env)
+
+            res = export_remote_schematic(
+                "sim-node-a", None, str(sch_dir), include_maestro=False, preserve_rnl=False, runner=runner
+            )
+            self.assertIn("R0 (IN OUT) resistor r=1k", res["text"])
+            self.assertTrue(any("OSSHNL-109" in w for w in res["warnings"]))
+            # Original design directory and even its stale lock file were never modified!
+            self.assertEqual((sch_dir / "sch.oa").read_bytes(), b"OA_UNTOUCHED")
+            self.assertTrue((sch_dir / "sch.oa.cdslck").exists())
+
 
 class TestVirtuosoRnlInjection(unittest.TestCase):
     def test_multi_level_subckt_bundle_junction_and_line2_header(self):

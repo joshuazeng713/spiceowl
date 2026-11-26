@@ -45,7 +45,7 @@ def _live_request(body):
     return operation, args, key
 
 
-DEFAULT_WEB_ORIGINS = frozenset({"https://spiceowl-dev.github.io"})
+DEFAULT_WEB_ORIGINS = frozenset({"https://spiceowl-dev.github.io", "https://circuitgit-dev.github.io"})
 
 
 def _connect_page_html(target_origin: str, port: int, nonce: str) -> bytes:
@@ -129,6 +129,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
     extra_origins = frozenset(allowed_origins) if allowed_origins is not None else DEFAULT_WEB_ORIGINS
     pairing_nonces: dict[str, tuple[str, float]] = {}
     ssh_setup_sessions: dict[str, tuple[str, str, float]] = {}
+    circuitgit_entry_box: dict[str, object] = {"entry": None}
     live_client = None
     if live_client_config is not None:
         from spiceowl.integrations.live import LiveSimulationClient
@@ -549,9 +550,9 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             if path == "/api/direct/prepare" and self.command == "POST":
                 if url.query:
                     raise DomainError("Direct prepare does not accept query parameters.")
-                payload = self.body(max_bytes=1024 * 1024 + 65536)
+                payload = self.body(max_bytes=2 * 1024 * 1024 + 65536)
                 allowed = {
-                    "run_key", "netlist_text", "host_id", "host_ids", "backend", "simulator",
+                    "run_key", "netlist_text", "support_files", "host_id", "host_ids", "backend", "simulator",
                     "output_format", "expected_version", "pin_version", "cpus", "memory_gib",
                     "wall_seconds", "license_queue_seconds", "enforce_rlimit_as", "scheduler",
                     "include_dirs", "remote_python", "remote_root", "source_commit", "recovery_policy",
@@ -578,6 +579,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 run = direct_manager.prepare(
                     run_key=payload["run_key"],
                     netlist_text=payload["netlist_text"],
+                    support_files=payload.get("support_files"),
                     host_id=payload.get("host_id"),
                     host_ids=payload.get("host_ids"),
                     backend=payload.get("backend", "ssh_direct"),
@@ -595,6 +597,64 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     recovery_policy=payload.get("recovery_policy"),
                 )
                 return self.reply({"run": run}, 201)
+            if path == "/api/library/ssh-browse" and self.command == "POST":
+                from pathlib import Path as _Path
+                from spiceowl.onboarding.ssh_import import browse_remote_netlists
+                body = self.body()
+                if set(body) - {"host_id", "ssh_target", "path"}:
+                    raise DomainError("SSH browse accepts only host_id or ssh_target and an optional path.")
+                if not body.get("host_id") and not body.get("ssh_target"):
+                    raise DomainError("Provide either host_id or ssh_target.")
+                ssh_hostname = None
+                if body.get("host_id"):
+                    host = controller.hosts.inspect(require_id(body["host_id"], "host ID"))
+                    ssh_target = host["ssh_target"]
+                    ssh_hostname = host.get("ssh_hostname")
+                else:
+                    ssh_target = body["ssh_target"]
+                ssh_cfg = (_Path(ssh_dir) / "config") if ssh_dir is not None else None
+                return self.reply(browse_remote_netlists(
+                    ssh_target,
+                    ssh_cfg,
+                    body.get("path"),
+                    ssh_hostname=ssh_hostname,
+                ))
+            if path == "/api/library/ssh-import" and self.command == "POST":
+                from pathlib import Path as _Path
+                from spiceowl.onboarding.ssh_import import fetch_remote_netlist
+                body = self.body()
+                if set(body) - {"host_id", "ssh_target", "path", "include_dependencies"} or "path" not in body:
+                    raise DomainError("SSH import requires path and either host_id or ssh_target.")
+                if not body.get("host_id") and not body.get("ssh_target"):
+                    raise DomainError("Provide either host_id or ssh_target.")
+                ssh_hostname = None
+                if body.get("host_id"):
+                    host = controller.hosts.inspect(require_id(body["host_id"], "host ID"))
+                    ssh_target = host["ssh_target"]
+                    ssh_hostname = host.get("ssh_hostname")
+                else:
+                    ssh_target = body["ssh_target"]
+                ssh_cfg = (_Path(ssh_dir) / "config") if ssh_dir is not None else None
+                include_deps = body.get("include_dependencies", True)
+                return self.reply(fetch_remote_netlist(
+                    ssh_target,
+                    ssh_cfg,
+                    body["path"],
+                    include_dependencies=include_deps,
+                    ssh_hostname=ssh_hostname,
+                ))
+            if path == "/api/library/circuitgit-entry":
+                if self.command == "GET":
+                    entry = circuitgit_entry_box.get("entry")
+                    return self.reply({"active": entry is not None, "entry": entry})
+                if self.command == "POST":
+                    from spiceowl.onboarding.ssh_import import validate_circuitgit_entry
+                    entry = validate_circuitgit_entry(self.body(max_bytes=2 * 1024 * 1024 + 65536))
+                    circuitgit_entry_box["entry"] = entry
+                    return self.reply({"active": True, "entry": entry})
+                if self.command == "DELETE":
+                    circuitgit_entry_box["entry"] = None
+                    return self.reply({"active": False, "entry": None})
             if path == "/api/wizard/status" and self.command == "GET":
                 from pathlib import Path as _Path
                 from spiceowl.onboarding_wizard import diagnose_local_environment

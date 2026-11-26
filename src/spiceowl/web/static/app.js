@@ -84,6 +84,272 @@ let directDraft = {
   rec_retry_license: true, rec_license_backoff: 300, rec_retry_oom: true,
   rec_oom_multiplier: 2, rec_allow_relocate: true,
 };
+// Active circuit/project entry for Page 3 (reused directly from CircuitGit when invoked/embedded,
+// or selected via SpiceOwl's CircuitGit-shared Library Manager in standalone mode).
+let simSourceState = {
+  origin: 'none', // none | template | local | ssh | circuitgit
+  projectId: '',
+  projectName: '',
+  libraryId: '',
+  libraryName: '',
+  cellId: '',
+  cellName: '',
+  viewId: '',
+  entryPath: '',
+  fileName: '',
+  sshTarget: '',
+  sshHostId: '',
+  remotePath: '',
+  remoteDir: '',
+  supportFiles: {},
+  skipped: [],
+  sourceCommit: '',
+  returnUrl: '',
+  serverEntryChecked: false,
+  urlHandoffChecked: false,
+};
+let libMgrState = {
+  tab: 'ssh', // ssh | local
+  hostId: '',
+  sshTarget: '',
+  path: '~',
+  cwd: '',
+  parent: null,
+  entries: [],
+  cdsLibraries: [],
+  truncated: false,
+  selectedPath: '',
+  filter: '',
+  includeDeps: true,
+  busy: false,
+  error: '',
+  localBundle: null,
+  localSelectedEntry: '',
+  localError: '',
+  localBusy: false,
+};
+
+// Reused directly from CircuitGit (web/studio/project-import.js) so local project/netlist
+// import filtering, top-level entry scoring, and support-file bundling stay 100% consistent.
+const CIRCUIT_EXTENSIONS = Object.freeze([
+  '.scs', '.sp', '.spi', '.spice', '.cir', '.ckt', '.net',
+  '.inc', '.va', '.vams', '.v', '.rnl', '.txt', '.cdl', '.mdl',
+]);
+const CIRCUIT_EXT_SET = new Set(CIRCUIT_EXTENSIONS);
+const MAX_LOCAL_IMPORT_FILES = 48;
+const MAX_SINGLE_IMPORT_BYTES = 1024 * 1024;
+const MAX_BUNDLE_IMPORT_BYTES = 1400 * 1024;
+const SENSITIVE_IMPORT_NAME = /^(?:\.|id_rsa|id_dsa|id_ecdsa|id_ed25519|authorized_keys$|known_hosts$|shadow$|passwd$)|(?:\.(?:key|pem|p12|pfx|jks|lic|ppk)$)|(?:secret|password|passwd|token|credential|license)/i;
+
+function isCircuitFileName(name) {
+  if (typeof name !== 'string' || !name) return false;
+  const base = name.split('/').pop() || '';
+  if (!base || SENSITIVE_IMPORT_NAME.test(base)) return false;
+  const dot = base.lastIndexOf('.');
+  if (dot < 0) return false;
+  return CIRCUIT_EXT_SET.has(base.slice(dot).toLowerCase());
+}
+
+function normalizeRelativePath(raw) {
+  if (typeof raw !== 'string') return null;
+  const cleaned = raw.replace(/\\/g, '/').replace(/^\/+/, '').replace(/^\.\//, '');
+  if (!cleaned || cleaned.length > 512 || /[\x00-\x1f\x7f]/.test(cleaned)) return null;
+  const parts = cleaned.split('/').filter(Boolean);
+  if (!parts.length || parts.some(p => p === '.' || p === '..' || SENSITIVE_IMPORT_NAME.test(p))) return null;
+  return parts.join('/');
+}
+
+function scoreEntryCandidate(relPath) {
+  const parts = String(relPath || '').split('/');
+  const base = (parts[parts.length - 1] || '').toLowerCase();
+  const depth = parts.length - 1;
+  let score = Math.max(0, 40 - depth * 12);
+  if (base.endsWith('.scs')) score += 28;
+  else if (base.endsWith('.sp') || base.endsWith('.spice') || base.endsWith('.cir')) score += 22;
+  else if (base.endsWith('.rnl')) score += 18;
+  else if (base.endsWith('.net') || base.endsWith('.ckt') || base.endsWith('.cdl')) score += 14;
+  else if (base.endsWith('.va') || base.endsWith('.vams')) score += 6;
+  if (/^tb[_-]|[_-]tb\./i.test(base)) score += 18;
+  if (/top|main|schematic/i.test(base)) score += 12;
+  if (/model|corner|param|lib|inc|header/i.test(base)) score -= 14;
+  return score;
+}
+
+function formatImportByteSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function prepareLocalImportFiles(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const valid = [];
+  const skipped = [];
+  for (const item of list) {
+    const rel = normalizeRelativePath(item?.path || item?.name || '');
+    if (!rel) { skipped.push({path: String(item?.path || item?.name || ''), reason: 'invalid_or_sensitive_path'}); continue; }
+    if (!isCircuitFileName(rel)) { skipped.push({path: rel, reason: 'unsupported_extension'}); continue; }
+    if (typeof item?.text !== 'string') { skipped.push({path: rel, reason: 'not_text'}); continue; }
+    const size = new TextEncoder().encode(item.text).byteLength;
+    if (size === 0) { skipped.push({path: rel, reason: 'empty_file'}); continue; }
+    if (size > MAX_SINGLE_IMPORT_BYTES) { skipped.push({path: rel, reason: 'exceeds_1mib'}); continue; }
+    valid.push({path: rel, text: item.text, size});
+  }
+  if (!valid.length) throw new Error('未找到可导入的网表文件（支持 .scs / .sp / .spice / .cir / .va / .rnl / .txt，单文件 ≤ 1 MiB）。');
+  const firstSegs = new Set(valid.map(f => (f.path.includes('/') ? f.path.split('/')[0] : '')));
+  let projectName = '';
+  let stripped = valid;
+  if (firstSegs.size === 1) {
+    const only = [...firstSegs][0];
+    if (only) {
+      projectName = only;
+      stripped = valid.map(f => ({...f, path: f.path.slice(only.length + 1)}));
+    }
+  }
+  const limited = stripped.slice(0, MAX_LOCAL_IMPORT_FILES);
+  if (stripped.length > MAX_LOCAL_IMPORT_FILES) {
+    for (const extra of stripped.slice(MAX_LOCAL_IMPORT_FILES)) skipped.push({path: extra.path, reason: 'file_count_limit'});
+  }
+  const candidates = [...limited].sort((a, b) => scoreEntryCandidate(b.path) - scoreEntryCandidate(a.path) || a.path.localeCompare(b.path));
+  const filesByPath = Object.create(null);
+  for (const row of limited) filesByPath[row.path] = row.text;
+  const defaultEntry = candidates[0].path;
+  if (!projectName) projectName = defaultEntry.split('/').pop().replace(/\.[^.]+$/, '') || defaultEntry;
+  return {projectName, candidates: candidates.map(c => ({path: c.path, size: c.size})), defaultEntry, filesByPath, skipped};
+}
+
+function selectImportEntry({filesByPath, entryPath, projectName = ''}) {
+  const cleanEntry = normalizeRelativePath(entryPath);
+  if (!cleanEntry || !Object.prototype.hasOwnProperty.call(filesByPath || {}, cleanEntry)) {
+    throw new Error('请选择有效的顶层入口网表文件。');
+  }
+  const text = filesByPath[cleanEntry];
+  const fileName = cleanEntry.split('/').pop() || cleanEntry;
+  const entryDir = cleanEntry.includes('/') ? cleanEntry.slice(0, cleanEntry.lastIndexOf('/')) : '';
+  const supportFiles = {};
+  let totalBytes = new TextEncoder().encode(text).byteLength;
+  for (const [rel, content] of Object.entries(filesByPath)) {
+    if (rel === cleanEntry) continue;
+    let supportKey = rel;
+    if (entryDir && rel.startsWith(entryDir + '/')) supportKey = rel.slice(entryDir.length + 1);
+    const bytes = new TextEncoder().encode(content).byteLength;
+    if (totalBytes + bytes <= MAX_BUNDLE_IMPORT_BYTES && Object.keys(supportFiles).length < MAX_LOCAL_IMPORT_FILES) {
+      supportFiles[supportKey] = content;
+      totalBytes += bytes;
+    }
+  }
+  return {
+    projectName: projectName || fileName.replace(/\.[^.]+$/, '') || fileName,
+    entryPath: cleanEntry,
+    fileName,
+    text,
+    supportFiles,
+  };
+}
+
+async function readBrowserFileList(fileList) {
+  const files = Array.from(fileList || []);
+  const out = [];
+  for (const file of files) {
+    const rel = file.webkitRelativePath || file.name;
+    if (!isCircuitFileName(rel)) continue;
+    if (file.size > MAX_SINGLE_IMPORT_BYTES) continue;
+    const text = await file.text();
+    out.push({path: rel, text});
+  }
+  return out;
+}
+
+function isCircuitGitManagedEntry() {
+  return state.agent_channel?.mode === 'embedded_in_circuitgit' || simSourceState.origin === 'circuitgit';
+}
+
+function detectSimulatorFromNetlist(text, fileName = '') {
+  const lowName = String(fileName || '').toLowerCase();
+  if (lowName.endsWith('.scs') || /simulator\s+lang=spectre/i.test(String(text || ''))) return {simulator: 'spectre', output_format: 'psfbin'};
+  if ((lowName.endsWith('.sp') || lowName.endsWith('.cir') || lowName.endsWith('.spice')) && /^\s*\.(?:tran|ac|dc|op|end)\b/im.test(String(text || ''))) {
+    return {simulator: 'ngspice', output_format: 'psfascii'};
+  }
+  return {simulator: directDraft.simulator || 'spectre', output_format: directDraft.output_format || 'psfbin'};
+}
+
+function makeSafeRunKeyPrefix(raw) {
+  const clean = String(raw || '').replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  return (clean && /^[A-Za-z0-9]/.test(clean)) ? clean : 'sim';
+}
+
+function applyCircuitGitEntry(entry, {silent = false} = {}) {
+  if (!entry || typeof entry !== 'object') return false;
+  simSourceState.origin = 'circuitgit';
+  simSourceState.projectId = String(entry.project_id || entry.projectId || '');
+  simSourceState.projectName = String(entry.project_name || entry.projectName || entry.project_id || '');
+  simSourceState.libraryId = String(entry.library_id || entry.libraryId || '');
+  simSourceState.libraryName = String(entry.library_name || entry.libraryName || entry.library_id || '');
+  simSourceState.cellId = String(entry.cell_id || entry.cellId || '');
+  simSourceState.cellName = String(entry.cell_name || entry.cellName || entry.cell_id || '');
+  simSourceState.viewId = String(entry.view_id || entry.viewId || '');
+  simSourceState.entryPath = String(entry.entry_path || entry.entryPath || entry.file_name || '');
+  simSourceState.fileName = String(entry.file_name || entry.fileName || simSourceState.entryPath.split('/').pop() || 'circuitgit_entry.scs');
+  simSourceState.sshTarget = String(entry.ssh_target || entry.sshTarget || '');
+  simSourceState.remotePath = String(entry.remote_path || entry.remotePath || '');
+  simSourceState.remoteDir = String(entry.remote_dir || entry.remoteDir || '');
+  simSourceState.supportFiles = (entry.support_files && typeof entry.support_files === 'object') ? {...entry.support_files} : {};
+  simSourceState.skipped = [];
+  simSourceState.sourceCommit = String(entry.source_commit || entry.sourceCommit || '');
+  simSourceState.returnUrl = String(entry.return_url || entry.returnUrl || '');
+  if (typeof entry.netlist_text === 'string' && entry.netlist_text.trim()) {
+    directDraft.netlist_text = entry.netlist_text;
+    const det = entry.simulator
+      ? {simulator: entry.simulator, output_format: entry.simulator === 'ngspice' ? 'psfascii' : 'psfbin'}
+      : detectSimulatorFromNetlist(entry.netlist_text, simSourceState.fileName);
+    directDraft.simulator = det.simulator;
+    directDraft.output_format = det.output_format;
+  }
+  if (simSourceState.sshTarget) {
+    const matched = (state.hosts || []).find(h => h.ssh_target === simSourceState.sshTarget || h.host_id === simSourceState.sshTarget);
+    if (matched) directDraft.host_id = matched.host_id;
+  }
+  const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
+  directDraft.run_key = `${makeSafeRunKeyPrefix(simSourceState.cellName || simSourceState.fileName)}-${stamp}`;
+  if (!silent) toast(`已直接复用 CircuitGit 项目入口：${simSourceState.cellName || simSourceState.projectName || simSourceState.fileName}`);
+  return true;
+}
+
+function readCircuitGitUrlHandoff() {
+  if (simSourceState.urlHandoffChecked) return;
+  simSourceState.urlHandoffChecked = true;
+  try {
+    const params = new URLSearchParams(location.search || '');
+    if (params.get('source') !== 'circuitgit') return;
+    simSourceState.origin = 'circuitgit';
+    simSourceState.projectId = params.get('project') || params.get('project_id') || '';
+    simSourceState.projectName = params.get('project_name') || simSourceState.projectId;
+    simSourceState.libraryId = params.get('library') || params.get('library_id') || '';
+    simSourceState.libraryName = params.get('library_name') || simSourceState.libraryId;
+    simSourceState.cellId = params.get('cell') || params.get('cell_id') || '';
+    simSourceState.cellName = params.get('cell_name') || simSourceState.cellId;
+    simSourceState.fileName = params.get('file') || params.get('file_name') || '';
+    simSourceState.entryPath = params.get('entry') || params.get('entry_path') || simSourceState.fileName;
+    const ret = params.get('return_url') || '';
+    if (/^https?:\/\//i.test(ret)) simSourceState.returnUrl = ret;
+    if (!location.hash || location.hash === '#quickstart') {
+      directState.activeTab = 'setup';
+      location.hash = '#direct';
+    }
+  } catch { /* ignore */ }
+}
+
+async function loadCircuitGitEntryFromServer() {
+  if (isPublicDemo() || simSourceState.serverEntryChecked) return;
+  simSourceState.serverEntryChecked = true;
+  try {
+    const res = await api('/api/library/circuitgit-entry');
+    if (res?.active && res.entry) {
+      applyCircuitGitEntry(res.entry, {silent: true});
+    }
+  } catch { /* older connectors may not expose this endpoint yet */ }
+}
 const LIVE_PENDING = 'spiceowl.live-pending';
 const LIVE_COLLECT_PENDING = 'spiceowl.live-collect-pending';
 const livePendingKey = operation => operation === 'collect' ? LIVE_COLLECT_PENDING : LIVE_PENDING;
@@ -733,6 +999,7 @@ async function refreshDirect() {
     } catch {
       directState.watchEvents = [];
     }
+    await loadCircuitGitEntryFromServer();
   } catch (error) {
     directState.error = error.message;
   } finally {
@@ -974,6 +1241,9 @@ function buildDirectPreparePayload() {
   }
   const includes = directDraft.include_dirs.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   if (includes.length) payload.include_dirs = includes;
+  const supKeys = Object.keys(simSourceState.supportFiles || {});
+  if (supKeys.length) payload.support_files = {...simSourceState.supportFiles};
+  if (/^[a-f0-9]{40}$/.test(simSourceState.sourceCommit || '')) payload.source_commit = simSourceState.sourceCommit;
   const mods = directDraft.env_modules.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
   const scs = directDraft.env_scripts.split(/[,\r\n]+/).map(s => s.trim()).filter(Boolean);
   if (mods.length || scs.length) payload.remote_env = {modules: mods, setup_scripts: scs, shell: 'bash'};
@@ -1160,20 +1430,92 @@ function directAgentSetupPanel(hostsList) {
     ? `<div class="sim-launch-status err"><strong>启动未完成：</strong><span>${escape(directState.quickLaunchError)}</span></div>`
     : '';
 
+  const supportEntries = Object.entries(simSourceState.supportFiles || {});
+  const circuitGitManaged = isCircuitGitManagedEntry();
+
+  let sourceBarHtml = '';
+  if (circuitGitManaged) {
+    const titleBits = [
+      simSourceState.projectName || simSourceState.libraryName || 'CircuitGit 当前项目',
+      simSourceState.cellName || simSourceState.fileName || '',
+    ].filter(Boolean);
+    const metaBits = [
+      simSourceState.entryPath || simSourceState.fileName || '已绑定 CircuitGit 入口',
+      supportEntries.length ? `含 ${supportEntries.length} 个 include 依赖` : '',
+      simSourceState.sourceCommit ? `commit ${simSourceState.sourceCommit.slice(0, 8)}` : '',
+    ].filter(Boolean);
+    sourceBarHtml = `
+      <div class="sim-source-bar is-circuitgit" data-circuitgit-entry="active">
+        <div class="sim-source-meta">
+          <div class="sim-source-title">
+            <strong>◉ ${escape(titleBits.join(' / '))}</strong>
+            <span class="chip green">已复用 CircuitGit 入口</span>
+          </div>
+          <small>${escape(metaBits.join(' · '))}</small>
+        </div>
+        <a class="button secondary small" href="${escape(simSourceState.returnUrl || circuitGitEntry)}" target="_blank" rel="noopener noreferrer">回 CircuitGit 切换电路 ↗</a>
+      </div>`;
+  } else {
+    let srcBadge = '未选项目';
+    let srcBadgeCls = '';
+    let srcTitle = '选择电路项目或导入网表';
+    let srcSub = '可浏览已连接 SSH 服务器上的电路库 / cds.lib 与网表，或导入本地项目文件夹（自动保留相对 include 依赖）。';
+    if (simSourceState.origin === 'ssh') {
+      srcBadge = `SSH · ${simSourceState.sshTarget || simSourceState.sshHostId}`;
+      srcBadgeCls = 'green';
+      srcTitle = simSourceState.fileName || simSourceState.projectName || '远端网表';
+      srcSub = [simSourceState.remotePath || simSourceState.entryPath, supportEntries.length ? `含 ${supportEntries.length} 个相对 include 依赖` : ''].filter(Boolean).join(' · ');
+    } else if (simSourceState.origin === 'local') {
+      srcBadge = '本地项目';
+      srcBadgeCls = 'blue';
+      srcTitle = simSourceState.projectName && simSourceState.projectName !== simSourceState.fileName
+        ? `${simSourceState.projectName} / ${simSourceState.fileName}`
+        : (simSourceState.fileName || '本地网表');
+      srcSub = [simSourceState.entryPath, supportEntries.length ? `含 ${supportEntries.length} 个相对 include 依赖` : '单文件网表'].filter(Boolean).join(' · ');
+    } else if (simSourceState.origin === 'template') {
+      srcBadge = '零 PDK 模板';
+      srcBadgeCls = '';
+      srcTitle = simSourceState.projectName || '内置烟雾模板';
+      srcSub = '适合新服务器 1 秒验证 Spectre / ngspice 环境与 PSF 波形。';
+    }
+    sourceBarHtml = `
+      <div class="sim-source-bar" data-standalone-library-entry="true">
+        <div class="sim-source-meta">
+          <div class="sim-source-title">
+            <strong>📚 ${escape(srcTitle)}</strong>
+            <span class="chip ${srcBadgeCls}">${escape(srcBadge)}</span>
+          </div>
+          <small>${escape(srcSub)}</small>
+        </div>
+        <div class="direct-actions" style="flex:none">
+          <button type="button" class="button primary small" data-action="lib-mgr-open" data-tab="${hostsList.length ? 'ssh' : 'local'}">打开 Library Manager</button>
+        </div>
+      </div>
+      <div class="sim-tpl-strip">
+        <span class="subtle-note">快速零 PDK 模板：</span>
+        <div class="sim-tpl-chips">
+          ${Object.entries(SIM_STARTER_TEMPLATES).map(([k, t]) => `<button type="button" class="sim-tpl-chip" data-action="direct-tpl" data-id="${escape(k)}">${escape(t.label)}</button>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  const supportFilesHtml = supportEntries.length ? `
+    <details class="sim-support-bar">
+      <summary>📎 已附带 ${supportEntries.length} 个相对 include 依赖文件（启动仿真时将自动与 input.scs 一并上传）</summary>
+      <div class="sim-support-list">
+        ${supportEntries.map(([rel, txt]) => `<span><code>${escape(rel)}</code> <small>${escape(formatImportByteSize(new TextEncoder().encode(txt).byteLength))}</small></span>`).join('')}
+      </div>
+      ${!circuitGitManaged ? `<div style="margin-top:8px"><button type="button" class="button secondary small" data-action="direct-clear-support">清除已附带依赖</button></div>` : ''}
+    </details>` : '';
+
   const configCard = `
     <section class="sim-config-card">
       <div class="sim-card-head">
         <h2>▷ 仿真配置与一键启动</h2>
         <span class="subtle-note">${hostsList.length ? `已连接 ${hostsList.length} 台服务器` : '尚未连接服务器'}</span>
       </div>
+      ${sourceBarHtml}
       ${bestBanner}
-      <div>
-        <div class="subtle-note" style="margin-bottom:6px">快速载入零 PDK 模板（新手可直接点选跑通第一个仿真）：</div>
-        <div class="sim-tpl-chips">
-          ${Object.entries(SIM_STARTER_TEMPLATES).map(([k, t]) => `<button type="button" class="sim-tpl-chip" data-action="direct-tpl" data-id="${escape(k)}">${escape(t.label)}</button>`).join('')}
-          <label class="direct-file-label" style="margin-left:auto">📁 导入本地网表 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label>
-        </div>
-      </div>
       <form id="direct-prepare-form">
         <div class="direct-grid">
           <label class="direct-wide">目标服务器
@@ -1192,9 +1534,10 @@ function directAgentSetupPanel(hostsList) {
           </label>
         </div>
         <div class="direct-file-row" style="margin-top:10px">
-          <label for="direct-netlist">网表内容（input.scs · 可直接粘贴、导入或由左侧 Agent 一键填入）</label>
+          <label for="direct-netlist">网表内容（${escape(simSourceState.fileName || 'input.scs')} · 可从 Library Manager 选择、粘贴或由左侧 Agent 填入）</label>
         </div>
-        <textarea id="direct-netlist" class="direct-netlist" required placeholder="点上方模板按钮快速填入示例网表，或让左侧 Agent 帮你生成…">${escape(directDraft.netlist_text)}</textarea>
+        <textarea id="direct-netlist" class="direct-netlist" required placeholder="${circuitGitManaged ? '当前网表已由 CircuitGit 提供…' : '点上方「打开 Library Manager」浏览远端项目/导入本地网表，或点选零 PDK 模板…'}">${escape(directDraft.netlist_text)}</textarea>
+        ${supportFilesHtml}
         <details class="host-form-details" style="margin-top:10px">
           <summary>更多选项（执行后端 SSH/LSF/Slurm · CPU/内存/波形格式 · 远端环境与夜间恢复）</summary>
           <div class="direct-grid" style="margin-top:8px">
@@ -1222,6 +1565,285 @@ function directAgentSetupPanel(hostsList) {
     </section>`;
 
   return `<div class="sim-setup-grid">${agentCard}${configCard}</div>`;
+}
+
+// Unified Library Manager dialog (reuses CircuitGit's SSH browse/import & local folder importer)
+function openLibraryManager(initialTab = null) {
+  if (isCircuitGitManagedEntry()) return;
+  const dialog = $('#library-manager-dialog');
+  if (!dialog) return;
+  const hostsList = state.hosts || [];
+  if (initialTab === 'ssh' || initialTab === 'local') {
+    libMgrState.tab = initialTab;
+  } else if (!hostsList.length) {
+    libMgrState.tab = 'local';
+  }
+  if (!libMgrState.hostId && hostsList.length) {
+    libMgrState.hostId = directDraft.host_id || pickMostIdleHostId() || hostsList[0].host_id;
+  }
+  const activeHost = hostsList.find(h => h.host_id === libMgrState.hostId);
+  if (activeHost) libMgrState.sshTarget = activeHost.ssh_target || activeHost.host_id;
+  if (!dialog.open) dialog.showModal();
+  renderLibraryManagerDialog();
+  if (libMgrState.tab === 'ssh' && !isPublicDemo() && libMgrState.hostId && !libMgrState.cwd && !libMgrState.busy) {
+    void browseLibrarySsh(libMgrState.path || '~');
+  }
+}
+
+async function browseLibrarySsh(targetPath) {
+  if (isPublicDemo() || libMgrState.busy) return;
+  const hostId = libMgrState.hostId;
+  const sshTarget = (libMgrState.sshTarget || '').trim();
+  if (!hostId && !sshTarget) {
+    libMgrState.error = '请先选择一台已连接的 SSH 服务器。';
+    renderLibraryManagerDialog();
+    return;
+  }
+  libMgrState.busy = true;
+  libMgrState.error = '';
+  libMgrState.selectedPath = '';
+  renderLibraryManagerDialog();
+  try {
+    const nextPath = String(targetPath ?? libMgrState.path ?? '~').trim() || '~';
+    const body = hostId ? {host_id: hostId, path: nextPath} : {ssh_target: sshTarget, path: nextPath};
+    const res = await api('/api/library/ssh-browse', {method: 'POST', body});
+    libMgrState.cwd = res.cwd || '';
+    libMgrState.path = libMgrState.cwd || nextPath;
+    libMgrState.parent = res.parent || null;
+    libMgrState.entries = Array.isArray(res.entries) ? res.entries : [];
+    libMgrState.cdsLibraries = Array.isArray(res.cds_libraries) ? res.cds_libraries : [];
+    libMgrState.truncated = Boolean(res.truncated);
+  } catch (error) {
+    libMgrState.error = error.message || '远端目录读取失败。';
+  } finally {
+    libMgrState.busy = false;
+    renderLibraryManagerDialog();
+  }
+}
+
+async function importLibrarySsh(filePath) {
+  if (isPublicDemo() || libMgrState.busy) return;
+  const target = String(filePath || libMgrState.selectedPath || '').trim();
+  if (!target) {
+    libMgrState.error = '请先选中一个远端网表文件。';
+    renderLibraryManagerDialog();
+    return;
+  }
+  libMgrState.busy = true;
+  libMgrState.error = '';
+  renderLibraryManagerDialog();
+  try {
+    const body = {
+      ...(libMgrState.hostId ? {host_id: libMgrState.hostId} : {ssh_target: libMgrState.sshTarget}),
+      path: target,
+      include_dependencies: Boolean(libMgrState.includeDeps),
+    };
+    const res = await api('/api/library/ssh-import', {method: 'POST', body});
+    const dirName = (res.remote_dir || '').split('/').filter(Boolean).pop() || '';
+    const fileName = res.file_name || target.split('/').pop() || 'input.scs';
+    const det = detectSimulatorFromNetlist(res.text, fileName);
+    simSourceState.origin = 'ssh';
+    simSourceState.projectName = dirName || fileName.replace(/\.[^.]+$/, '') || fileName;
+    simSourceState.fileName = fileName;
+    simSourceState.entryPath = fileName;
+    simSourceState.sshTarget = res.ssh_target || libMgrState.sshTarget;
+    simSourceState.sshHostId = libMgrState.hostId || '';
+    simSourceState.remotePath = res.remote_path || target;
+    simSourceState.remoteDir = res.remote_dir || '';
+    simSourceState.supportFiles = (res.support_files && typeof res.support_files === 'object') ? {...res.support_files} : {};
+    simSourceState.skipped = Array.isArray(res.skipped) ? res.skipped : [];
+    simSourceState.sourceCommit = '';
+    directDraft.netlist_text = res.text || '';
+    directDraft.simulator = det.simulator;
+    directDraft.output_format = det.output_format;
+    if (libMgrState.hostId && (state.hosts || []).some(h => h.host_id === libMgrState.hostId)) {
+      directDraft.target_mode = 'host';
+      directDraft.host_id = libMgrState.hostId;
+    }
+    const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
+    directDraft.run_key = `${makeSafeRunKeyPrefix(fileName)}-${stamp}`;
+    directState.quickLaunchNote = null;
+    directState.quickLaunchError = null;
+    $('#library-manager-dialog')?.close();
+    render();
+    const depCount = Object.keys(simSourceState.supportFiles).length;
+    toast(`已从 ${simSourceState.sshHostId || simSourceState.sshTarget} 导入 ${fileName}${depCount ? `（含 ${depCount} 个相对 include 依赖）` : ''}。`);
+  } catch (error) {
+    libMgrState.error = error.message || '远端网表导入失败。';
+  } finally {
+    libMgrState.busy = false;
+    renderLibraryManagerDialog();
+  }
+}
+
+async function handleLibraryLocalFiles(fileList) {
+  if (libMgrState.localBusy) return;
+  libMgrState.localBusy = true;
+  libMgrState.localError = '';
+  renderLibraryManagerDialog();
+  try {
+    const entries = await readBrowserFileList(fileList);
+    const bundle = prepareLocalImportFiles(entries);
+    libMgrState.localBundle = bundle;
+    libMgrState.localSelectedEntry = bundle.defaultEntry;
+    if (bundle.candidates.length === 1) {
+      commitLibraryLocalBundle();
+      return;
+    }
+  } catch (error) {
+    libMgrState.localError = error.message || '读取本地网表失败。';
+  } finally {
+    libMgrState.localBusy = false;
+    renderLibraryManagerDialog();
+  }
+}
+
+function commitLibraryLocalBundle() {
+  if (!libMgrState.localBundle) return;
+  try {
+    const chosen = selectImportEntry({
+      filesByPath: libMgrState.localBundle.filesByPath,
+      entryPath: libMgrState.localSelectedEntry || libMgrState.localBundle.defaultEntry,
+      projectName: libMgrState.localBundle.projectName,
+    });
+    const det = detectSimulatorFromNetlist(chosen.text, chosen.fileName);
+    simSourceState.origin = 'local';
+    simSourceState.projectName = chosen.projectName;
+    simSourceState.fileName = chosen.fileName;
+    simSourceState.entryPath = chosen.entryPath;
+    simSourceState.sshTarget = '';
+    simSourceState.sshHostId = '';
+    simSourceState.remotePath = '';
+    simSourceState.remoteDir = '';
+    simSourceState.supportFiles = chosen.supportFiles || {};
+    simSourceState.skipped = libMgrState.localBundle.skipped || [];
+    simSourceState.sourceCommit = '';
+    directDraft.netlist_text = chosen.text;
+    directDraft.simulator = det.simulator;
+    directDraft.output_format = det.output_format;
+    const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
+    directDraft.run_key = `${makeSafeRunKeyPrefix(chosen.fileName)}-${stamp}`;
+    directState.quickLaunchNote = null;
+    directState.quickLaunchError = null;
+    libMgrState.localBundle = null;
+    libMgrState.localSelectedEntry = '';
+    $('#library-manager-dialog')?.close();
+    render();
+    const depCount = Object.keys(simSourceState.supportFiles).length;
+    toast(`已导入本地项目「${chosen.projectName}」· ${chosen.fileName}${depCount ? `（含 ${depCount} 个相对 include 依赖）` : ''}。`);
+  } catch (error) {
+    libMgrState.localError = error.message || '导入本地网表失败。';
+    renderLibraryManagerDialog();
+  }
+}
+
+function renderLibraryManagerDialog() {
+  const container = $('#library-manager-content');
+  if (!container) return;
+  const hostsList = state.hosts || [];
+  const tab = libMgrState.tab;
+  const tabsHtml = `
+    <div class="lib-mgr-tabs" role="tablist">
+      <button type="button" role="tab" aria-selected="${tab === 'ssh' ? 'true' : 'false'}" class="lib-mgr-tab ${tab === 'ssh' ? 'active' : ''}" data-action="lib-mgr-tab" data-tab="ssh">🖥️ 远端服务器项目与电路库 (SSH)</button>
+      <button type="button" role="tab" aria-selected="${tab === 'local' ? 'true' : 'false'}" class="lib-mgr-tab ${tab === 'local' ? 'active' : ''}" data-action="lib-mgr-tab" data-tab="local">💻 本地项目文件夹 / 网表导入</button>
+    </div>`;
+
+  let bodyHtml = '';
+  if (tab === 'ssh') {
+    if (!hostsList.length) {
+      bodyHtml = `
+        <div class="lib-mgr-empty-box">
+          <strong>还没有已连接的 SSH 服务器</strong>
+          <p class="subtle-note">先在首页完成 SSH 连接，即可像 Library Manager 一样直接浏览远端工作目录、Cadence <code>cds.lib</code> 与网表文件；也可以现在切换到「本地项目文件夹 / 网表导入」。</p>
+          <div class="direct-actions">
+            <button type="button" class="button primary small" data-action="lib-mgr-tab" data-tab="local">切换到本地导入 →</button>
+            <button type="button" class="button secondary small" data-action="open-ssh-setup-wizard">＋ 打开 SSH 配置向导 ↗</button>
+          </div>
+        </div>`;
+    } else {
+      const q = (libMgrState.filter || '').trim().toLowerCase();
+      const filtered = q
+        ? libMgrState.entries.filter(e => String(e.name || '').toLowerCase().includes(q))
+        : libMgrState.entries;
+      const cdsHtml = libMgrState.cdsLibraries.length ? `
+        <div class="lib-mgr-cds-bar">
+          <span>📚 检测到 <code>cds.lib</code> 电路库（点击直达）：</span>
+          <div class="lib-mgr-cds-pills">
+            ${libMgrState.cdsLibraries.map(lib => `<button type="button" class="lib-mgr-cds-pill" data-action="lib-mgr-cd" data-path="${escape(lib.path)}" title="${escape(lib.path)}">${escape(lib.name)}</button>`).join('')}
+          </div>
+        </div>` : '';
+      const listHtml = libMgrState.busy && !filtered.length
+        ? '<p class="lib-mgr-empty">正在通过 SSH 读取远端目录与电路库…</p>'
+        : !libMgrState.cwd && !filtered.length
+        ? '<p class="lib-mgr-empty">选择上方服务器并点击「浏览目录」，即可浏览项目目录、<code>cds.lib</code> 与网表文件（.scs / .sp / .spice / .cir / .va / .rnl）。</p>'
+        : !filtered.length
+        ? `<p class="lib-mgr-empty">${q ? `没有匹配「${escape(libMgrState.filter)}」的目录或网表。` : `目录 ${escape(libMgrState.cwd)} 下暂无子目录或支持的网表文件。`}</p>`
+        : filtered.map(entry => {
+            const isDir = entry.kind === 'dir';
+            const sel = !isDir && libMgrState.selectedPath === entry.path;
+            return `
+              <div class="lib-mgr-row ${isDir ? 'is-dir' : 'is-file'} ${sel ? 'is-selected' : ''}">
+                <button type="button" class="lib-mgr-row-main" data-action="${isDir ? 'lib-mgr-cd' : 'lib-mgr-select'}" data-path="${escape(entry.path)}">
+                  <span class="lib-mgr-icon">${isDir ? '📁' : '📄'}</span>
+                  <span class="lib-mgr-name">${escape(isDir ? entry.name + '/' : entry.name)}</span>
+                  <span class="lib-mgr-meta">${isDir ? '目录' : escape(formatImportByteSize(entry.size))}</span>
+                </button>
+                ${!isDir ? `<button type="button" class="button secondary small" data-action="lib-mgr-import-one" data-path="${escape(entry.path)}" ${libMgrState.busy ? 'disabled' : ''}>导入</button>` : ''}
+              </div>`;
+          }).join('');
+      bodyHtml = `
+        <p class="subtle-note" style="margin:0 0 10px">安全只读浏览已连接服务器上的电路项目（与 CircuitGit 复用同一套 <code>ic.onboarding.ssh-browse.v1</code> 接口，绝不读取密钥或敏感文件）。</p>
+        <div class="lib-mgr-toolbar">
+          <select id="lib-mgr-host" aria-label="选择 SSH 服务器">
+            ${hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === libMgrState.hostId ? 'selected' : ''}>${escape(h.host_id)} (${escape(h.label)})</option>`).join('')}
+          </select>
+          <button type="button" class="button primary small" data-action="lib-mgr-browse" ${libMgrState.busy ? 'disabled' : ''}>${libMgrState.busy ? '读取中…' : '浏览目录'}</button>
+          <button type="button" class="button secondary small" data-action="lib-mgr-cd" data-path="~" ${libMgrState.busy ? 'disabled' : ''}>~ 主目录</button>
+        </div>
+        <div class="lib-mgr-pathbar">
+          <button type="button" class="button secondary small" data-action="lib-mgr-cd" data-path="${escape(libMgrState.parent || '')}" ${libMgrState.busy || !libMgrState.parent ? 'disabled' : ''}>↑ 上级</button>
+          <input id="lib-mgr-path" type="text" value="${escape(libMgrState.path)}" placeholder="~ 或 /home/user/sim_project" aria-label="远端目录路径">
+          <button type="button" class="button secondary small" data-action="lib-mgr-browse" ${libMgrState.busy ? 'disabled' : ''}>前往</button>
+          <input id="lib-mgr-filter" type="search" value="${escape(libMgrState.filter)}" placeholder="过滤名称…" aria-label="过滤当前目录">
+        </div>
+        ${libMgrState.error ? `<p class="error-text" role="alert">${escape(libMgrState.error)}</p>` : ''}
+        ${cdsHtml}
+        <div class="lib-mgr-list" role="listbox" aria-label="远端目录与网表文件">${listHtml}</div>
+        ${libMgrState.truncated ? '<p class="subtle-note" style="margin:6px 0 0">当前目录超过 200 项，仅展示前 200 项；可直接输入更具体路径。</p>' : ''}
+        <div class="lib-mgr-footer">
+          <label class="lib-mgr-check"><input id="lib-mgr-deps" type="checkbox" ${libMgrState.includeDeps ? 'checked' : ''}> 同时拉取同目录相对 include 依赖（自动跳过外部 PDK 库）</label>
+          <button type="button" class="button primary small" data-action="lib-mgr-import-selected" ${libMgrState.busy || !libMgrState.selectedPath ? 'disabled' : ''}>${libMgrState.busy ? '拉取中…' : '导入选中网表'}</button>
+        </div>`;
+    }
+  } else {
+    const bundle = libMgrState.localBundle;
+    bodyHtml = `
+      <p class="subtle-note" style="margin:0 0 12px">导入电脑上的 Spectre / SPICE / Verilog-A / RNL 网表或整个项目文件夹（与 CircuitGit 复用同一套顶层入口评分与相对 include 依赖打包逻辑）。</p>
+      <div id="lib-mgr-dropzone" class="lib-mgr-dropzone">
+        <div class="direct-actions" style="justify-content:center">
+          <label class="button primary small" style="cursor:pointer">📄 选择本地网表文件 (.scs/.sp/.cir)<input id="lib-mgr-local-file" type="file" multiple accept="${escape(CIRCUIT_EXTENSIONS.join(','))}" hidden></label>
+          <label class="button secondary small" style="cursor:pointer">📁 选择本地项目文件夹（含 include 依赖）<input id="lib-mgr-local-folder" type="file" multiple webkitdirectory hidden></label>
+        </div>
+        <small class="subtle-note">也可直接把 .scs / .sp / .cir 文件拖拽到这里（单文件 ≤ 1 MiB，自动过滤敏感文件）。</small>
+      </div>
+      ${bundle ? `
+        <div class="lib-mgr-bundle">
+          <strong>已读取项目「${escape(bundle.projectName)}」· 共 ${bundle.candidates.length} 个网表文件</strong>
+          <label style="display:block;margin-top:8px">
+            <span class="subtle-note" style="display:block;margin-bottom:4px">选择顶层入口网表（其余文件将作为 include 依赖自动打包上传）：</span>
+            <select id="lib-mgr-local-entry">
+              ${bundle.candidates.map(c => `<option value="${escape(c.path)}" ${c.path === (libMgrState.localSelectedEntry || bundle.defaultEntry) ? 'selected' : ''}>${escape(c.path)} (${escape(formatImportByteSize(c.size))})</option>`).join('')}
+            </select>
+          </label>
+          <div class="direct-actions" style="margin-top:10px">
+            <button type="button" class="button primary small" data-action="lib-mgr-local-commit">确认导入到仿真配置</button>
+            <button type="button" class="button secondary small" data-action="lib-mgr-local-clear">重新选择</button>
+          </div>
+        </div>` : ''}
+      ${libMgrState.localError ? `<p class="error-text" role="alert">${escape(libMgrState.localError)}</p>` : ''}`;
+  }
+
+  container.innerHTML = tabsHtml + `<div class="lib-mgr-body">${bodyHtml}</div>`;
 }
 
 function directPage() {
@@ -1971,11 +2593,24 @@ async function handleDirectClick(event) {
       directDraft.netlist_text = tpl.netlist;
       const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
       directDraft.run_key = `${tpl.run_prefix}-${stamp}`;
+      simSourceState.origin = 'template';
+      simSourceState.projectName = tpl.label;
+      simSourceState.fileName = tpl.simulator === 'ngspice' ? 'input.sp' : 'input.scs';
+      simSourceState.entryPath = simSourceState.fileName;
+      simSourceState.supportFiles = {};
+      simSourceState.skipped = [];
+      simSourceState.sourceCommit = '';
       directState.quickLaunchNote = null;
       directState.quickLaunchError = null;
       render();
       toast(`已载入「${tpl.label}」模板，点击「🚀 一键准备并启动仿真」即可运行。`);
     }
+    return;
+  }
+  if (action === 'clear-support') {
+    simSourceState.supportFiles = {};
+    render();
+    toast('已清除附带的相对 include 依赖文件。');
     return;
   }
   if (action === 'quick-launch') {
@@ -2420,6 +3055,7 @@ async function api(path, options = {}) {
 
 let connectorSessionChecked = false;
 async function refresh() {
+  readCircuitGitUrlHandoff();
   if (!connectorSessionChecked) {
     connectorSessionChecked = true;
     await restoreConnectorSession();
@@ -2743,27 +3379,11 @@ async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
 
 function renderMySimulationsStrip() {
   const mySims = hostLiveState.mySimulations || [];
-  const s = hostLiveState.summary;
-  const anyUser = [...hostLiveState.byId.values()].map(v => v.username).find(Boolean) || '';
-  const hasMySims = mySims.length > 0;
+  if (!mySims.length) return '';
+
   const hostSet = new Set(mySims.map(m => m.host_id));
   const totalCores = mySims.reduce((acc, m) => acc + (Number.isFinite(m.cpu_percent) ? m.cpu_percent / 100 : 0), 0);
   const totalRss = mySims.reduce((acc, m) => acc + (Number.isFinite(m.rss_bytes) ? m.rss_bytes : 0), 0);
-  const myEdaTools = s?.my_active_eda_tools || 0;
-
-  if (!hostLiveState.loaded && hostLiveState.loading) {
-    return `<section class="pool-my-sims-strip"><div class="pool-my-sims-head"><h2>👤 我的仿真</h2><span class="subtle-note">正在检索你在各台服务器上的运行中仿真…</span></div></section>`;
-  }
-
-  if (!hasMySims) {
-    return `
-      <section class="pool-my-sims-strip">
-        <div class="pool-my-sims-head">
-          <h2>👤 我的仿真 ${anyUser ? `<span class="pool-my-sims-badge">${escape(anyUser)}</span>` : ''}</h2>
-          <span class="subtle-note">当前暂无运行中的仿真${myEdaTools ? `（另有 ${myEdaTools} 个我的 EDA 工具会话）` : ''} · 仿真启动后会自动高亮资源条并将对应服务器置顶</span>
-        </div>
-      </section>`;
-  }
 
   const chips = mySims.map(item => {
     if (item.source === 'managed') {
@@ -2898,18 +3518,14 @@ function renderHostLiveCard(host) {
         : `查看本机其他 EDA 工具进程（${otherProcs.length} 个）`;
       parts.push(`<details class="home-advanced"><summary>${escape(otherLabel)}</summary>${toolTags ? `<div class="pool-tool-tags" style="margin-top:8px">${toolTags}</div>` : ''}<div class="pool-proc-wrap" style="margin-top:8px"><table class="pool-proc-table"><thead><tr><th>进程</th><th>用户</th><th>CPU</th><th>内存</th><th>时长</th></tr></thead><tbody>${otherProcs.map(renderProcRow).join('')}</tbody></table></div></details>`);
     } else if (!hasMySim) {
-      parts.push('<div class="pool-sim-idle">✓ 当前无活跃仿真进程，空闲可直接提交仿真</div>');
+      parts.push('<div class="pool-sim-idle">✓ 当前空闲，可直接提交仿真</div>');
     }
     simsBody = parts.join('');
   }
 
-  const simSummaryText = !live || !live.ok
-    ? '仿真状态'
-    : hasMySim
-    ? `我的仿真运行中：${mySimCount + activeManagedRuns.length} 个（占 ${escape(formatCpuWithCores(sims?.my_sim_cpu_percent || 0))} · ${escape(formatBytesHuman(myMemBytes))}）`
-    : otherSimCount > 0
-    ? `暂无我的仿真（他人仿真 ${otherSimCount} 个）`
-    : '暂无仿真运行';
+  const mySimHeadHtml = live && live.ok && hasMySim
+    ? `<div class="pool-sims-head"><strong>我的仿真运行中：${mySimCount + activeManagedRuns.length} 个（占 ${escape(formatCpuWithCores(sims?.my_sim_cpu_percent || 0))} · ${escape(formatBytesHuman(myMemBytes))}）</strong></div>`
+    : '';
 
   const obsStamp = live?.observed_at || host.last_resources?.observed_at || host.last_probe?.observed_at || null;
   const obsTime = obsStamp && Number.isFinite(Date.parse(obsStamp)) ? new Date(obsStamp).toLocaleTimeString() : '尚未采样';
@@ -2951,9 +3567,7 @@ function renderHostLiveCard(host) {
         </div>
       </div>
       <div class="pool-sims-box">
-        <div class="pool-sims-head">
-          <strong>${simSummaryText}</strong>
-        </div>
+        ${mySimHeadHtml}
         ${simsBody}
       </div>
       <div class="pool-live-foot">
@@ -2969,8 +3583,8 @@ function hosts() {
   let html = heading(
     'SERVER POOL & LIVE SIMULATIONS',
     '服务器池资源与运行中仿真',
-    '实时展示首页已连接的所有服务器的 CPU、内存、磁盘占用，以及当前正在运行的仿真进程与 FlexLM License 余量。',
-    `<div class="host-page-actions"><button type="button" class="button secondary" data-action="host-live-refresh" ${hostLiveState.loading || !state.hosts.length ? 'disabled' : ''}>${hostLiveState.loading ? '正在采样全部服务器…' : '刷新全部资源与仿真'}</button><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 管理 / 新增服务器 ↗</button><button type="button" class="button primary" data-action="hosts-next-sim" ${!state.hosts.length ? 'disabled' : ''}>${directState.runs.length ? '下一步：配置并运行仿真 →' : '下一步：运行第一个仿真 →'}</button></div>`
+    '实时展示已连接服务器的 CPU、内存、磁盘占用与 SPICE License 余量。',
+    `<div class="host-page-actions"><button type="button" class="button secondary" data-action="host-live-refresh" ${hostLiveState.loading || !state.hosts.length ? 'disabled' : ''}>${hostLiveState.loading ? '采样中…' : '刷新资源'}</button><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 管理服务器 ↗</button><button type="button" class="button primary" data-action="hosts-next-sim" ${!state.hosts.length ? 'disabled' : ''}>${directState.runs.length ? '下一步：配置仿真 →' : '下一步：运行第一个仿真 →'}</button></div>`
   );
 
   if (hostLiveState.error) {
@@ -4464,48 +5078,7 @@ document.addEventListener('submit', async event => {
   if (isPublicDemo() || directState.busy) return;
   directState.busy = true; directState.error = null; render();
   try {
-    const payload = {
-      run_key: directDraft.run_key.trim(),
-      netlist_text: directDraft.netlist_text,
-      backend: directDraft.backend,
-      simulator: directDraft.simulator,
-      output_format: directDraft.output_format,
-      cpus: Number(directDraft.cpus),
-      memory_gib: Number(directDraft.memory_gib),
-      wall_seconds: Number(directDraft.wall_seconds),
-      remote_python: directDraft.remote_python.trim() || '/usr/bin/python3',
-      remote_root: directDraft.remote_root.trim() || '.spiceowl-runs',
-      recovery_policy: {
-        enabled: !!directDraft.rec_enabled,
-        max_recovery_attempts: Number(directDraft.rec_max_attempts),
-        max_memory_bytes: Math.round(Math.max(Number(directDraft.rec_max_memory_gib), Number(directDraft.memory_gib)) * 2**30),
-        max_elapsed_seconds: Math.max(60, Math.round(Number(directDraft.rec_max_elapsed_min) * 60)),
-        retry_on_license: !!directDraft.rec_retry_license,
-        license_backoff_seconds: Number(directDraft.rec_license_backoff),
-        retry_on_oom: !!directDraft.rec_retry_oom,
-        oom_memory_multiplier: Number(directDraft.rec_oom_multiplier) || 2.0,
-        allow_host_relocation: !!directDraft.rec_allow_relocate,
-      },
-    };
-    if (directDraft.target_mode === 'pool') {
-      payload.host_ids = state.hosts.slice(0, 32).map(h => h.host_id);
-    } else {
-      payload.host_id = directDraft.host_id;
-    }
-    const includes = directDraft.include_dirs.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    if (includes.length) payload.include_dirs = includes;
-    const mods = directDraft.env_modules.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
-    const scs = directDraft.env_scripts.split(/[,\r\n]+/).map(s => s.trim()).filter(Boolean);
-    if (mods.length || scs.length) payload.remote_env = {modules: mods, setup_scripts: scs, shell: 'bash'};
-    if (directDraft.backend === 'lsf') {
-      payload.scheduler = {queue: directDraft.queue.trim(), exclusive: !!directDraft.exclusive};
-      if (directDraft.project.trim()) payload.scheduler.project = directDraft.project.trim();
-      if (directDraft.job_group.trim()) payload.scheduler.job_group = directDraft.job_group.trim();
-    } else if (directDraft.backend === 'slurm') {
-      payload.scheduler = {partition: directDraft.partition.trim(), exclusive: !!directDraft.exclusive};
-      if (directDraft.account.trim()) payload.scheduler.account = directDraft.account.trim();
-      if (directDraft.qos.trim()) payload.scheduler.qos = directDraft.qos.trim();
-    }
+    const payload = buildDirectPreparePayload();
     const res = await api('/api/direct/prepare', {method: 'POST', body: payload});
     directState.selectedId = res.run.run_id;
     directDraft.run_key = '';
@@ -4516,6 +5089,151 @@ document.addEventListener('submit', async event => {
   } finally {
     directState.busy = false;
     await refreshDirect();
+  }
+});
+
+// Library Manager dialog interactions (reused CircuitGit SSH & local folder import flow)
+document.addEventListener('click', async event => {
+  const btn = event.target.closest('[data-action^="lib-mgr-"]');
+  if (!btn) return;
+  const action = btn.dataset.action.slice(8);
+  if (action === 'open') {
+    openLibraryManager(btn.dataset.tab || null);
+    return;
+  }
+  if (action === 'close') {
+    $('#library-manager-dialog')?.close();
+    return;
+  }
+  if (action === 'tab') {
+    const nextTab = btn.dataset.tab === 'local' ? 'local' : 'ssh';
+    libMgrState.tab = nextTab;
+    renderLibraryManagerDialog();
+    if (nextTab === 'ssh' && !isPublicDemo() && libMgrState.hostId && !libMgrState.cwd && !libMgrState.busy) {
+      await browseLibrarySsh(libMgrState.path || '~');
+    }
+    return;
+  }
+  if (action === 'browse') {
+    await browseLibrarySsh(libMgrState.path || '~');
+    return;
+  }
+  if (action === 'cd') {
+    const targetPath = btn.dataset.path;
+    if (targetPath) await browseLibrarySsh(targetPath);
+    return;
+  }
+  if (action === 'select') {
+    libMgrState.selectedPath = btn.dataset.path || '';
+    renderLibraryManagerDialog();
+    return;
+  }
+  if (action === 'import-one') {
+    const targetPath = btn.dataset.path || '';
+    if (targetPath) await importLibrarySsh(targetPath);
+    return;
+  }
+  if (action === 'import-selected') {
+    if (libMgrState.selectedPath) await importLibrarySsh(libMgrState.selectedPath);
+    return;
+  }
+  if (action === 'local-commit') {
+    commitLibraryLocalBundle();
+    return;
+  }
+  if (action === 'local-clear') {
+    libMgrState.localBundle = null;
+    libMgrState.localSelectedEntry = '';
+    libMgrState.localError = '';
+    renderLibraryManagerDialog();
+    return;
+  }
+});
+
+document.addEventListener('dblclick', async event => {
+  const btn = event.target.closest('[data-action="lib-mgr-select"]');
+  if (!btn || !btn.dataset.path) return;
+  await importLibrarySsh(btn.dataset.path);
+});
+
+document.addEventListener('change', event => {
+  if (event.target.id === 'lib-mgr-host') {
+    libMgrState.hostId = event.target.value;
+    const h = (state.hosts || []).find(item => item.host_id === libMgrState.hostId);
+    libMgrState.sshTarget = h?.ssh_target || libMgrState.hostId;
+    libMgrState.path = '~';
+    libMgrState.cwd = '';
+    libMgrState.entries = [];
+    libMgrState.cdsLibraries = [];
+    void browseLibrarySsh('~');
+  }
+  if (event.target.id === 'lib-mgr-deps') {
+    libMgrState.includeDeps = Boolean(event.target.checked);
+  }
+  if (event.target.id === 'lib-mgr-local-entry') {
+    libMgrState.localSelectedEntry = event.target.value;
+  }
+  if ((event.target.id === 'lib-mgr-local-file' || event.target.id === 'lib-mgr-local-folder') && event.target.files?.length) {
+    void handleLibraryLocalFiles(event.target.files);
+    event.target.value = '';
+  }
+});
+
+document.addEventListener('input', event => {
+  if (event.target.id === 'lib-mgr-path') {
+    libMgrState.path = event.target.value;
+  }
+  if (event.target.id === 'lib-mgr-filter') {
+    libMgrState.filter = event.target.value;
+    renderLibraryManagerDialog();
+    const inp = $('#lib-mgr-filter');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if (event.target.id === 'lib-mgr-path' && event.key === 'Enter') {
+    event.preventDefault();
+    void browseLibrarySsh(libMgrState.path || '~');
+  }
+});
+
+document.addEventListener('dragover', event => {
+  const dz = event.target.closest('#lib-mgr-dropzone');
+  if (!dz) return;
+  event.preventDefault();
+  dz.classList.add('is-dragover');
+});
+
+document.addEventListener('dragleave', event => {
+  const dz = event.target.closest('#lib-mgr-dropzone');
+  if (dz) dz.classList.remove('is-dragover');
+});
+
+document.addEventListener('drop', event => {
+  const dz = event.target.closest('#lib-mgr-dropzone');
+  if (!dz) return;
+  event.preventDefault();
+  dz.classList.remove('is-dragover');
+  if (event.dataTransfer?.files?.length) void handleLibraryLocalFiles(event.dataTransfer.files);
+});
+
+// Shared CircuitGit -> SpiceOwl postMessage handoff interface (spiceowl.circuitgit-entry.v1)
+window.addEventListener('message', event => {
+  const origin = String(event.origin || '');
+  const trusted = origin === window.location.origin
+    || origin === 'https://circuitgit-dev.github.io'
+    || /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(origin);
+  if (!trusted) return;
+  const data = event.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type !== 'circuitgit.spiceowl.entry' && data.schema !== 'spiceowl.circuitgit-entry.v1') return;
+  const payload = data.entry && typeof data.entry === 'object' ? data.entry : data;
+  if (applyCircuitGitEntry(payload)) {
+    directState.activeTab = 'setup';
+    if (location.hash !== '#direct') location.hash = '#direct';
+    else render();
+    try { event.source?.postMessage({type: 'spiceowl.circuitgit.entry.ack', ok: true}, origin); } catch { /* ignore */ }
   }
 });
 

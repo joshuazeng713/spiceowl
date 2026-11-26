@@ -1404,6 +1404,7 @@ dialog .muted {
 .pool-live-card.level-moderate { border-top:3px solid #2b6cb0; }
 .pool-live-card.level-busy { border-top:3px solid #c9563c; }
 .pool-live-card.level-error { border-top:3px solid #b45309; }
+.pool-live-card.has-my-sim { border-color:#c4b5fd; border-top:3px solid #7c3aed; box-shadow:0 4px 16px rgba(124,58,237,.08); }
 .pool-live-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
 .pool-live-title { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .pool-live-title h3 { margin:0; font-size:16px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -1414,11 +1415,44 @@ dialog .muted {
 .pool-meter-top { display:flex; align-items:baseline; justify-content:space-between; gap:8px; font-size:12.5px; flex-wrap:wrap; }
 .pool-meter-top strong { color:var(--ink); font-weight:600; }
 .pool-meter-top span { color:var(--muted); font-family:var(--mono); font-size:12px; }
-.pool-bar { width:100%; height:8px; border-radius:999px; background:#edf2ee; overflow:hidden; }
-.pool-bar > i { display:block; height:100%; border-radius:999px; transition:width .25s ease; }
+.pool-me-stat { color:#6d28d9; font-weight:650; }
+.pool-bar { width:100%; height:9px; border-radius:999px; background:#edf2ee; overflow:hidden; display:flex; }
+.pool-bar > i { display:block; height:100%; transition:width .25s ease; flex:0 0 auto; }
+.pool-bar > i.seg-me { background:#7c3aed; min-width:4px; }
 .pool-bar > i.ok { background:#2c8a62; }
 .pool-bar > i.warn { background:#d97706; }
 .pool-bar > i.high { background:#cf4a36; }
+
+.pool-bar-legend { display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:11.5px; color:var(--muted); }
+.pool-bar-legend span { display:inline-flex; align-items:center; gap:5px; }
+.pool-legend-dot { width:8px; height:8px; border-radius:999px; display:inline-block; }
+.pool-legend-dot.me { background:#7c3aed; }
+.pool-legend-dot.other { background:#2c8a62; }
+
+/* Dedicated "My Simulations" strip & FlexLM License bar */
+.pool-my-sims-strip { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px 18px; margin-bottom:14px; display:flex; flex-direction:column; gap:10px; }
+.pool-my-sims-strip.active { border-color:#c4b5fd; background:linear-gradient(180deg, #faf7ff 0%, #ffffff 70%); }
+.pool-my-sims-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.pool-my-sims-head h2 { margin:0; font-size:14.5px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:8px; }
+.pool-my-sims-badge { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:999px; font-size:11.5px; font-weight:650; background:#ede9fe; color:#5b21b6; }
+.pool-my-sims-list { display:flex; flex-wrap:wrap; gap:8px; }
+.pool-my-sim-chip { display:inline-flex; align-items:center; gap:8px; padding:7px 11px; border-radius:9px; border:1px solid #d8ccfe; background:#fff; font-size:12px; color:var(--ink); }
+.pool-my-sim-chip strong { color:#5b21b6; font-family:var(--mono); }
+.pool-my-sim-chip code { font-family:var(--mono); font-size:11.5px; background:#f5f3ff; color:#4c1d95; padding:1px 6px; border-radius:5px; }
+.pool-my-sim-chip small { color:var(--muted); font-family:var(--mono); font-size:11.5px; }
+
+.pool-license-bar { background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 18px; margin-bottom:16px; display:flex; flex-direction:column; gap:10px; }
+.pool-license-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.pool-license-head strong { font-size:13.5px; color:var(--ink); display:flex; align-items:center; gap:7px; }
+.pool-lic-grid { display:flex; flex-wrap:wrap; gap:8px; }
+.pool-lic-pill { display:inline-flex; align-items:center; gap:8px; padding:6px 11px; border-radius:9px; border:1px solid #d7e4dc; background:#f8fbf9; font-size:12px; }
+.pool-lic-pill.warn { border-color:#f3d299; background:#fffbf2; }
+.pool-lic-pill.high { border-color:#f0b9b2; background:#fff5f4; }
+.pool-lic-pill strong { color:var(--ink); font-weight:650; }
+.pool-lic-pill .lic-count { font-family:var(--mono); font-size:11.5px; color:var(--muted); }
+.pool-lic-pill .lic-avail { font-family:var(--mono); font-size:11.5px; font-weight:700; color:#185842; }
+.pool-lic-pill.warn .lic-avail { color:#b45309; }
+.pool-lic-pill.high .lic-avail { color:#b91c1c; }
 
 .pool-disk-row { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--muted); padding-top:2px; }
 .pool-disk-row code { font-family:var(--mono); font-size:11.5px; color:var(--ink); background:#f3f6f4; padding:2px 6px; border-radius:5px; }
@@ -1474,7 +1508,7 @@ dialog .muted {
 }
 
 /* Public preview shares the product UI; these rules apply only to its notice and info pages. */
-.public-demo-banner[hidden],.public-github-link[hidden] { display:none; }
+.public-demo-banner[hidden],.public-demo-banner.slim[hidden],.public-github-link[hidden] { display:none !important; }
 .direct-handoff { margin:10px 0 6px; }
 .direct-workspace { display:grid; grid-template-columns:minmax(320px,420px) minmax(0,1fr); gap:22px; align-items:start; }
 .direct-panel { padding:22px 24px; }

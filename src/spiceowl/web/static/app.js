@@ -61,6 +61,8 @@ let hostLiveState = {
   hostSignature: '',
   observedAt: null,
   summary: null,
+  mySimulations: [],
+  licenses: null,
   byId: new Map(),
   error: null,
 };
@@ -2200,20 +2202,55 @@ function recomputeHostLiveSummary() {
     available_memory_bytes: reachable.reduce((acc, e) => acc + (Number(e.resources?.memory_available_bytes) || 0), 0),
     active_simulations: reachable.reduce((acc, e) => acc + (Number(e.simulations?.active_count) || 0), 0),
     my_active_simulations: reachable.reduce((acc, e) => acc + (Number(e.simulations?.my_active_count) || 0), 0),
+    my_active_eda_tools: reachable.reduce((acc, e) => acc + (Number(e.simulations?.my_eda_tool_count) || 0), 0),
     active_eda_tools: reachable.reduce((acc, e) => acc + (Number(e.simulations?.eda_tool_count) || 0), 0),
     managed_active_runs: entries.reduce((acc, e) => acc + (e.managed_runs || []).filter(r => r.active).length, 0),
   };
+  const mySims = [];
+  for (const e of entries) {
+    for (const mr of (e.managed_runs || [])) {
+      if (mr.active) {
+        mySims.push({
+          source: 'managed',
+          host_id: e.host_id,
+          run_id: mr.run_id,
+          tool: mr.simulator || 'spectre',
+          state: mr.state || 'running',
+          cpu_percent: null,
+          rss_bytes: null,
+          elapsed: '',
+        });
+      }
+    }
+    for (const p of (e.simulations?.processes || [])) {
+      if (p.is_me && p.category === 'simulation') {
+        mySims.push({
+          source: 'remote',
+          host_id: e.host_id,
+          pid: p.pid,
+          tool: p.tool,
+          state: 'running',
+          cpu_percent: p.cpu_percent,
+          rss_bytes: p.rss_bytes,
+          elapsed: p.elapsed,
+        });
+      }
+    }
+  }
+  mySims.sort((a, b) => (a.source === 'managed' ? 0 : 1) - (b.source === 'managed' ? 0 : 1) || (b.cpu_percent || 0) - (a.cpu_percent || 0));
+  hostLiveState.mySimulations = mySims;
 }
 
 async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
   if (isPublicDemo() || hostLiveState.loading) return null;
-  const sig = state.hosts.map(h => h.host_id).sort().join(',');
   if (!hostIds && !state.hosts.length) {
     hostLiveState.loaded = true;
     hostLiveState.loadedAt = Date.now();
     hostLiveState.hostSignature = '';
     hostLiveState.byId = new Map();
     hostLiveState.summary = null;
+    hostLiveState.mySimulations = [];
+    hostLiveState.licenses = null;
     hostLiveState.error = null;
     return null;
   }
@@ -2231,6 +2268,9 @@ async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
     for (const item of (data.hosts || [])) {
       hostLiveState.byId.set(item.host_id, item);
     }
+    if (data.licenses) {
+      hostLiveState.licenses = data.licenses;
+    }
     if (Array.isArray(data.registry_hosts)) {
       state.hosts = data.registry_hosts;
       if ($('#host-count')) $('#host-count').textContent = state.hosts.length;
@@ -2242,7 +2282,7 @@ async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
     recomputeHostLiveSummary();
     if (!silent) {
       const okCnt = (data.hosts || []).filter(h => h.ok).length;
-      toast(`已刷新 ${okCnt}/${(data.hosts || []).length} 台服务器的实时资源与运行中仿真。`);
+      toast(`已刷新 ${okCnt}/${(data.hosts || []).length} 台服务器的实时资源、仿真与 License 状态。`);
     }
     return data;
   } catch (error) {
@@ -2253,6 +2293,85 @@ async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
     hostLiveState.loading = false;
     if (location.hash === '#hosts') render();
   }
+}
+
+function renderMySimulationsStrip() {
+  const mySims = hostLiveState.mySimulations || [];
+  const s = hostLiveState.summary;
+  const anyUser = [...hostLiveState.byId.values()].map(v => v.username).find(Boolean) || '';
+  const hasMySims = mySims.length > 0;
+  const hostSet = new Set(mySims.map(m => m.host_id));
+  const totalCores = mySims.reduce((acc, m) => acc + (Number.isFinite(m.cpu_percent) ? m.cpu_percent / 100 : 0), 0);
+  const totalRss = mySims.reduce((acc, m) => acc + (Number.isFinite(m.rss_bytes) ? m.rss_bytes : 0), 0);
+  const myEdaTools = s?.my_active_eda_tools || 0;
+
+  if (!hostLiveState.loaded && hostLiveState.loading) {
+    return `<section class="pool-my-sims-strip"><div class="pool-my-sims-head"><h2>👤 我的仿真</h2><span class="subtle-note">正在检索你在各台服务器上的运行中仿真…</span></div></section>`;
+  }
+
+  if (!hasMySims) {
+    return `
+      <section class="pool-my-sims-strip">
+        <div class="pool-my-sims-head">
+          <h2>👤 我的仿真 ${anyUser ? `<span class="pool-my-sims-badge">${escape(anyUser)}</span>` : ''}</h2>
+          <span class="subtle-note">当前暂无运行中的仿真${myEdaTools ? `（另有 ${myEdaTools} 个我的 EDA 工具会话）` : ''} · 仿真启动后会自动高亮资源条并将对应服务器置顶</span>
+        </div>
+      </section>`;
+  }
+
+  const chips = mySims.map(item => {
+    if (item.source === 'managed') {
+      return `<div class="pool-my-sim-chip"><strong>${escape(item.host_id)}</strong><code>${escape(item.tool)}</code><span>${escape(item.run_id)}</span>${chip(item.state, 'blue')}<button type="button" class="button secondary small" data-action="host-open-run" data-id="${escape(item.run_id)}">盯守 →</button></div>`;
+    }
+    return `<div class="pool-my-sim-chip"><strong>${escape(item.host_id)}</strong><code>${escape(item.tool)}</code><small>${escape(formatCpuWithCores(item.cpu_percent))} · ${escape(formatBytesHuman(item.rss_bytes))} · ${escape(item.elapsed)}</small></div>`;
+  }).join('');
+
+  return `
+    <section class="pool-my-sims-strip active">
+      <div class="pool-my-sims-head">
+        <h2>👤 我的运行中仿真 <span class="pool-my-sims-badge">${mySims.length} 个 · 分布于 ${hostSet.size} 台服务器</span></h2>
+        <div class="pool-bar-legend">
+          <span><i class="pool-legend-dot me"></i> 紫色条 = 我的仿真占用（共 ${totalCores.toFixed(1)} 核 · ${escape(formatBytesHuman(totalRss))}）</span>
+          <span><i class="pool-legend-dot other"></i> 其他颜色 = 服务器其余占用</span>
+        </div>
+      </div>
+      <div class="pool-my-sims-list">${chips}</div>
+    </section>`;
+}
+
+function renderLicenseBar() {
+  const lic = hostLiveState.licenses;
+  if (!lic && hostLiveState.loading) {
+    return `<section class="pool-license-bar"><div class="pool-license-head"><strong>🔑 SPICE 仿真 License 余量</strong><span class="subtle-note">正在自动检测 FlexLM SPICE License 服务…</span></div></section>`;
+  }
+  if (!lic) return '';
+  if (!lic.available) {
+    const msg = lic.status === 'no_lmstat'
+      ? '未在远端 PATH 中检测到 FlexLM lmstat（如使用开源 ngspice 无需商业 License）'
+      : lic.status === 'no_specs'
+      ? '未在远端环境或 rc 中发现 License 服务器配置'
+      : '未能连上 FlexLM License 服务器（稍后点击刷新重试）';
+    return `<section class="pool-license-bar"><div class="pool-license-head"><strong>🔑 SPICE 仿真 License 余量</strong><span class="subtle-note">${escape(msg)}</span></div></section>`;
+  }
+
+  const pillClass = f => (f.used_percent >= 90 ? 'high' : f.used_percent >= 70 ? 'warn' : '');
+  const renderPill = f => {
+    const tip = (f.servers || []).map(sv => `${sv.spec}: ${sv.in_use}/${sv.issued}`).join(' | ');
+    return `<div class="pool-lic-pill ${pillClass(f)}" title="${escape(tip || f.feature)}"><strong>${escape(f.label)}</strong><span class="lic-count">${f.in_use}/${f.issued}</span><span class="lic-avail">余 ${f.available}</span></div>`;
+  };
+  const primary = lic.features || [];
+  const shownKeys = new Set(primary.map(f => f.label));
+  const extraActive = (lic.all_active_features || []).filter(f => !shownKeys.has(f.label));
+
+  return `
+    <section class="pool-license-bar">
+      <div class="pool-license-head">
+        <strong>🔑 SPICE 仿真 License 余量</strong>
+        <span class="subtle-note">已检测 ${lic.servers_responsive} 台 License 服务 · 格式：已用/总数 · 剩余可用（悬停看分服明细）</span>
+      </div>
+      <div class="pool-lic-grid">${primary.map(renderPill).join('') || '<span class="subtle-note">当前未检测到 SPICE 仿真相关 License 特征</span>'}</div>
+      ${extraActive.length ? `<details class="home-advanced"><summary>展开其余 ${extraActive.length} 项在用 EDA License（Virtuoso / 数字后端等）</summary><div class="pool-lic-grid" style="margin-top:8px">${extraActive.map(renderPill).join('')}</div></details>` : ''}
+    </section>`;
 }
 
 function renderHostLiveCard(host) {
@@ -2269,6 +2388,14 @@ function renderHostLiveCard(host) {
   const memPct = (memUsed !== null && memTotal > 0) ? Math.max(0, Math.min(100, (memUsed / memTotal) * 100)) : null;
   const diskAvail = Number.isFinite(res.home_disk_available_bytes) ? res.home_disk_available_bytes : null;
 
+  const myCpuPct = Number.isFinite(res.my_sim_cpu_percent) ? Math.max(0, Math.min(cpuPct ?? 100, res.my_sim_cpu_percent)) : 0;
+  const myCpuCores = Number.isFinite(res.my_sim_cpu_cores) ? res.my_sim_cpu_cores : 0;
+  const otherCpuPct = cpuPct !== null ? Math.max(0, cpuPct - myCpuPct) : 0;
+
+  const myMemBytes = Number.isFinite(res.my_sim_memory_bytes) ? res.my_sim_memory_bytes : 0;
+  const myMemPct = Number.isFinite(res.my_sim_memory_percent) ? Math.max(0, Math.min(memPct ?? 100, res.my_sim_memory_percent)) : 0;
+  const otherMemPct = memPct !== null ? Math.max(0, memPct - myMemPct) : 0;
+
   const sims = live?.simulations || null;
   const simCount = sims ? (sims.active_count || 0) : 0;
   const mySimCount = sims ? (sims.my_active_count || 0) : 0;
@@ -2276,6 +2403,7 @@ function renderHostLiveCard(host) {
   const processes = sims?.processes || [];
   const managedRuns = live?.managed_runs || [];
   const activeManagedRuns = managedRuns.filter(r => r.active);
+  const hasMySim = mySimCount > 0 || activeManagedRuns.length > 0;
 
   const level = live ? live.load_level : (hostLiveState.loading ? 'moderate' : 'idle');
   const levelBadge = !live && hostLiveState.loading
@@ -2335,11 +2463,18 @@ function renderHostLiveCard(host) {
   const obsStamp = live?.observed_at || host.last_resources?.observed_at || host.last_probe?.observed_at || null;
   const obsTime = obsStamp && Number.isFinite(Date.parse(obsStamp)) ? new Date(obsStamp).toLocaleTimeString() : '尚未采样';
 
+  const myCpuNote = myCpuPct > 0 || myCpuCores > 0
+    ? ` <span class="pool-me-stat">· 我占 ${myCpuPct.toFixed(1)}% (${myCpuCores.toFixed(1)}核)</span>`
+    : '';
+  const myMemNote = myMemBytes > 0
+    ? ` <span class="pool-me-stat">· 我占 ${escape(formatBytesHuman(myMemBytes))}</span>`
+    : '';
+
   return `
-    <article class="pool-live-card level-${escape(level)}">
+    <article class="pool-live-card level-${escape(level)} ${hasMySim ? 'has-my-sim' : ''}">
       <div class="pool-live-head">
         <div class="pool-live-title">
-          <h3>${escape(host.host_id)} ${levelBadge}</h3>
+          <h3>${escape(host.host_id)} ${levelBadge} ${hasMySim ? `<span class="pool-my-sims-badge">👤 我的仿真 ×${mySimCount + activeManagedRuns.length}</span>` : ''}</h3>
           <small>${escape(host.label)}</small>
         </div>
         <button type="button" class="button secondary small" data-action="host-live-refresh-one" data-id="${escape(host.host_id)}" ${hostLiveState.loading ? 'disabled' : ''}>刷新</button>
@@ -2348,16 +2483,16 @@ function renderHostLiveCard(host) {
         <div class="pool-meter">
           <div class="pool-meter-top">
             <strong>CPU 占用</strong>
-            <span>${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : '—'}${cpuCount !== null ? ` · ${cpuCount} 核` : ''} · Load ${load1} / ${load5}</span>
+            <span>${cpuPct !== null ? `${cpuPct.toFixed(1)}%` : '—'}${cpuCount !== null ? ` · ${cpuCount} 核` : ''}${myCpuNote} · Load ${load1} / ${load5}</span>
           </div>
-          <div class="pool-bar"><i class="${barClass(cpuPct)}" style="width:${cpuPct !== null ? cpuPct.toFixed(1) : 0}%"></i></div>
+          <div class="pool-bar" title="${myCpuPct > 0 ? `紫色：我的仿真 ${myCpuPct.toFixed(1)}% | 其余占用 ${otherCpuPct.toFixed(1)}%` : ''}">${myCpuPct > 0 ? `<i class="seg-me" style="width:${myCpuPct.toFixed(1)}%"></i>` : ''}<i class="${barClass(cpuPct)}" style="width:${otherCpuPct.toFixed(1)}%"></i></div>
         </div>
         <div class="pool-meter">
           <div class="pool-meter-top">
             <strong>内存占用</strong>
-            <span>${memUsed !== null && memTotal !== null ? `${formatBytesHuman(memUsed)} / ${formatBytesHuman(memTotal)}（可用 ${formatBytesHuman(memAvail)}）` : '—'}</span>
+            <span>${memUsed !== null && memTotal !== null ? `${formatBytesHuman(memUsed)} / ${formatBytesHuman(memTotal)}（可用 ${formatBytesHuman(memAvail)}）` : '—'}${myMemNote}</span>
           </div>
-          <div class="pool-bar"><i class="${barClass(memPct)}" style="width:${memPct !== null ? memPct.toFixed(1) : 0}%"></i></div>
+          <div class="pool-bar" title="${myMemPct > 0 ? `紫色：我的仿真 ${myMemPct.toFixed(1)}% | 其余占用 ${otherMemPct.toFixed(1)}%` : ''}">${myMemPct > 0 ? `<i class="seg-me" style="width:${myMemPct.toFixed(1)}%"></i>` : ''}<i class="${barClass(memPct)}" style="width:${otherMemPct.toFixed(1)}%"></i></div>
         </div>
         <div class="pool-disk-row">
           <span>主目录可用磁盘</span>
@@ -2384,7 +2519,7 @@ function hosts() {
   let html = heading(
     'SERVER POOL & LIVE SIMULATIONS',
     '服务器池资源与运行中仿真',
-    '实时展示首页已连接的所有服务器的 CPU、内存、磁盘占用，以及当前正在运行的仿真进程与任务。',
+    '实时展示首页已连接的所有服务器的 CPU、内存、磁盘占用，以及当前正在运行的仿真进程与 FlexLM License 余量。',
     `<div class="host-page-actions"><button type="button" class="button primary" data-action="host-live-refresh" ${hostLiveState.loading || !state.hosts.length ? 'disabled' : ''}>${hostLiveState.loading ? '正在采样全部服务器…' : '刷新全部资源与仿真'}</button><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 管理 / 新增服务器 ↗</button></div>`
   );
 
@@ -2421,7 +2556,29 @@ function hosts() {
           <small>${s ? `${s.my_active_simulations ? `我的 ${s.my_active_simulations} 个 · ` : ''}${s.active_eda_tools} 个 EDA 工具 · ${s.managed_active_runs} 个托管任务` : '统计 Spectre / ngspice 等'}</small>
         </div>
       </div>`;
-    html += `<div class="pool-live-grid">${state.hosts.map(renderHostLiveCard).join('')}</div>`;
+
+    html += renderMySimulationsStrip();
+    html += renderLicenseBar();
+
+    // Automatically pin servers running the current user's simulations to the very front!
+    const sortedHosts = state.hosts
+      .map((host, idx) => {
+        const live = hostLiveState.byId.get(host.host_id);
+        const mySims = (live?.simulations?.my_active_count || 0) + (live?.managed_runs || []).filter(r => r.active).length;
+        const myTools = live?.simulations?.my_eda_tool_count || 0;
+        const myCpu = live?.simulations?.my_sim_cpu_percent || 0;
+        return {host, idx, mySims, myTools, myCpu};
+      })
+      .sort((a, b) =>
+        (b.mySims > 0 ? 1 : 0) - (a.mySims > 0 ? 1 : 0)
+        || b.mySims - a.mySims
+        || b.myCpu - a.myCpu
+        || (b.myTools > 0 ? 1 : 0) - (a.myTools > 0 ? 1 : 0)
+        || a.idx - b.idx
+      )
+      .map(item => item.host);
+
+    html += `<div class="pool-live-grid">${sortedHosts.map(renderHostLiveCard).join('')}</div>`;
   }
 
   return html;

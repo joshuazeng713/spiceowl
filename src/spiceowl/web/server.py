@@ -1071,10 +1071,10 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 from spiceowl.host_activity import inspect_pool_live_status
                 body = self.body()
                 if not body:
-                    return self.reply(inspect_pool_live_status(controller.hosts, direct_manager))
+                    return self.reply(inspect_pool_live_status(controller.hosts, direct_manager, include_licenses=True))
                 if set(body) != {"host_ids"} or not isinstance(body["host_ids"], list):
                     raise DomainError("Live status takes an empty object or exactly a host_ids list.")
-                return self.reply(inspect_pool_live_status(controller.hosts, direct_manager, host_ids=body["host_ids"]))
+                return self.reply(inspect_pool_live_status(controller.hosts, direct_manager, host_ids=body["host_ids"], include_licenses=False))
             if self.command == "POST" and path == "/api/placement/recommend":
                 body = self.body()
                 if "host_ids" in body:

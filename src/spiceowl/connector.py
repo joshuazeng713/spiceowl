@@ -21,6 +21,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 from urllib.parse import urlsplit
 import urllib.request
@@ -108,9 +109,19 @@ def start_connector_background(
             env=env,
             **kwargs,
         )
+    ready = False
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if connector_health(port, timeout=0.5)["running"]:
+            ready = True
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.2)
     return {
         "started": True,
         "already_running": False,
+        "ready": ready,
         "pid": proc.pid,
         "port": int(port),
         "url": f"http://127.0.0.1:{int(port)}",
@@ -162,7 +173,10 @@ def _install_macos(
     launcher_script = "\n".join([
         "#!/bin/sh",
         f'export PYTHONPATH="{src_root}${{PYTHONPATH:+:$PYTHONPATH}}"',
-        'URI="${1:-spiceowl://start}"',
+        'case "${1:-}" in',
+        '  spiceowl://*) URI="$1" ;;',
+        '  *) URI="spiceowl://start" ;;',
+        'esac',
         f'exec "{python_bin}" -m spiceowl --data-dir "{data_dir}" connector handle-uri "$URI" --port {int(port)}',
         "",
     ])

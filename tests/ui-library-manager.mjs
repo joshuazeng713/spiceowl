@@ -36,6 +36,7 @@ const sandbox = {
     querySelectorAll: () => [],
   },
   fetch: async () => { throw new Error('unexpected fetch'); },
+  EventSource: class { addEventListener() {} close() {} },
 };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
@@ -54,6 +55,10 @@ vm.runInContext(`(async () => {\n${body}\nglobalThis.__exports = {
   renderCodexActivity,
   renderCleanDirectTimeline,
   codexApprovalCard,
+  applyAgentUiPatch,
+  getDirectDraft: () => directDraft,
+  getBatchDraft: () => batchDraft,
+  getSimSource: () => simSourceState,
   renderMarkdownHtml,
   stripSimAgentContextEnvelope,
   stripRnlCommentsForAgent,
@@ -192,9 +197,77 @@ const qsRecHtml = ex.quickstartPage();
 assert(qsRecHtml.includes('上次会话中断待解锁'), 'Page 1 must display clear recovery status badge');
 assert(qsRecHtml.includes('data-action="codex-inspect-recovery"'), 'Page 1 must offer inline recovery unlock action');
 assert(!qsRecHtml.includes('data-action="home-connect-codex"'), 'Page 1 must not show broken connect button while recovery_required');
+
+// 4d. Global [hidden] rule exists, live thinking/completed indicators render, and AI UI patches update form & schematic live
+assert.match(css, /\[hidden\]\s*\{\s*display\s*:\s*none\s*!important/, 'Global [hidden] rule must override button display');
 ex.setCodex(c => {
-  c.status = {connected: true, state: 'complete', thread_id: 'th-1', recovery_required: false};
+  c.status = {connected: true, state: 'running', thread_id: 'th-1', turn_id: 'turn-2', recovery_required: false};
+  c.turnStartedAt = Date.now() - 2300;
 });
+const thinkingHtml = ex.renderCleanDirectTimeline([{id: 'u1', type: 'user', text: '帮我找网表', status: 'accepted'}]);
+assert(thinkingHtml.includes('AI 正在思考中…'), 'Active turn must render live thinking status');
+assert(thinkingHtml.includes('id="sim-ai-elapsed"'), 'Active turn must render live elapsed timer');
+
+ex.setCodex(c => {
+  c.status = {connected: true, state: 'complete', thread_id: 'th-1', turn_id: 'turn-2', recovery_required: false};
+  c.turnStartedAt = null;
+  c.lastTurnDurationMs = 3400;
+});
+const doneHtml = ex.renderCleanDirectTimeline([
+  {id: 'u1', type: 'user', text: '帮我找网表', status: 'accepted'},
+  {id: 'a1', type: 'assistant', text: '已找到并打开。', status: 'completed', turnStatus: 'completed', durationMs: 3400},
+]);
+assert(doneHtml.includes('✓ 已完成'), 'Completed turn must render subtle completion indicator');
+assert(doneHtml.includes('3.4 秒'), 'Completed turn must render duration');
+
+const appliedOpen = ex.applyAgentUiPatch({
+  revision: 1,
+  kind: 'library_open',
+  payload: {
+    host_id: 'sim-node-a',
+    mode: 'schematic',
+    payload: {
+      ssh_target: 'sim-node-a',
+      lib_name: 'research4',
+      cell_name: 'tb_const_gain_amplifier',
+      view_name: 'schematic',
+      file_name: 'tb_const_gain_amplifier.scs',
+      remote_path: '/work/research4/tb_const_gain_amplifier/schematic',
+      text: 'simulator lang=spectre\nR0 (a 0) resistor r=1k\n',
+      support_files: {},
+      maestro_applied: true,
+      maestro_config: {view_name: 'maestro', analyses: [{type: 'tran', stop: '100n'}], variables: {}, corners: [], model_files: []},
+      rnl_applied: true,
+      rnl_stats: {applied: true, cells: 1, placed: 5, wires: 8, ports: 2, labels: 3},
+    },
+  },
+});
+assert.equal(appliedOpen, true);
+assert.equal(ex.getSimSource().cellName, 'tb_const_gain_amplifier');
+assert.equal(ex.getSimSource().maestroApplied, true);
+assert(ex.getDirectDraft().netlist_text.includes('R0 (a 0)'));
+
+const appliedCfg = ex.applyAgentUiPatch({
+  revision: 2,
+  kind: 'ui_configure',
+  payload: {
+    host_id: 'sim-node-a',
+    cpus: 16,
+    memory_gib: 32,
+    simulator: 'spectre',
+    backend: 'lsf',
+    scheduler: {queue: 'analog_fast', exclusive: true},
+    recovery_policy: {enabled: true, max_memory_gib: 128},
+    batch: {kind: 'pvt', corners: ['tt', 'ss', 'ff'], max_concurrency: 8},
+  },
+});
+assert.equal(appliedCfg, true);
+assert.equal(ex.getDirectDraft().cpus, 16);
+assert.equal(ex.getDirectDraft().memory_gib, 32);
+assert.equal(ex.getDirectDraft().backend, 'lsf');
+assert.equal(ex.getDirectDraft().queue, 'analog_fast');
+assert.equal(ex.getDirectDraft().rec_enabled, true);
+assert.equal(ex.getBatchDraft().max_concurrency, 8);
 
 // 5. When invoked by CircuitGit, Page 3 directly reuses CircuitGit entry AND CircuitGit Agent channel
 const applied = ex.applyCircuitGitEntry({

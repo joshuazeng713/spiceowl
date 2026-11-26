@@ -6,6 +6,7 @@ from importlib.resources import files
 import json
 import re
 import secrets
+import threading
 import time
 from urllib.parse import parse_qs, urlsplit
 
@@ -141,6 +142,30 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
     batch_manager = DirectBatchManager(controller.store.directory, direct_manager)
     handoff_manager = WatchHandoffManager(controller.store.directory)
     from spiceowl.codex_bridge import CodexBridge
+    agent_ui_lock = threading.Lock()
+    agent_ui_state: dict[str, object] = {"revision": 0, "patches": []}
+
+    def record_ui_patch(kind: str, payload: dict) -> int:
+        with agent_ui_lock:
+            rev = int(agent_ui_state["revision"]) + 1
+            agent_ui_state["revision"] = rev
+            entry = {"revision": rev, "kind": kind, "payload": payload}
+            patches = list(agent_ui_state["patches"])
+            patches.append(entry)
+            agent_ui_state["patches"] = patches[-32:]
+        bridge_obj = getattr(controller, "codex", None)
+        if bridge_obj is not None and hasattr(bridge_obj, "emit_ui_patch"):
+            meta = {"revision": rev, "kind": kind}
+            if kind == "ui_configure" and isinstance(payload, dict):
+                meta["changed_fields"] = sorted(payload.keys())[:32]
+            elif kind == "library_open" and isinstance(payload, dict):
+                p = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+                meta["host_id"] = payload.get("host_id")
+                meta["file_name"] = p.get("file_name")
+                meta["cell_name"] = p.get("cell_name")
+            bridge_obj.emit_ui_patch(meta)
+        return rev
+
     definitions, dispatcher = [], None
     if controller.agent_mode == 'standalone':
         from spiceowl.standalone_agent import build_standalone_dispatcher
@@ -148,7 +173,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             pdk_lut_path=pdk_lut_path, circuitgit_client_config=circuitgit_client_config,
             circuitgit_sdk_path=circuitgit_sdk_path,
             direct_manager=direct_manager if enable_direct_exec else None,
-            handoff_manager=handoff_manager)
+            handoff_manager=handoff_manager,
+            ui_patch_sink=record_ui_patch, ssh_dir=ssh_dir)
         definitions = [{key: row[key] for key in ('name', 'description', 'inputSchema')}
                        for row in dispatcher.definitions()]
     controller.codex = CodexBridge(controller.store.directory / 'codex', mode=controller.agent_mode,
@@ -500,6 +526,22 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     if set(query) != {'approval_id'} or len(query['approval_id']) != 1:
                         raise DomainError('Select one exact pending approval.')
                     return self.reply(controller.codex.approval_details(query['approval_id'][0]))
+                if self.command == 'GET' and action == 'ui-patches':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    if set(query) - {'after'}:
+                        raise DomainError('ui-patches accepts only optional after cursor.')
+                    raw_after = (query.get('after') or ['0'])[0]
+                    if not raw_after.isdigit() or len(raw_after) > 12:
+                        raise DomainError('Invalid ui-patches cursor.')
+                    after_rev = int(raw_after)
+                    with agent_ui_lock:
+                        cur_rev = int(agent_ui_state["revision"])
+                        selected = [p for p in agent_ui_state["patches"] if p["revision"] > after_rev]
+                    return self.reply({
+                        "schema": "spiceowl.codex-ui-patches.v1",
+                        "revision": cur_rev,
+                        "patches": selected,
+                    })
                 if url.query: raise DomainError('Codex client operations do not accept extra query arguments.')
                 if self.command == 'GET' and action == 'status':
                     return self.reply(controller.codex.status())

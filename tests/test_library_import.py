@@ -19,11 +19,13 @@ from spiceowl.domain.common import DomainError
 from spiceowl.onboarding.ssh_import import (
     BROWSE_SCHEMA,
     CIRCUITGIT_ENTRY_SCHEMA,
+    FIND_SCHEMA,
     IMPORT_SCHEMA,
     SCHEMATIC_EXPORT_SCHEMA,
     browse_remote_netlists,
     export_remote_schematic,
     fetch_remote_netlist,
+    find_remote_library_targets,
     is_circuit_filename,
     is_sensitive_name,
     validate_circuitgit_entry,
@@ -586,6 +588,67 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
             finally:
                 srv.shutdown()
                 srv.server_close()
+                ctrl.close()
+
+    def test_find_remote_library_targets_and_agent_ui_configure_tools(self):
+        from spiceowl.standalone_agent import build_standalone_dispatcher
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            proj = root / "2026_pipeline"
+            lib = proj / "research4"
+            sch = lib / "tb_const_gain_amplifier" / "schematic"
+            maestro = lib / "tb_const_gain_amplifier" / "maestro"
+            sch.mkdir(parents=True)
+            maestro.mkdir(parents=True)
+            (proj / "cds.lib").write_text("DEFINE research4 ./research4\n", encoding="utf-8")
+            (sch / "sch.oa").write_bytes(b"OA")
+            (maestro / "maestro.sdb").write_text("<setupdb/>", encoding="utf-8")
+
+            def local_runner(argv, *, input=b"", capture_output=True, timeout=25):
+                return subprocess.run(["/bin/sh", "-s"], input=input, capture_output=capture_output, timeout=timeout)
+
+            res = find_remote_library_targets(
+                "sim-node-a",
+                None,
+                query="2026_pipeline research4 tb_constant_gain_amplifier",
+                path=str(root),
+                runner=local_runner,
+            )
+            self.assertEqual(res["schema"], FIND_SCHEMA)
+            self.assertGreaterEqual(len(res["matches"]), 1)
+            top = res["matches"][0]
+            self.assertEqual(top["kind"], "schematic")
+            self.assertEqual(top["lib_name"], "research4")
+            self.assertEqual(top["cell_name"], "tb_const_gain_amplifier")
+            self.assertEqual(top["maestro_views"], ["maestro"])
+
+            # Verify standalone agent tools have read policy (no approval popup) and emit UI patches
+            ctrl = Controller(root / "state", agent_mode="standalone")
+            try:
+                ctrl.hosts.register({
+                    "schema": "spiceowl.host.v1",
+                    "host_id": "sim-node-a",
+                    "label": "Sim Node A",
+                    "ssh_target": "sim-node-a",
+                    "expected_host": "sim-node-a",
+                    "expected_user": "researcher",
+                    "tools": [{"kind": "spectre", "executable": "/opt/cadence/bin/spectre"}],
+                })
+                emitted = []
+                disp = build_standalone_dispatcher(
+                    ctrl,
+                    ui_patch_sink=lambda kind, payload: (emitted.append((kind, payload)), len(emitted))[1],
+                )
+                self.assertEqual(disp.policy("spiceowl_library_browse", {"query": "amp"}), "read")
+                self.assertEqual(disp.policy("spiceowl_library_open", {"mode": "schematic", "remote_path": "/a/b"}), "read")
+                self.assertEqual(disp.policy("spiceowl_ui_configure", {"cpus": 8}), "read")
+                out = disp.dispatch("spiceowl_ui_configure", {"host_id": "sim-node-a", "cpus": 8, "memory_gib": 16})
+                self.assertTrue(out["applied"])
+                self.assertEqual(out["revision"], 1)
+                self.assertEqual(emitted[0][0], "ui_configure")
+                self.assertEqual(emitted[0][1]["cpus"], 8)
+            finally:
                 ctrl.close()
 
 

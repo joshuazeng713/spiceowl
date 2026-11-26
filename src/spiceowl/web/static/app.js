@@ -19,6 +19,8 @@ const codexPanelState = {loaded: false, loading: false, busy: false, interruptin
   stream: null, streamState: 'idle', cursor: 0, statusCursor: 0, threads: [], selectedThread: null,
   approvals: new Map(), profile: '', model: '', reasoningEffort: '', draft: '', pending: null, pendingLoaded: false,
   models: [], defaultModel: '', modelsLoaded: false, authAccount: null, settingsOpen: false,
+  turnStartedAt: null, turnTimer: null, lastTurnStatus: '', lastTurnDurationMs: null,
+  uiPatchRevision: 0, uiPatchSyncing: false,
   historyTruncated: false, recoverySnapshot: null, recoveryConfirmed: false, evalReport: null, evalBusy: false};
 const CODEX_PENDING_KEY = 'spiceowl.codex-pending';
 const isStandaloneAgent = () => !isPublicDemo() && state.agent_channel?.mode === 'standalone';
@@ -1452,6 +1454,9 @@ async function sendPromptToSimAgent(promptText) {
   if (!userText) return;
   codexPanelState.busy = true;
   codexPanelState.error = null;
+  codexPanelState.turnStartedAt = Date.now();
+  codexPanelState.lastTurnStatus = 'running';
+  codexPanelState.lastTurnDurationMs = null;
   renderCodexActivity();
   try {
     if (state.hosts.length && (!hostLiveState.loaded || Date.now() - hostLiveState.loadedAt > 60000) && !hostLiveState.loading) {
@@ -3752,6 +3757,9 @@ async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
     return data;
   } catch (error) {
     hostLiveState.error = error.message;
+    hostLiveState.loaded = true;
+    hostLiveState.loadedAt = Date.now();
+    hostLiveState.hostSignature = state.hosts.map(h => h.host_id).sort().join(',');
     if (!silent) toast(error.message);
     return null;
   } finally {
@@ -4252,6 +4260,10 @@ function closeCodexEvents() {
   codexPanelState.stream?.close();
   codexPanelState.stream = null;
   codexPanelState.streamState = 'idle';
+  if (codexPanelState.turnTimer) {
+    if (typeof clearInterval === 'function') clearInterval(codexPanelState.turnTimer);
+    codexPanelState.turnTimer = null;
+  }
 }
 
 function openCodexEvents() {
@@ -4280,6 +4292,201 @@ function openCodexEvents() {
     codexPanelState.streamState = 'reconnecting';
     renderCodexActivity();
   };
+}
+
+function formatTurnSeconds(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  return `${(ms / 1000).toFixed(1)} 秒`;
+}
+
+function friendlyCodexToolName(name) {
+  const map = {
+    spiceowl_library_browse: '查找/浏览远端电路库',
+    spiceowl_library_open: '打开网表 / 导出原理图',
+    spiceowl_ui_configure: '更新网页仿真配置',
+    spiceowl_list_hosts: '读取服务器列表',
+    spiceowl_recommend_hosts: '评估最优服务器',
+    spiceowl_direct_read: '读取仿真记录与波形',
+    spiceowl_direct_control: '执行仿真控制',
+    spiceowl_inspect_agent_source: '解析电路网表',
+    spiceowl_netlist_requirements: '分析器件与模型依赖',
+    spiceowl_diagnose_spectre: '诊断仿真日志',
+  };
+  return map[name] || name || '工具';
+}
+
+function syncCodexTurnTimer() {
+  const active = codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending);
+  if (active) {
+    if (!codexPanelState.turnStartedAt) codexPanelState.turnStartedAt = Date.now();
+    if (!codexPanelState.turnTimer && typeof setInterval === 'function' && typeof clearInterval === 'function') {
+      codexPanelState.turnTimer = setInterval(() => {
+        const el = $('#sim-ai-elapsed');
+        if (el && codexPanelState.turnStartedAt) {
+          el.textContent = formatTurnSeconds(Date.now() - codexPanelState.turnStartedAt);
+        }
+        if (!(codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending))) {
+          if (typeof clearInterval === 'function') clearInterval(codexPanelState.turnTimer);
+          codexPanelState.turnTimer = null;
+        }
+      }, 250);
+    }
+  } else if (codexPanelState.turnTimer) {
+    if (typeof clearInterval === 'function') clearInterval(codexPanelState.turnTimer);
+    codexPanelState.turnTimer = null;
+  }
+}
+
+function applyAgentUiPatch(patch) {
+  if (!patch || typeof patch !== 'object') return false;
+  const rev = Number(patch.revision) || 0;
+  if (rev && rev <= codexPanelState.uiPatchRevision) return false;
+  if (rev) codexPanelState.uiPatchRevision = rev;
+  const kind = patch.kind;
+  const data = patch.payload && typeof patch.payload === 'object' ? patch.payload : {};
+  if (kind === 'library_open') {
+    const res = data.payload && typeof data.payload === 'object' ? data.payload : {};
+    const hostId = data.host_id || '';
+    const mode = data.mode || 'netlist';
+    const fileName = res.file_name || (res.cell_name ? `${res.cell_name}.scs` : 'input.scs');
+    const det = detectSimulatorFromNetlist(res.text || '', fileName);
+    simSourceState.origin = 'ssh';
+    simSourceState.sshHostId = hostId;
+    simSourceState.sshTarget = res.ssh_target || hostId;
+    simSourceState.remotePath = res.remote_path || '';
+    simSourceState.remoteDir = res.remote_dir || '';
+    simSourceState.fileName = fileName;
+    simSourceState.entryPath = fileName;
+    simSourceState.supportFiles = (res.support_files && typeof res.support_files === 'object') ? {...res.support_files} : {};
+    simSourceState.skipped = Array.isArray(res.skipped) ? res.skipped : [];
+    simSourceState.sourceCommit = '';
+    if (mode === 'schematic') {
+      simSourceState.fromSchematic = true;
+      simSourceState.libraryName = res.lib_name || '';
+      simSourceState.cellName = res.cell_name || '';
+      simSourceState.viewId = res.view_name || 'schematic';
+      simSourceState.projectName = res.cell_name || fileName.replace(/\.[^.]+$/, '');
+      simSourceState.maestroApplied = Boolean(res.maestro_applied);
+      simSourceState.maestroConfig = res.maestro_config && typeof res.maestro_config === 'object' ? res.maestro_config : null;
+      simSourceState.rnlApplied = Boolean(res.rnl_applied);
+      simSourceState.rnlStats = res.rnl_stats && typeof res.rnl_stats === 'object' ? res.rnl_stats : null;
+    } else {
+      const dirName = (res.remote_dir || '').split('/').filter(Boolean).pop() || '';
+      simSourceState.fromSchematic = false;
+      simSourceState.libraryName = '';
+      simSourceState.cellName = '';
+      simSourceState.viewId = '';
+      simSourceState.projectName = dirName || fileName.replace(/\.[^.]+$/, '') || fileName;
+      simSourceState.maestroApplied = false;
+      simSourceState.maestroConfig = null;
+      simSourceState.rnlApplied = false;
+      simSourceState.rnlStats = null;
+    }
+    directDraft.netlist_text = res.text || '';
+    directDraft.simulator = det.simulator;
+    directDraft.output_format = det.output_format;
+    if (hostId && (state.hosts || []).some(h => h.host_id === hostId)) {
+      directDraft.target_mode = 'host';
+      directDraft.host_id = hostId;
+    }
+    if (!directDraft.run_key) {
+      const base = (simSourceState.cellName || fileName.replace(/\.[^.]+$/, '') || 'sim').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 48);
+      directDraft.run_key = base || 'sim-run';
+    }
+    directState.activeTab = 'setup';
+    if (location.hash !== '#direct') location.hash = '#direct';
+    else render();
+    const label = simSourceState.fromSchematic && simSourceState.cellName
+      ? `${simSourceState.libraryName ? simSourceState.libraryName + '/' : ''}${simSourceState.cellName} (${simSourceState.viewId})`
+      : fileName;
+    toast(`✨ AI 已打开 ${label}${simSourceState.maestroApplied ? '（含 Maestro 仿真配置）' : ''}`);
+    return true;
+  }
+  if (kind === 'ui_configure') {
+    const changed = [];
+    const directScalar = [
+      'host_id', 'target_mode', 'simulator', 'backend', 'run_key',
+      'output_format', 'remote_python', 'remote_root',
+    ];
+    for (const key of directScalar) {
+      if (typeof data[key] === 'string') {
+        directDraft[key] = data[key];
+        changed.push(key);
+      }
+    }
+    if (Number.isInteger(data.cpus) && data.cpus >= 1) { directDraft.cpus = data.cpus; changed.push('cpus'); }
+    if (Number.isFinite(data.memory_gib) && data.memory_gib > 0) { directDraft.memory_gib = data.memory_gib; changed.push('memory_gib'); }
+    if (Number.isInteger(data.wall_seconds) && data.wall_seconds >= 60) { directDraft.wall_seconds = data.wall_seconds; changed.push('wall_seconds'); }
+    if (typeof data.recheck_resources === 'boolean') { directDraft.recheck_resources = data.recheck_resources; changed.push('recheck_resources'); }
+    if (typeof data.allow_collect === 'boolean') { directDraft.allow_collect = data.allow_collect; changed.push('allow_collect'); }
+    if (typeof data.netlist_text === 'string') { directDraft.netlist_text = data.netlist_text; changed.push('netlist_text'); }
+    if (typeof data.append_netlist === 'string' && data.append_netlist.trim()) {
+      directDraft.netlist_text = `${(directDraft.netlist_text || '').trimEnd()}\n\n${data.append_netlist.trim()}\n`;
+      changed.push('netlist_text');
+    }
+    if (Array.isArray(data.include_dirs)) { directDraft.include_dirs = data.include_dirs.join('\n'); changed.push('include_dirs'); }
+    if (Array.isArray(data.env_modules)) { directDraft.env_modules = data.env_modules.join(' '); changed.push('env_modules'); }
+    if (Array.isArray(data.env_scripts)) { directDraft.env_scripts = data.env_scripts.join('\n'); changed.push('env_scripts'); }
+    if (data.scheduler && typeof data.scheduler === 'object') {
+      const s = data.scheduler;
+      for (const k of ['queue', 'project', 'job_group', 'partition', 'account', 'qos']) {
+        if (typeof s[k] === 'string') directDraft[k] = s[k];
+      }
+      if (typeof s.exclusive === 'boolean') directDraft.exclusive = s.exclusive;
+      changed.push('scheduler');
+    }
+    if (data.recovery_policy && typeof data.recovery_policy === 'object') {
+      const rp = data.recovery_policy;
+      const map = {
+        enabled: 'rec_enabled', max_attempts: 'rec_max_attempts', max_memory_gib: 'rec_max_memory_gib',
+        license_backoff: 'rec_license_backoff', max_elapsed_min: 'rec_max_elapsed_min',
+        retry_license: 'rec_retry_license', retry_oom: 'rec_retry_oom',
+        oom_multiplier: 'rec_oom_multiplier', allow_relocate: 'rec_allow_relocate',
+      };
+      for (const [src, dst] of Object.entries(map)) {
+        if (rp[src] !== undefined) directDraft[dst] = rp[src];
+      }
+      changed.push('recovery_policy');
+    }
+    if (data.batch && typeof data.batch === 'object') {
+      const b = data.batch;
+      for (const k of Object.keys(batchDraft)) {
+        if (b[k] !== undefined) {
+          batchDraft[k] = Array.isArray(b[k]) ? b[k].join(', ') : b[k];
+        }
+      }
+      changed.push('batch');
+    }
+    if (typeof data.direct_tab === 'string') {
+      directState.activeTab = data.direct_tab;
+      changed.push('direct_tab');
+    }
+    if (typeof data.page === 'string' && location.hash !== `#${data.page}`) {
+      location.hash = `#${data.page}`;
+    } else {
+      render();
+    }
+    toast(`✨ AI 已更新页面配置（${changed.slice(0, 5).join('、')}${changed.length > 5 ? ' 等' : ''}）`);
+    return true;
+  }
+  return false;
+}
+
+async function syncAgentUiPatches(targetRev = 0) {
+  if (!isStandaloneAgent() || codexPanelState.uiPatchSyncing) return;
+  if (targetRev && targetRev <= codexPanelState.uiPatchRevision) return;
+  codexPanelState.uiPatchSyncing = true;
+  try {
+    const res = await api(`/api/codex/ui-patches?after=${codexPanelState.uiPatchRevision}`);
+    const list = Array.isArray(res?.patches) ? res.patches : [];
+    for (const p of list) applyAgentUiPatch(p);
+    if (Number.isSafeInteger(res?.revision) && res.revision > codexPanelState.uiPatchRevision) {
+      codexPanelState.uiPatchRevision = res.revision;
+    }
+  } catch { /* older connectors may not expose /ui-patches */ }
+  finally {
+    codexPanelState.uiPatchSyncing = false;
+  }
 }
 
 function receiveCodexEvent(event) {
@@ -4346,6 +4553,13 @@ function receiveCodexEvent(event) {
     if (approval && (liveEvent || !currentApproval)) {
       Object.assign(approval, params, {status: params.status || 'resolved', can_approve: false, can_deny: false});
     }
+  } else if (event.method === 'ui/workspace_patch') {
+    const rev = Number(params.revision) || 0;
+    if (liveEvent) {
+      void syncAgentUiPatches(rev);
+    } else if (rev > codexPanelState.uiPatchRevision) {
+      codexPanelState.uiPatchRevision = rev;
+    }
   } else if (event.method === 'bridge/interrupted') {
     const tId = params.thread_id || threadId;
     for (const approval of codexPanelState.approvals.values()) {
@@ -4362,11 +4576,32 @@ function receiveCodexEvent(event) {
       Object.assign(status, {thread_id: id, turn_id: null, state: 'ready'});
       codexThread(id); codexPanelState.selectedThread = id;
     }
-    if (event.method === 'turn/started') Object.assign(status, {thread_id: threadId, turn_id: turnId,
-      request_key: event.request_key, state: 'running'});
-    if (event.method === 'turn/completed') Object.assign(status, {state: params.turn?.status === 'completed' ? 'complete' : 'failed'});
+    if (event.method === 'turn/started') {
+      Object.assign(status, {thread_id: threadId, turn_id: turnId, request_key: event.request_key, state: 'running'});
+      if (!codexPanelState.turnStartedAt) codexPanelState.turnStartedAt = Date.now();
+      codexPanelState.lastTurnStatus = 'running';
+      codexPanelState.lastTurnDurationMs = null;
+    }
+    if (event.method === 'turn/completed') {
+      const tStatus = params.turn?.status || 'completed';
+      const dur = codexPanelState.turnStartedAt ? Math.max(0, Date.now() - codexPanelState.turnStartedAt) : null;
+      codexPanelState.turnStartedAt = null;
+      codexPanelState.lastTurnDurationMs = dur;
+      codexPanelState.lastTurnStatus = tStatus;
+      Object.assign(status, {state: tStatus === 'completed' ? 'complete' : 'failed'});
+      const lastAssistant = [...(thread?.items || [])].reverse().find(row => row.type === 'assistant');
+      if (lastAssistant) {
+        lastAssistant.status = tStatus === 'completed' ? 'completed' : 'failed';
+        lastAssistant.turnStatus = tStatus;
+        lastAssistant.durationMs = dur;
+      }
+    }
     if (event.method === 'bridge/interrupted') {
       const needRec = params.recovery_required === true;
+      const dur = codexPanelState.turnStartedAt ? Math.max(0, Date.now() - codexPanelState.turnStartedAt) : null;
+      codexPanelState.turnStartedAt = null;
+      codexPanelState.lastTurnDurationMs = dur;
+      codexPanelState.lastTurnStatus = 'interrupted';
       Object.assign(status, {
         state: needRec ? 'unknown' : 'interrupted',
         turn_id: null,
@@ -4453,8 +4688,9 @@ function codexApprovalCard(approval) {
 }
 
 function renderCleanDirectTimeline(items) {
-  if (!items.length) {
-    return '<div class="codex-chat-empty"><strong>Agent 仿真配置已就绪</strong><p>输入需求或点上方引导指令开始，右侧电路、Maestro 与服务器余量会自动同步给 AI。</p></div>';
+  const active = codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending);
+  if (!items.length && !active) {
+    return '<div class="codex-chat-empty"><strong>Agent 仿真配置已就绪</strong><p>可以直接让 AI 查找/打开远端电路库或原理图、修改右侧仿真参数，或点上方快捷指令开始。</p></div>';
   }
   const chunks = [];
   let toolBuf = [];
@@ -4463,15 +4699,18 @@ function renderCleanDirectTimeline(items) {
     const running = toolBuf.find(t => t.status === 'running');
     const failed = toolBuf.some(t => t.status === 'failed');
     const summaryLabel = running
-      ? `正在调用工具 · ${running.name || '执行中'}…`
+      ? `正在执行 · ${friendlyCodexToolName(running.name)}…`
       : failed
       ? `执行步骤（${toolBuf.length} 步 · 含异常，点击展开）`
       : `已完成 · ${toolBuf.length} 步工具调用`;
-    const stepsHtml = toolBuf.map(t => `<li class="sim-ai-step"><details><summary><span>${escape(t.name || 'Tool')}</span><small>${t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束'}</small></summary><pre>${escape(t.text || '')}</pre></details></li>`).join('');
+    const stepsHtml = toolBuf.map(t => `<li class="sim-ai-step"><details><summary><span>${escape(friendlyCodexToolName(t.name))}</span><small>${t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束'}</small></summary><pre>${escape(t.text || '')}</pre></details></li>`).join('');
     chunks.push(`<details class="sim-ai-progress"><summary>${escape(summaryLabel)}</summary><ol class="sim-ai-steps">${stepsHtml}</ol></details>`);
     toolBuf = [];
   };
-  for (const item of items) {
+  let lastAssistantHadFooter = false;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const isLast = i === items.length - 1;
     if (item.type === 'tool') {
       toolBuf.push(item);
       continue;
@@ -4480,16 +4719,48 @@ function renderCleanDirectTimeline(items) {
     if (item.type === 'user') {
       const cleanUser = stripSimAgentContextEnvelope(item.text || '');
       chunks.push(`<article class="sim-ai-msg is-user"><strong class="sim-ai-role">你${item.status === 'unconfirmed' ? ' · 发送中' : ''}</strong><div class="sim-ai-md"><p>${escape(cleanUser)}</p></div></article>`);
+      lastAssistantHadFooter = false;
     } else {
       const text = item.text || '';
       const hasNetlist = Boolean(extractNetlistCodeBlock(text));
       const bodyHtml = text
         ? renderMarkdownHtml(text)
         : '<p class="subtle-note">正在生成回答…</p>';
-      chunks.push(`<article class="sim-ai-msg is-assistant"><strong class="sim-ai-role">AI</strong><div class="sim-ai-md">${bodyHtml}</div>${hasNetlist ? `<button type="button" class="button secondary small sim-apply-code-btn" data-action="direct-apply-agent-code" data-id="${escape(item.id)}">✨ 一键填入右侧网表</button>` : ''}</article>`);
+      let footerHtml = '';
+      if (!active && (item.turnStatus || (isLast && ['complete', 'interrupted', 'failed'].includes(codexPanelState.status?.state || '')))) {
+        const st = item.turnStatus || (codexPanelState.status?.state === 'interrupted' ? 'interrupted' : codexPanelState.status?.state === 'failed' ? 'failed' : 'completed');
+        const dur = formatTurnSeconds(item.durationMs ?? (isLast ? codexPanelState.lastTurnDurationMs : null));
+        const label = st === 'interrupted' ? '⏹ 已暂停' : st === 'failed' ? '⚠ 回合异常中止' : '✓ 已完成';
+        footerHtml = `<div class="sim-ai-done-meta">${label}${dur ? ` · ${dur}` : ''}</div>`;
+        if (isLast) lastAssistantHadFooter = true;
+      }
+      chunks.push(`<article class="sim-ai-msg is-assistant"><strong class="sim-ai-role">AI</strong><div class="sim-ai-md">${bodyHtml}</div>${hasNetlist ? `<button type="button" class="button secondary small sim-apply-code-btn" data-action="direct-apply-agent-code" data-id="${escape(item.id)}">✨ 一键填入右侧网表</button>` : ''}${footerHtml}</article>`);
     }
   }
   flushTools();
+  if (active) {
+    const runningTool = [...items].reverse().find(t => t.type === 'tool' && t.status === 'running');
+    const lastItem = items.at(-1);
+    const statusLabel = codexPanelState.status?.state === 'awaiting_approval'
+      ? '等待人工批准…'
+      : runningTool
+      ? `正在执行 · ${friendlyCodexToolName(runningTool.name)}…`
+      : (lastItem?.type === 'assistant' && lastItem.text)
+      ? 'AI 正在回答中…'
+      : 'AI 正在思考中…';
+    const elapsed = formatTurnSeconds(codexPanelState.turnStartedAt ? Date.now() - codexPanelState.turnStartedAt : 0);
+    chunks.push(`<div class="sim-ai-turn-status is-thinking" role="status"><span class="sim-ai-dot" aria-hidden="true"></span><span>${escape(statusLabel)}</span><small id="sim-ai-elapsed">${escape(elapsed)}</small></div>`);
+  } else if (items.length && !lastAssistantHadFooter) {
+    const st = codexPanelState.status?.state;
+    const dur = formatTurnSeconds(codexPanelState.lastTurnDurationMs);
+    if (st === 'interrupted') {
+      chunks.push(`<div class="sim-ai-turn-status is-paused">⏹ 已暂停${dur ? ` · ${dur}` : ''}</div>`);
+    } else if (st === 'failed') {
+      chunks.push(`<div class="sim-ai-turn-status is-paused">⚠ 回合异常中止</div>`);
+    } else if (st === 'complete') {
+      chunks.push(`<div class="sim-ai-turn-status is-done">✓ 已完成${dur ? ` · ${dur}` : ''}</div>`);
+    }
+  }
   return chunks.join('');
 }
 
@@ -4553,6 +4824,7 @@ function renderCodexActivity() {
     $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
   }
   const isRunningTurn = codexActiveTurn();
+  syncCodexTurnTimer();
   if ($('#codex-stop')) {
     $('#codex-stop').hidden = !(isRunningTurn || Boolean(codexPanelState.pending));
     $('#codex-stop').disabled = Boolean(codexPanelState.interrupting);

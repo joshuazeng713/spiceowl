@@ -74,14 +74,158 @@ approve, generic HTTP, shell, publication or canonical-source edit is exported.
                 'details': details, 'automatic_approval': False, 'replayed': False}
 
 
+def _resolve_library_host(controller, host_id=None):
+    hosts = controller.hosts.list() if hasattr(controller, 'hosts') else []
+    if not hosts:
+        raise DomainError('No registered SSH hosts are available. Connect at least one EDA server first.', 'host_unavailable')
+    if host_id:
+        for h in hosts:
+            if h.get('host_id') == host_id:
+                return h
+        available = ', '.join(str(h.get('host_id')) for h in hosts[:12])
+        raise DomainError(f'Host {host_id!r} is not registered. Available hosts: {available}.', 'host_not_found')
+    verified = [h for h in hosts if (h.get('last_probe') or {}).get('identity', {}).get('verified')]
+    return verified[0] if verified else hosts[0]
+
+
+def _strip_rnl_preview(text, limit=12000):
+    lines = []
+    skip = False
+    depth = 0
+    for line in str(text or '').splitlines():
+        if not skip and line.lstrip().startswith('//') and '@RNL' in line:
+            skip = True
+            depth = line.count('{') - line.count('}')
+            if depth <= 0:
+                skip = False
+            continue
+        if skip:
+            depth += line.count('{') - line.count('}')
+            if depth <= 0:
+                skip = False
+            continue
+        lines.append(line)
+    clean = '\n'.join(lines).strip()
+    return clean[:limit] + ('\n... (truncated)' if len(clean) > limit else '')
+
+
 def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=None,
                                 circuitgit_client_config=None, circuitgit_sdk_path=None,
-                                direct_manager=None, handoff_manager=None):
+                                direct_manager=None, handoff_manager=None,
+                                ui_patch_sink=None, ssh_dir=None):
     from spiceowl.read_api import open_read_views
+    ssh_cfg = (Path(ssh_dir) / 'config') if ssh_dir else (Path.home() / '.ssh' / 'config')
+
+    def library_browse(args, **_):
+        from spiceowl.onboarding.ssh_import import browse_remote_netlists, find_remote_library_targets
+        host = _resolve_library_host(controller, args.get('host_id'))
+        ssh_target = host.get('ssh_target') or host.get('host_id')
+        ssh_hostname = host.get('ssh_hostname')
+        op = args.get('operation') or ('find' if args.get('query') else 'browse')
+        if op == 'find':
+            query = str(args.get('query') or '').strip()
+            if not query:
+                raise DomainError('operation="find" requires a non-empty query string.', 'invalid_tool_arguments')
+            res = find_remote_library_targets(
+                ssh_target,
+                ssh_cfg if ssh_cfg.is_file() else None,
+                query=query,
+                path=args.get('path') or '~',
+                max_depth=int(args.get('max_depth') or 5),
+                ssh_hostname=ssh_hostname,
+            )
+            return {'host_id': host['host_id'], **res}
+        res = browse_remote_netlists(
+            ssh_target,
+            ssh_cfg if ssh_cfg.is_file() else None,
+            path=args.get('path') or '~',
+            ssh_hostname=ssh_hostname,
+        )
+        return {'host_id': host['host_id'], **res}
+
+    def library_open(args, **_):
+        from spiceowl.onboarding.ssh_import import export_remote_schematic, fetch_remote_netlist
+        host = _resolve_library_host(controller, args.get('host_id'))
+        ssh_target = host.get('ssh_target') or host.get('host_id')
+        ssh_hostname = host.get('ssh_hostname')
+        mode = args['mode']
+        remote_path = args['remote_path']
+        if mode == 'schematic':
+            res = export_remote_schematic(
+                ssh_target,
+                ssh_cfg if ssh_cfg.is_file() else None,
+                path=remote_path,
+                include_maestro=bool(args.get('include_maestro', True)),
+                preserve_rnl=bool(args.get('preserve_rnl', True)),
+                maestro_view=args.get('maestro_view'),
+                cds_lib=args.get('cds_lib'),
+                ssh_hostname=ssh_hostname,
+            )
+        else:
+            res = fetch_remote_netlist(
+                ssh_target,
+                ssh_cfg if ssh_cfg.is_file() else None,
+                path=remote_path,
+                include_dependencies=True,
+                ssh_hostname=ssh_hostname,
+            )
+        revision = None
+        if callable(ui_patch_sink):
+            revision = ui_patch_sink('library_open', {
+                'host_id': host['host_id'],
+                'mode': mode,
+                'payload': res,
+            })
+        summary = {
+            'loaded_in_ui': revision is not None,
+            'revision': revision,
+            'host_id': host['host_id'],
+            'mode': mode,
+            'file_name': res.get('file_name'),
+            'remote_path': res.get('remote_path'),
+            'lib_name': res.get('lib_name'),
+            'cell_name': res.get('cell_name'),
+            'view_name': res.get('view_name'),
+            'bytes': len((res.get('text') or '').encode('utf-8')),
+            'support_files': sorted((res.get('support_files') or {}).keys())[:32],
+            'maestro_applied': bool(res.get('maestro_applied')),
+            'maestro_summary': (
+                {
+                    'view_name': (res.get('maestro_config') or {}).get('view_name'),
+                    'analyses': (res.get('maestro_config') or {}).get('analyses') or [],
+                    'variables': (res.get('maestro_config') or {}).get('variables') or {},
+                    'corners': [c.get('name') for c in ((res.get('maestro_config') or {}).get('corners') or []) if c.get('enabled')],
+                    'model_files_count': len((res.get('maestro_config') or {}).get('model_files') or []),
+                } if isinstance(res.get('maestro_config'), dict) else None
+            ),
+            'rnl_applied': bool(res.get('rnl_applied')),
+            'rnl_stats': res.get('rnl_stats'),
+            'warnings': res.get('warnings') or [],
+            'netlist_preview': _strip_rnl_preview(res.get('text') or ''),
+        }
+        return summary
+
+    def ui_configure(args, **_):
+        if not args:
+            raise DomainError('Provide at least one UI option to configure.', 'invalid_tool_arguments')
+        if 'host_id' in args:
+            _resolve_library_host(controller, args['host_id'])
+        revision = None
+        if callable(ui_patch_sink):
+            revision = ui_patch_sink('ui_configure', args)
+        return {
+            'applied': True,
+            'revision': revision,
+            'changed_fields': sorted(args.keys()),
+        }
+
     handlers = {
         'spiceowl_probe_host': lambda args, **_: controller.hosts.probe(args['host_id']),
         'spiceowl_scan_resources': lambda args, **_: controller.hosts.scan(args['host_ids']),
         'spiceowl_recommend_hosts': lambda args, **_: controller.hosts.recommend(args['requirements'], args['host_ids']),
+        'spiceowl_library_browse': library_browse,
+        'spiceowl_library_open': library_open,
+        'spiceowl_ui_configure': ui_configure,
     }
     policy_override = None
     if direct_manager is not None:

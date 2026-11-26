@@ -64,6 +64,12 @@ class CodexHttpTests(unittest.TestCase):
             self.assertEqual(self.request('POST', '/api/codex/interrupt', {'force': True}, csrf=True)[0], 400)
             self.assertEqual(self.request('POST', '/api/codex/interrupt', {}, csrf=True)[0], 202)
             interrupt.assert_called_once_with()
+        status, patches = self.request('GET', '/api/codex/ui-patches?after=0')
+        self.assertEqual(status, 200)
+        self.assertEqual(patches['schema'], 'spiceowl.codex-ui-patches.v1')
+        self.assertEqual(patches['revision'], 0)
+        self.assertEqual(patches['patches'], [])
+        self.assertEqual(self.request('GET', '/api/codex/ui-patches?after=-1')[0], 400)
 
     def test_sse_uses_last_event_id_and_returns_only_read_events(self):
         event = {'id': 8, 'method': 'item/agentMessage/delta', 'params': {'delta': 'hello'},

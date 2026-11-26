@@ -18,6 +18,9 @@
 body {
   margin:0
 }
+[hidden] {
+  display:none !important
+}
 button,input,select,textarea {
   font:inherit
 }
@@ -2095,6 +2098,58 @@ dialog .muted {
 .sim-ai-composer-actions { display:inline-flex; align-items:center; gap:8px; flex:none; }
 .sim-ai-stop { color:#9b372c; background:#fff5f3; border-color:#e2b8b2; font-weight:600; }
 .sim-ai-stop:hover:not(:disabled) { background:#ffe8e4; border-color:#d19289; color:#7e251c; }
+.sim-ai-turn-status {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  margin:2px 0 6px 2px;
+  padding:4px 10px;
+  border-radius:999px;
+  font-size:11.5px;
+  line-height:1.4;
+}
+.sim-ai-turn-status.is-thinking {
+  background:#eef6f8;
+  border:1px solid #cce2e8;
+  color:#1f586b;
+  font-weight:500;
+}
+.sim-ai-turn-status.is-done {
+  background:transparent;
+  border:0;
+  padding:2px 4px;
+  color:#6c7d82;
+  font-size:11px;
+}
+.sim-ai-turn-status.is-paused {
+  background:#fff8ea;
+  border:1px solid #ebd29d;
+  color:#8a5916;
+  font-size:11px;
+}
+.sim-ai-turn-status small {
+  color:inherit;
+  opacity:.82;
+  font-variant-numeric:tabular-nums;
+}
+.sim-ai-dot {
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:#227c93;
+  animation:sim-ai-pulse 1.1s ease-in-out infinite;
+  flex:none;
+}
+@keyframes sim-ai-pulse {
+  0%, 100% { opacity:.35; transform:scale(.85); }
+  50% { opacity:1; transform:scale(1.15); }
+}
+.sim-ai-done-meta {
+  margin-top:6px;
+  font-size:11px;
+  color:#7a8b90;
+  font-variant-numeric:tabular-nums;
+}
 .sim-agent-card .codex-approvals { padding:0; margin-top:8px; }
 .sim-agent-card .codex-approvals:empty { display:none; }
 .sim-agent-card .codex-approval.is-compact { padding:10px 12px; margin:0 0 8px; }

@@ -27,6 +27,7 @@ from spiceowl.domain.common import DomainError
 from spiceowl.onboarding.virtuoso_rnl import REMOTE_OA_DUMP_SKILL, inject_rnl_geometry
 
 BROWSE_SCHEMA = "ic.onboarding.ssh-browse.v1"
+FIND_SCHEMA = "ic.onboarding.ssh-find.v1"
 IMPORT_SCHEMA = "ic.onboarding.ssh-import.v1"
 SCHEMATIC_EXPORT_SCHEMA = "ic.onboarding.ssh-schematic-export.v1"
 CIRCUITGIT_ENTRY_SCHEMA = "spiceowl.circuitgit-entry.v1"
@@ -1627,9 +1628,194 @@ def do_export_schematic():
             pass
 
 
+def _tokenize_search_text(text):
+    raw_parts = [p for p in re.split(r'[\s/,>:;\\]+', (text or '').strip().lower()) if p]
+    sub_parts = []
+    for p in raw_parts:
+        for sp in re.split(r'[_\-\.]+', p):
+            if len(sp) >= 2:
+                sub_parts.append(sp)
+    return raw_parts, sub_parts
+
+
+def _score_candidate(path_low, name_low, kind, raw_tokens, sub_tokens):
+    if not raw_tokens:
+        return 0
+    score = 0
+    matched_raw = 0
+    for tok in raw_tokens:
+        if tok == name_low:
+            score += 45
+            matched_raw += 1
+        elif tok in name_low:
+            score += 28
+            matched_raw += 1
+        elif tok in path_low:
+            score += 18
+            matched_raw += 1
+    path_subs = [sp for sp in re.split(r'[/_\-\.\s]+', path_low) if len(sp) >= 2]
+    name_subs = [sp for sp in re.split(r'[_\-\.\s]+', name_low) if len(sp) >= 2]
+    matched_sub = 0
+    for st in sub_tokens:
+        if any(st == ps for ps in name_subs):
+            score += 12
+            matched_sub += 1
+        elif any(ps.startswith(st) or st.startswith(ps) for ps in name_subs if len(ps) >= 3):
+            score += 9
+            matched_sub += 1
+        elif any(st == ps or ps.startswith(st) or st.startswith(ps) for ps in path_subs if len(ps) >= 3):
+            score += 5
+            matched_sub += 1
+    if matched_raw == 0 and matched_sub < max(1, (len(sub_tokens) + 1) // 2):
+        return 0
+    if matched_raw == len(raw_tokens):
+        score += 40
+    if kind == 'schematic':
+        score += 30
+    elif kind == 'netlist':
+        score += 15
+    elif kind == 'library':
+        score += 8
+    return score
+
+
+def do_find():
+    import time
+    from collections import deque
+    root = resolve_user_path(PAYLOAD.get('path') or '~')
+    if sensitive_path(root) or not os.path.isdir(root):
+        return {'error': 'Search root directory is unavailable or restricted'}
+    query = (PAYLOAD.get('query') or '').strip()
+    raw_tokens, sub_tokens = _tokenize_search_text(query)
+    if not raw_tokens:
+        return {'error': 'Provide a non-empty search query'}
+    max_depth = min(max(int(PAYLOAD.get('max_depth') or 5), 1), 6)
+    max_results = min(max(int(PAYLOAD.get('max_results') or 25), 1), 50)
+    max_dirs = 2500
+    deadline = time.time() + 12.0
+    skip_dirs = set([
+        'psf', 'netlist', 'simulation', 'results', 'tmp', 'temp',
+        'node_modules', '__pycache__', 'venv', '.venv', 'logs', 'backup',
+        'adexl_results', 'maestro_results', 'spectre.raw',
+    ])
+    queue = deque([(root, 0, None)])
+    visited = set()
+    matches = {}
+    scanned_dirs = 0
+
+    def record_match(kind, mpath, label, extra=None):
+        real_p = os.path.realpath(mpath)
+        if real_p in matches:
+            return
+        score = _score_candidate(real_p.lower(), label.lower(), kind, raw_tokens, sub_tokens)
+        if score <= 0:
+            return
+        row = {'kind': kind, 'path': real_p, 'name': label, 'score': score}
+        if extra:
+            row.update(extra)
+        matches[real_p] = row
+
+    while queue and scanned_dirs < max_dirs and time.time() < deadline:
+        cur, depth, cds_hint = queue.popleft()
+        real_cur = os.path.realpath(cur)
+        if real_cur in visited or sensitive_path(real_cur):
+            continue
+        visited.add(real_cur)
+        scanned_dirs += 1
+
+        # Parse cds.lib in this directory and enqueue defined libraries
+        cds_file = os.path.join(real_cur, 'cds.lib')
+        cur_cds = cds_file if os.path.isfile(cds_file) else cds_hint
+        if os.path.isfile(cds_file):
+            for lib in parse_cds_lib(real_cur):
+                lp = lib['path']
+                lname = lib['name']
+                record_match('library', lp, lname, {'lib_name': lname, 'cds_lib': cds_file})
+                if lp not in visited and depth + 1 <= max_depth:
+                    # Prioritize libraries whose name or parent path matches a query token
+                    if _score_candidate(lp.lower(), lname.lower(), 'library', raw_tokens, sub_tokens) > 0:
+                        queue.appendleft((lp, min(depth + 1, max_depth - 1), cds_file))
+                    elif depth <= 2:
+                        queue.append((lp, depth + 1, cds_file))
+
+        # Check if this directory is itself a schematic view
+        if is_schematic_dir(real_cur):
+            cell_dir = os.path.dirname(real_cur)
+            lib_dir = os.path.dirname(cell_dir)
+            cell_name = os.path.basename(cell_dir)
+            view_name = os.path.basename(real_cur)
+            cds_found, lib_name, _ = find_cds_lib_for_library(lib_dir, cur_cds)
+            _, mviews, _ = scan_cell_views(cell_dir)
+            record_match('schematic', real_cur, cell_name, {
+                'lib_name': lib_name,
+                'cell_name': cell_name,
+                'view_name': view_name,
+                'cds_lib': cds_found,
+                'maestro_views': [m['name'] for m in mviews],
+            })
+            continue
+
+        # Check if this directory is a Virtuoso cell directory containing a schematic view
+        sch_sub, mviews, other_views = scan_cell_views(real_cur)
+        if sch_sub:
+            lib_dir = os.path.dirname(real_cur)
+            cell_name = os.path.basename(real_cur)
+            cds_found, lib_name, _ = find_cds_lib_for_library(lib_dir, cur_cds)
+            record_match('schematic', sch_sub, cell_name, {
+                'lib_name': lib_name,
+                'cell_name': cell_name,
+                'view_name': os.path.basename(sch_sub),
+                'cds_lib': cds_found,
+                'maestro_views': [m['name'] for m in mviews],
+            })
+            continue
+
+        # Record matching non-view directories
+        if real_cur != root:
+            base = os.path.basename(real_cur)
+            if os.path.isfile(os.path.join(real_cur, 'cdsinfo.tag')):
+                record_match('library', real_cur, base, {'lib_name': base, 'cds_lib': cur_cds})
+            else:
+                record_match('directory', real_cur, base, {'cds_lib': cur_cds})
+
+        if depth >= max_depth:
+            continue
+        try:
+            entries = sorted(os.listdir(real_cur))
+        except OSError:
+            continue
+        for name in entries[:400]:
+            if sensitive_name(name):
+                continue
+            low = name.lower()
+            full = os.path.join(real_cur, name)
+            if os.path.isdir(full):
+                if low in skip_dirs or low.endswith('.raw') or low.endswith('.psf'):
+                    continue
+                if full not in visited:
+                    if any(tok in low for tok in raw_tokens) or any(st in low for st in sub_tokens):
+                        queue.appendleft((full, depth + 1, cur_cds))
+                    else:
+                        queue.append((full, depth + 1, cur_cds))
+            elif os.path.isfile(full) and circuit_file(name):
+                record_match('netlist', full, name, {'remote_dir': real_cur})
+
+    ranked = sorted(matches.values(), key=lambda x: (-x['score'], x['path']))[:max_results]
+    return {
+        'ok': True,
+        'root': root,
+        'query': query,
+        'scanned_dirs': scanned_dirs,
+        'truncated': bool(queue),
+        'matches': ranked,
+    }
+
+
 action = PAYLOAD['action']
 if action == 'browse':
     result = do_browse()
+elif action == 'find':
+    result = do_find()
 elif action == 'export_schematic':
     result = do_export_schematic()
 else:
@@ -1768,6 +1954,50 @@ def browse_remote_netlists(
         "cds_libraries": cds_libraries,
         "netlist_count": int(data.get("netlist_count", sum(1 for e in entries if e.get("kind") == "file"))),
         "virtuoso_context": vctx,
+    }
+
+
+def find_remote_library_targets(
+    ssh_target: str,
+    ssh_config: str | Path | None = None,
+    query: str = "",
+    path: str | None = None,
+    *,
+    max_depth: int = 5,
+    max_results: int = 25,
+    ssh_hostname: str | None = None,
+    runner=None,
+) -> dict[str, Any]:
+    """Search remote directories and cds.lib trees for matching Virtuoso schematics, libraries, and netlists."""
+    target = validate_ssh_target(ssh_target)
+    if not isinstance(query, str) or not 1 <= len(query.strip()) <= 512:
+        raise DomainError("Provide a non-empty search query (1-512 chars).")
+    if any(ord(c) < 32 or ord(c) == 127 for c in query):
+        raise DomainError("Search query contains invalid control characters.")
+    clean_path = validate_remote_path(path, allow_empty=True, require_circuit_ext=False)
+    payload = {
+        "action": "find",
+        "path": clean_path or "~",
+        "query": query.strip(),
+        "max_depth": max(1, min(int(max_depth), 6)),
+        "max_results": max(1, min(int(max_results), 50)),
+        "allowed_exts": sorted(ALLOWED_CIRCUIT_EXTS),
+        "sensitive_exact": sorted(_SENSITIVE_EXACT),
+        "sensitive_suffixes": list(_SENSITIVE_SUFFIXES),
+        "sensitive_substrings": list(_SENSITIVE_SUBSTRINGS),
+    }
+    data = _run_remote(target, ssh_config, payload, ssh_hostname=ssh_hostname, runner=runner)
+    raw_matches = data.get("matches")
+    if not isinstance(raw_matches, list):
+        raise DomainError("Incomplete remote search result.")
+    return {
+        "schema": FIND_SCHEMA,
+        "ssh_target": target,
+        "root": str(data.get("root") or clean_path or "~"),
+        "query": query.strip(),
+        "scanned_dirs": int(data.get("scanned_dirs", 0)),
+        "truncated": bool(data.get("truncated", False)),
+        "matches": raw_matches[:50],
     }
 
 

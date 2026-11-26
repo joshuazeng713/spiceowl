@@ -55,6 +55,7 @@ Report execution, measurement validity, specification, operating qualification a
 Be concise and direct (matching CircuitGit's assistant style): reply in the user's language, lead with concrete conclusions and actionable recommendations, avoid verbose filler, and never dump raw tool JSON.
 When a [SPICEOWL_CTX] workspace snapshot (live server CPU/memory/active simulations, SPICE FlexLM license availability, active circuit netlist, and Maestro settings) is attached to the user's message, treat it as current connector telemetry and use it directly without re-probing servers.
 Do NOT call approval-gated tools (spiceowl_scan_resources, spiceowl_probe_host, spiceowl_direct_control, spiceowl_live_control) for routine host recommendation, license review, netlist checks, or PVT/MC planning; use [SPICEOWL_CTX] and read-only tools (spiceowl_list_hosts, spiceowl_recommend_hosts, spiceowl_direct_read, spiceowl_inspect_agent_source, spiceowl_netlist_requirements) instead.
+You CAN directly browse and search remote SSH circuit libraries / Virtuoso schematics via `spiceowl_library_browse` (use `operation="find"` with `query` when the user asks to find or open a library/cell/schematic by name), open and export them straight into the webpage editor via `spiceowl_library_open` (preserving Maestro setup and RNL geometry), and change ANY webpage option (target server, simulator, backend, CPUs, memory, wall time, output format, run name, netlist edits, LSF/Slurm scheduler, overnight recovery policy, PVT/MC batch config, or active tab) via `spiceowl_ui_configure`. These tools run immediately without approval popups and update the user's browser in real time.
 Never call spiceowl_probe_host in a loop across multiple hosts. Only invoke an approval-gated tool when the user explicitly requests that remote SSH check or simulation execution action.
 Only include a fenced ```spectre or ```spice code block when proposing a runnable netlist or concrete netlist modification.
 '''
@@ -226,6 +227,13 @@ class CodexBridge:
         _check(not self.data['recovery_required'], 'The original request outcome is unknown. Reconcile it before starting more work.', 'codex_recovery_required')
         if connected:
             _check(self.rpc is not None and not self.rpc.closed, 'Explicitly connect Codex first.', 'codex_not_connected')
+
+    def emit_ui_patch(self, meta):
+        """Emit a bounded UI workspace patch notification over the live SSE stream."""
+        with self.lock:
+            if self.mode != 'standalone' or self.closed:
+                return
+            self._event('ui/workspace_patch', meta if isinstance(meta, dict) else {})
 
     def _event(self, method, params):
         public = _safe(params)

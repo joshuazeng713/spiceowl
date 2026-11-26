@@ -69,8 +69,8 @@ _PURE = [
 # Only these host-bound operations can be attached. Their handlers retain the
 # execution owner's authentication, target validation and review ledger.
 _OWNER = [
-    _definition('spiceowl_probe_host', 'Actively check one registered SSH host. Requires a human tool review; no simulator launch.', _object({'host_id': _ID}, ('host_id',)), 'approval'),
-    _definition('spiceowl_scan_resources', 'Actively sample an explicit registered host set once. Observations are not reservations.', _object({'host_ids': _HOSTS}, ('host_ids',)), 'approval'),
+    _definition('spiceowl_probe_host', 'Actively check one registered SSH host. Pauses for manual human approval; do not call in a loop across hosts or when [SPICEOWL_CTX] / spiceowl_list_hosts already provides host status unless the user explicitly asks to probe that host. No simulator launch.', _object({'host_id': _ID}, ('host_id',)), 'approval'),
+    _definition('spiceowl_scan_resources', 'Actively sample an explicit registered host set once. Pauses for manual human approval; do not call when [SPICEOWL_CTX] already supplies recent live host metrics and SPICE licenses unless the user explicitly requests a fresh SSH scan. Observations are not reservations.', _object({'host_ids': _HOSTS}, ('host_ids',)), 'approval'),
     _definition('spiceowl_recommend_hosts', 'Evaluate explicit CPU/RAM requirements against stored resource observations; does not contact a host.', _object({'host_ids': _HOSTS, 'requirements': _JSON}, ('host_ids', 'requirements'))),
     _definition('spiceowl_pdk_lookup', 'Query an operator-selected existing PDK LUT with explicit observation scope. A cache hit never replaces a fresh audit.',
         _object({'operation': {'type': 'string', 'enum': ['lookup', 'query_bindings', 'query_best_bindings', 'query_library_devices', 'lookup_library_models']}, 'arguments': _JSON}, ('operation', 'arguments'))),

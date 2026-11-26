@@ -347,6 +347,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             fields = {'connect': ({'model', 'profile'}, set()), 'thread': (set(), set()),
                 'message': ({'thread_id', 'text', 'request_key', 'model', 'reasoning_effort'}, {'thread_id', 'text', 'request_key'}),
                 'approval': ({'approval_id', 'decision'}, {'approval_id', 'decision'}),
+                'interrupt': (set(), set()),
                 'recover': ({'resolution', 'note', 'confirmed_side_effects_checked'}, set()),
                 'disconnect': (set(), set())}
             if action not in fields:
@@ -359,6 +360,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             if action == 'thread': return bridge.create_thread()
             if action == 'message': return bridge.send_message(**body)
             if action == 'approval': return bridge.decide(**body)
+            if action == 'interrupt': return bridge.interrupt()
             if action == 'recover': return bridge.reconcile_interrupted(**body)
             return bridge.disconnect()
 

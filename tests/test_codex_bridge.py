@@ -44,6 +44,9 @@ for line in sys.stdin:
     elif method=='thread/start':
         reply(message,{'thread':{'id':'thread-1'},'model':'fake-model','approvalPolicy':fixture.get('thread_policy','on-request'),
             'approvalsReviewer':'user','sandbox':{'type':'readOnly'}})
+    elif method=='turn/interrupt':
+        reply(message,{})
+        notice('turn/completed',{'threadId':'thread-1','turn':{'id':'turn-1','status':'interrupted'}})
     elif method=='turn/start':
         if scenario=='exit_on_turn':os._exit(0)
         if scenario=='oversized':sys.stdout.write('x'*(2*1024*1024+1));sys.stdout.flush();os._exit(0)
@@ -611,6 +614,23 @@ class CodexBridgeTests(unittest.TestCase):
         replies=[m['result']['decision'] for m in self.wire(bridge) if m.get('id') in ('server-1','server-2')]
         self.assertEqual(['decline','decline'],replies)
         self.assertEqual([],self.dispatched)
+
+    def test_interrupt_stops_active_turn_clears_pending_approvals_and_allows_next_message(self):
+        bridge=self.bridge('two_tools',policy='approval');thread=self.ready(bridge)
+        bridge.send_message(thread,'two reviewed actions','request-1')
+        self.wait(lambda:len(bridge.status()['pending_approvals'])==2)
+        res=bridge.interrupt()
+        self.assertTrue(res['interrupted'])
+        self.assertEqual('interrupted',res['state'])
+        self.assertFalse(res['recovery_required'])
+        self.assertEqual([],bridge.status()['pending_approvals'])
+        self.assertEqual([],self.dispatched)
+        wire=self.wire(bridge)
+        self.assertTrue(any(m.get('method')=='turn/interrupt' for m in wire))
+        self.assertEqual(['server-1','server-2'],sorted(m['id'] for m in wire if m.get('id') in ('server-1','server-2')))
+        # Idempotent when already stopped
+        again=bridge.interrupt()
+        self.assertFalse(again['interrupted'])
 
 
 if __name__ == '__main__':

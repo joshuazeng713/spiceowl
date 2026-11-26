@@ -50,7 +50,9 @@ vm.runInContext(`(async () => {\n${body}\nglobalThis.__exports = {
   renderHostLiveCard,
   hosts,
   directAgentSetupPanel,
+  renderCodexActivity,
   renderCleanDirectTimeline,
+  codexApprovalCard,
   renderMarkdownHtml,
   stripSimAgentContextEnvelope,
   stripRnlCommentsForAgent,
@@ -143,6 +145,42 @@ assert(cleanTimeline.includes('<strong>正常</strong>'), 'Assistant Markdown mu
 assert(!cleanTimeline.includes('<script>'), 'Markdown renderer must escape raw HTML');
 const strippedNet = ex.stripRnlCommentsForAgent('// title\n// @RNL {\n//   #R0 @PLACE(0,0)\n// }\nR0 (a 0) resistor r=1k');
 assert(!strippedNet.includes('@RNL') && strippedNet.includes('R0 (a 0) resistor r=1k'), 'RNL comments stripped from agent context');
+
+// 4b. Resolved approvals vanish immediately and Stop button appears whenever AI turn is running
+sandbox.location.hash = '#direct';
+const domEls = {
+  '#codex-timeline': {innerHTML: '', scrollHeight: 0, scrollTop: 0, clientHeight: 100},
+  '#codex-approvals': {innerHTML: ''},
+  '#codex-stop': {hidden: true, disabled: false},
+  '#codex-send': {disabled: false},
+  '#codex-message': {disabled: false},
+  '#sim-agent-guide': {hidden: false},
+  '#codex-runtime-state': {innerHTML: ''},
+  '#codex-notices': {innerHTML: ''},
+};
+const origQuerySelector = sandbox.document.querySelector;
+sandbox.document.querySelector = sel => domEls[sel] || null;
+ex.setCodex(c => {
+  c.status = {connected: true, state: 'awaiting_approval', thread_id: 'th-1', turn_id: 'turn-1'};
+  c.streamState = 'connected';
+  c.selectedThread = 'th-1';
+  c.approvals = new Map([
+    ['ap-resolved', {approval_id: 'ap-resolved', thread_id: 'th-1', turn_id: 'turn-1', status: 'resolved', params: {tool: 'spiceowl_probe_host', arguments: {host_id: 'sim-node-a'}}}],
+    ['ap-pending', {approval_id: 'ap-pending', thread_id: 'th-1', turn_id: 'turn-1', status: 'pending', can_approve: true, can_deny: true, params: {tool: 'spiceowl_direct_control', arguments: {operation: 'launch'}}}],
+  ]);
+});
+ex.renderCodexActivity();
+assert(!domEls['#codex-approvals'].innerHTML.includes('ap-resolved'), 'Resolved approval card must disappear immediately');
+assert(domEls['#codex-approvals'].innerHTML.includes('ap-pending'), 'Active pending approval must still render');
+assert(!domEls['#codex-approvals'].innerHTML.includes('<details open>'), 'Page 3 pending approval params should stay collapsed by default');
+assert.equal(domEls['#codex-stop'].hidden, false, 'Stop button must be visible while AI turn is active');
+assert.equal(domEls['#codex-send'].disabled, true, 'Send button stays disabled while AI turn is active');
+ex.setCodex(c => { c.status = {connected: true, state: 'interrupted', thread_id: 'th-1', turn_id: null}; c.pending = null; });
+ex.renderCodexActivity();
+assert.equal(domEls['#codex-stop'].hidden, true, 'Stop button hides once AI turn is interrupted/idle');
+assert(domEls['#codex-runtime-state'].innerHTML.includes('已暂停'), 'Interrupted state displays 已暂停 chip');
+sandbox.document.querySelector = origQuerySelector;
+sandbox.location.hash = '#hosts';
 
 // 5. When invoked by CircuitGit, Page 3 directly reuses CircuitGit entry AND CircuitGit Agent channel
 const applied = ex.applyCircuitGitEntry({

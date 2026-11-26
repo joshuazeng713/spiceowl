@@ -15,7 +15,7 @@ let placement = null, executionPlan = null, poolScanning = false;
 let requestedCpus = 4, requestedMemory = 8, requestedSimulator = 'spectre';
 let plannedKind = 'standalone', plannedReference = '', plannedHost = '';
 let selectedQa = null, qaView = null;
-const codexPanelState = {loaded: false, loading: false, busy: false, status: null, error: null,
+const codexPanelState = {loaded: false, loading: false, busy: false, interrupting: false, status: null, error: null,
   stream: null, streamState: 'idle', cursor: 0, statusCursor: 0, threads: [], selectedThread: null,
   approvals: new Map(), profile: '', model: '', reasoningEffort: '', draft: '', pending: null, pendingLoaded: false,
   models: [], defaultModel: '', modelsLoaded: false, authAccount: null, settingsOpen: false,
@@ -1314,6 +1314,7 @@ function simAgentStatusChip(status) {
   const s = status.state;
   if (s === 'starting' || s === 'running') return chip('思考中…', 'blue');
   if (s === 'awaiting_approval') return chip('待审批', 'amber');
+  if (s === 'interrupted') return chip('已暂停', 'amber');
   if (status.recovery_required || s === 'unknown') return chip('待核对', 'amber');
   if (s === 'failed') return chip('异常', 'red');
   return chip('已就绪', 'green');
@@ -1437,13 +1438,19 @@ async function quickLaunchDirectSimulation() {
 }
 
 async function sendPromptToSimAgent(promptText) {
-  if (!isStandaloneAgent() || isCircuitGitManagedEntry() || codexPanelState.busy) return;
+  if (!isStandaloneAgent() || isCircuitGitManagedEntry() || codexPanelState.busy || codexActiveTurn()) return;
   const userText = String(promptText || '').trim();
   if (!userText) return;
   codexPanelState.busy = true;
   codexPanelState.error = null;
   renderCodexActivity();
   try {
+    if (state.hosts.length && (!hostLiveState.loaded || Date.now() - hostLiveState.loadedAt > 60000) && !hostLiveState.loading) {
+      await Promise.race([
+        refreshHostLiveStatus({silent: true}),
+        new Promise(resolve => setTimeout(resolve, 4000)),
+      ]);
+    }
     if (!codexPanelState.status?.connected) {
       await api('/api/codex/connect', {method: 'POST', body: {
         ...(codexPanelState.model.trim() ? {model: codexPanelState.model.trim()} : {}),
@@ -1498,11 +1505,23 @@ function buildSimAgentContextSummary() {
   const hostLines = (state.hosts || []).map(h => {
     const live = hostLiveState.byId.get(h.host_id);
     const r = live?.ok ? live.resources : h.last_resources?.resources;
-    const cpu = Number.isFinite(r?.cpu_busy_percent) ? `${r.cpu_busy_percent.toFixed(1)}%/${r.cpu_count || '?'}核` : '未采样';
-    const mem = Number.isFinite(r?.memory_available_bytes) ? `可用${(r.memory_available_bytes / 2**30).toFixed(0)}GiB` : '';
-    return `${h.host_id}(CPU ${cpu}${mem ? ', ' + mem : ''})`;
+    const cpuCount = Number.isFinite(r?.cpu_count) ? r.cpu_count : null;
+    const cpuBusy = Number.isFinite(r?.cpu_busy_percent) ? r.cpu_busy_percent : null;
+    const freeCores = cpuCount != null && cpuBusy != null ? Math.max(0, Math.round(cpuCount * (100 - cpuBusy) / 100)) : null;
+    const cpu = cpuBusy != null ? `${cpuBusy.toFixed(1)}%/${cpuCount || '?'}核${freeCores != null ? '(约空闲' + freeCores + '核)' : ''}` : '未采样';
+    const memAvail = Number.isFinite(r?.memory_available_bytes) ? (r.memory_available_bytes / 2**30).toFixed(0) : '';
+    const memTotal = Number.isFinite(r?.memory_total_bytes) ? (r.memory_total_bytes / 2**30).toFixed(0) : '';
+    const mem = memAvail ? `可用内存${memAvail}${memTotal ? '/' + memTotal : ''}GiB` : '';
+    const simCnt = Number.isFinite(live?.simulations?.active_count) ? `运行中仿真${live.simulations.active_count}个` : '';
+    const sims = Object.keys(h.simulators || {}).filter(k => h.simulators[k]).join('/');
+    return `${h.host_id}(CPU ${cpu}${mem ? ', ' + mem : ''}${simCnt ? ', ' + simCnt : ''}${sims ? ', 支持' + sims : ''})`;
   });
-  const licLines = (hostLiveState.licenses?.features || []).slice(0, 5).map(f => `${f.label}:${f.in_use}/${f.issued}(余${f.available})`);
+  const licFeatures = hostLiveState.licenses?.features || [];
+  const licLines = licFeatures.slice(0, 12).map(f => `${f.label}:${f.in_use}/${f.issued}(余${f.available})`);
+  const licText = licLines.length
+    ? `SPICE FlexLM License（已实时采样）：${licLines.join('，')}。`
+    : 'SPICE FlexLM License：当前服务器池未返回 FlexLM 许可证详情（无需通过 SSH 逐台探测）。';
+  const tsText = hostLiveState.observedAt ? `（采样时间 ${hostLiveState.observedAt}，已由本机连接器实时采集，可直接用于选机，无需再调 spiceowl_scan_resources 或 spiceowl_probe_host）` : '';
   let maestroNote = '';
   if (simSourceState.maestroConfig) {
     const mc = simSourceState.maestroConfig;
@@ -1510,7 +1529,7 @@ function buildSimAgentContextSummary() {
     const enCorners = (mc.corners || []).filter(c => c.enabled).map(c => c.name).join('/');
     maestroNote = `当前电路来自 Virtuoso ${simSourceState.libraryName || ''}/${simSourceState.cellName || simSourceState.fileName}，已检测 Maestro 配置（分析：${anStr || '未指定'}；变量 ${Object.keys(mc.variables || {}).length} 个${enCorners ? `；启用工艺角 ${enCorners}` : ''}）。`;
   }
-  return `当前已连接服务器：${hostLines.join('；') || '暂无'}。${licLines.length ? 'SPICE License：' + licLines.join('，') + '。' : ''}${maestroNote}`;
+  return `当前已连接服务器${tsText}：${hostLines.join('；') || '暂无'}。${licText}${maestroNote}`;
 }
 
 function directAgentSetupPanel(hostsList) {
@@ -1590,8 +1609,11 @@ function directAgentSetupPanel(hostsList) {
       <form id="sim-agent-form" class="codex-composer sim-ai-composer">
         <textarea id="codex-message" maxlength="4000" rows="2" placeholder="向 AI 提问或描述仿真需求（Enter 发送，Shift+Enter 换行）…">${escape(codexPanelState.draft)}</textarea>
         <div>
-          <span class="subtle-note">已自动附带当前电路、Maestro 与服务器余量上下文；副作用需人工批准。</span>
-          <button id="codex-send" class="button primary small" type="submit" ${codexPanelState.busy ? 'disabled' : ''}>发送</button>
+          <span class="subtle-note">已自动附带当前电路、Maestro 与实时服务器余量；仅远程变更需人工批准。</span>
+          <div class="sim-ai-composer-actions">
+            <button id="codex-stop" class="button secondary small sim-ai-stop" type="button" data-action="codex-interrupt" ${codexActiveTurn() || codexPanelState.pending ? '' : 'hidden'} ${codexPanelState.interrupting ? 'disabled' : ''}>⏹ 停止</button>
+            <button id="codex-send" class="button primary small" type="submit" ${codexPanelState.busy || codexActiveTurn() ? 'disabled' : ''}>发送</button>
+          </div>
         </div>
       </form>
     </section>` : `
@@ -3725,7 +3747,11 @@ async function refreshHostLiveStatus({hostIds = null, silent = false} = {}) {
     return null;
   } finally {
     hostLiveState.loading = false;
-    if (location.hash === '#hosts') render();
+    if (location.hash === '#hosts') {
+      render();
+    } else if (location.hash === '#direct' && !['codex-message', 'direct-netlist'].includes(document.activeElement?.id || '')) {
+      render();
+    }
   }
 }
 
@@ -4197,8 +4223,18 @@ function setCodexStatus(status) {
     codexThread(status.thread_id);
     if (!codexPanelState.selectedThread) codexPanelState.selectedThread = status.thread_id;
   }
+  const liveApprovalIds = new Set();
   for (const approval of status.pending_approvals || []) {
-    if (approval && typeof approval.approval_id === 'string') codexPanelState.approvals.set(approval.approval_id, approval);
+    if (approval && typeof approval.approval_id === 'string') {
+      liveApprovalIds.add(approval.approval_id);
+      codexPanelState.approvals.set(approval.approval_id, approval);
+    }
+  }
+  for (const [aid, row] of codexPanelState.approvals.entries()) {
+    if (!liveApprovalIds.has(aid) && (!status.thread_id || row.thread_id === status.thread_id)
+        && ['pending', 'resolving'].includes(row.status || 'pending')) {
+      Object.assign(row, {status: 'resolved', can_approve: false, can_deny: false});
+    }
   }
   if (!status.recovery_required) confirmCodexPending(status.request_key, status.turn_id);
 }
@@ -4298,7 +4334,17 @@ function receiveCodexEvent(event) {
   } else if (event.method === 'approval/resolved') {
     const approval = codexPanelState.approvals.get(params.approval_id);
     const currentApproval = status.pending_approvals?.some(item => item.approval_id === params.approval_id);
-    if (approval && (liveEvent || !currentApproval)) Object.assign(approval, params, {can_approve: false, can_deny: false});
+    if (approval && (liveEvent || !currentApproval)) {
+      Object.assign(approval, params, {status: params.status || 'resolved', can_approve: false, can_deny: false});
+    }
+  } else if (event.method === 'bridge/interrupted') {
+    const tId = params.thread_id || threadId;
+    for (const approval of codexPanelState.approvals.values()) {
+      if ((!tId || approval.thread_id === tId) && ['pending', 'resolving'].includes(approval.status || 'pending')) {
+        Object.assign(approval, {status: 'resolved', decision: 'interrupted', can_approve: false, can_deny: false});
+      }
+    }
+    if (params.request_key) confirmCodexPending(params.request_key, params.turn_id || 'interrupted');
   }
   if (liveEvent) {
     if (event.method === 'bridge/connected') Object.assign(status, {connected: true, state: 'connected'});
@@ -4310,10 +4356,22 @@ function receiveCodexEvent(event) {
     if (event.method === 'turn/started') Object.assign(status, {thread_id: threadId, turn_id: turnId,
       request_key: event.request_key, state: 'running'});
     if (event.method === 'turn/completed') Object.assign(status, {state: params.turn?.status === 'completed' ? 'complete' : 'failed'});
+    if (event.method === 'bridge/interrupted') {
+      const needRec = params.recovery_required === true;
+      Object.assign(status, {
+        state: needRec ? 'unknown' : 'interrupted',
+        turn_id: null,
+        request_key: needRec ? (params.request_key || status.request_key) : null,
+        recovery_required: needRec,
+      });
+    }
     if (event.method === 'approval/required') Object.assign(status, {state: 'awaiting_approval'});
     if (event.method === 'approval/resolved' && status.state === 'awaiting_approval') {
       const unknown = params.status === 'unknown';
-      Object.assign(status, {state: unknown ? 'unknown' : 'running', recovery_required: unknown});
+      const stillPending = [...codexPanelState.approvals.values()].some(
+        item => item.thread_id === status.thread_id && ['pending', 'resolving'].includes(item.status || 'pending'),
+      );
+      Object.assign(status, {state: unknown ? 'unknown' : stillPending ? 'awaiting_approval' : 'running', recovery_required: unknown});
     }
     if (event.method === 'bridge/disconnected') {
       const unresolved = status.recovery_required || params.recovery_required || ['starting', 'running', 'awaiting_approval'].includes(status.state);
@@ -4353,7 +4411,22 @@ async function refreshCodexStatus() {
   finally { codexPanelState.loading = false; if (!location.hash || ['#quickstart', '#agents', '#direct'].includes(location.hash)) render(); }
 }
 
+function formatDirectApprovalTitle(approval) {
+  const p = approval?.params || {};
+  const tool = p.tool || approval?.method || '操作';
+  const args = p.arguments && typeof p.arguments === 'object' ? p.arguments : {};
+  if (tool === 'spiceowl_probe_host') return `SSH 探测主机 ${args.host_id || ''}`.trim();
+  if (tool === 'spiceowl_scan_resources') {
+    const ids = Array.isArray(args.host_ids) ? args.host_ids : [];
+    return `扫描服务器资源（${ids.slice(0, 3).join(', ')}${ids.length > 3 ? ` 等 ${ids.length} 台` : ''}）`;
+  }
+  if (tool === 'spiceowl_direct_control') return `仿真控制 · ${args.operation || '执行'}`;
+  if (tool === 'spiceowl_live_control') return `远端仿真控制 · ${args.operation || '执行'}`;
+  return tool;
+}
+
 function codexApprovalCard(approval) {
+  const onDirectSetup = location.hash === '#direct';
   const current = codexPanelState.status;
   const editable = !codexPanelState.busy && current?.connected && !current.recovery_required
     && current.state === 'awaiting_approval' && codexPanelState.streamState === 'connected' && approval.status === 'pending'
@@ -4363,6 +4436,10 @@ function codexApprovalCard(approval) {
   const preview = approval.preview_only === true || fullDetails.length > 65536;
   const approve = editable && approval.can_approve === true && !preview;
   const deny = editable && approval.can_deny === true;
+  if (onDirectSetup) {
+    const statusLabel = approval.status === 'resolving' ? '执行中…' : approval.status === 'unknown' ? '状态未知' : '待确认';
+    return `<article class="codex-approval is-compact" data-approval-id="${escape(approval.approval_id)}"><div class="codex-card-heading"><strong>待人工批准 · ${escape(formatDirectApprovalTitle(approval))}</strong>${chip(statusLabel, 'amber')}</div><details${preview ? ' open' : ''}><summary>查看冻结参数</summary><pre>${escape(codexText(approval.params, 65536))}</pre></details>${preview ? `<p class="subtle-note">参数已截断，需先读取完整详情后才可批准。</p><button class="button secondary small" data-action="codex-details" data-id="${escape(approval.approval_id)}">读取完整参数</button>` : ''}<div class="codex-approval-actions"><button class="button primary small" data-action="codex-approve" data-id="${escape(approval.approval_id)}" ${approve ? '' : 'disabled'}>批准</button><button class="button secondary small" data-action="codex-deny" data-id="${escape(approval.approval_id)}" ${deny ? '' : 'disabled'}>拒绝</button></div>${approval.status === 'unknown' ? '<p class="subtle-note">审批结果未确认，不会自动重试。</p>' : ''}</article>`;
+  }
   return `<article class="codex-approval" data-approval-id="${escape(approval.approval_id)}"><div class="codex-card-heading"><strong>Human approval</strong>${chip(approval.status || 'pending', 'amber')}</div><p>${escape(approval.summary || 'Review this exact requested action.')}</p><details open><summary>Requested action</summary><pre>${escape(codexText(approval.params, 65536))}</pre></details>${preview ? `<p class="subtle-note">This is an incomplete or redacted preview. Approval stays disabled until complete reviewable details are available.</p><button class="button secondary small" data-action="codex-details" data-id="${escape(approval.approval_id)}">Read frozen action details</button>` : ''}<div class="codex-approval-actions"><button class="button primary small" data-action="codex-approve" data-id="${escape(approval.approval_id)}" ${approve ? '' : 'disabled'}>Approve this action</button><button class="button secondary small" data-action="codex-deny" data-id="${escape(approval.approval_id)}" ${deny ? '' : 'disabled'}>Deny</button></div>${approval.status === 'unknown' ? '<p class="subtle-note">Approval outcome is unknown. This action will not be retried automatically.</p>' : ''}</article>`;
 }
 
@@ -4446,7 +4523,8 @@ function renderCodexActivity() {
   }
   if ($('#codex-approvals')) {
     $('#codex-approvals').innerHTML = [...codexPanelState.approvals.values()]
-      .filter(item => item.thread_id === codexPanelState.selectedThread).map(codexApprovalCard).join('');
+      .filter(item => item.thread_id === codexPanelState.selectedThread && item.status !== 'resolved')
+      .map(codexApprovalCard).join('');
   }
   const pending = codexPanelState.pending;
   const recSnap = codexPanelState.recoverySnapshot;
@@ -4463,13 +4541,18 @@ function renderCodexActivity() {
   if ($('#codex-session')) {
     $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
   }
+  const isRunningTurn = codexActiveTurn();
+  if ($('#codex-stop')) {
+    $('#codex-stop').hidden = !(isRunningTurn || Boolean(codexPanelState.pending));
+    $('#codex-stop').disabled = Boolean(codexPanelState.interrupting);
+  }
   if ($('#codex-send')) {
     $('#codex-send').disabled = onDirectSetup
-      ? (codexPanelState.busy || !codexPanelState.draft.trim())
+      ? (codexPanelState.busy || isRunningTurn || !codexPanelState.draft.trim())
       : (!codexCanSend() || !codexPanelState.draft.trim());
   }
   if ($('#codex-message')) {
-    $('#codex-message').disabled = onDirectSetup ? codexPanelState.busy : !codexCanSend();
+    $('#codex-message').disabled = onDirectSetup ? (codexPanelState.busy || isRunningTurn) : !codexCanSend();
   }
   const threadBtn = $('[data-action="codex-thread"]');
   if (threadBtn) threadBtn.disabled = codexPanelState.busy || !status?.connected || codexPanelState.streamState !== 'connected' || !!status?.recovery_required || codexActiveTurn() || !!pending;
@@ -4484,7 +4567,7 @@ function renderCodexActivity() {
 
 function standaloneAgentPanel() {
   const status = codexPanelState.status;
-  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div><div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p class="subtle-note">Tool calls follow the backend’s permissions. Review each approval card before deciding.</p><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></form></section></div><details class="panel native-history"><summary>Agent 端到端闭环评测与确定性 Next-Action 基准（10 项冻结测试）</summary><div class="panel-body"><div class="direct-actions"><button type="button" class="button primary small" data-action="codex-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '评测运行中…' : '运行 10 项 Agent 闭环安全评测'}</button></div><div id="codex-eval-output" style="margin-top:10px"></div></div></details>`;
+  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div><div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p class="subtle-note">Tool calls follow the backend’s permissions. Review each approval card before deciding.</p><div class="sim-ai-composer-actions"><button id="codex-stop" class="button secondary small sim-ai-stop" type="button" data-action="codex-interrupt" hidden>Stop AI</button><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></div></form></section></div><details class="panel native-history"><summary>Agent 端到端闭环评测与确定性 Next-Action 基准（10 项冻结测试）</summary><div class="panel-body"><div class="direct-actions"><button type="button" class="button primary small" data-action="codex-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '评测运行中…' : '运行 10 项 Agent 闭环安全评测'}</button></div><div id="codex-eval-output" style="margin-top:10px"></div></div></details>`;
 }
 
 function nativeChat() {
@@ -4558,6 +4641,13 @@ function render() {
   }
   if (page === 'direct') {
     if (!directState.loaded && !directState.loading) refreshDirect();
+    if (!isPublicDemo()) {
+      const curSig = state.hosts.map(h => h.host_id).sort().join(',');
+      const stale = !hostLiveState.loaded || hostLiveState.hostSignature !== curSig || (Date.now() - hostLiveState.loadedAt > 30000);
+      if (state.hosts.length && !hostLiveState.loading && stale) {
+        refreshHostLiveStatus({silent: true});
+      }
+    }
     if (!isPublicDemo() && isStandaloneAgent()) {
       renderCodexActivity();
       if (!codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
@@ -4801,9 +4891,9 @@ document.addEventListener('click', async event => {
     if (action === 'sim-agent-prompt') {
       const kind = button.dataset.kind || '';
       const prompts = {
-        pick_host: '请结合当前服务器资源与 SPICE License 余量，推荐最适合跑新 Spectre 仿真的服务器，并给出合理的 CPU 核数与内存建议。',
-        review_netlist: '请检查我当前右侧的网表与仿真配置（分析语句、收敛选项、save 节点与资源设置），简洁给出关键问题和修改建议。',
-        pvt_plan: '请为我当前电路规划一套合理的 PVT Corner 与 Monte Carlo 批量仿真方案，兼顾覆盖度、SPICE License 余量与并发控制。',
+        pick_host: '请直接基于已附带的服务器实时资源与 SPICE License 上下文，推荐最适合跑新 Spectre 仿真的服务器，并给出合理的 CPU 核数与内存建议（无需重新 SSH 探测）。',
+        review_netlist: '请直接检查我当前右侧的网表与仿真配置（分析语句、收敛选项、save 节点与资源设置），简洁给出关键问题和修改建议。',
+        pvt_plan: '请直接结合当前电路与 SPICE License 上下文，规划一套合理的 PVT Corner 与 Monte Carlo 批量仿真方案，兼顾覆盖度与并发控制。',
       };
       await sendPromptToSimAgent(prompts[kind] || prompts.pick_host);
       return;
@@ -5270,6 +5360,35 @@ document.addEventListener('click', async event => {
     finally { codexPanelState.evalBusy = false; renderCodexActivity(); }
     return;
   }
+  if (action === 'codex-interrupt') {
+    if (codexPanelState.interrupting) return;
+    codexPanelState.interrupting = true;
+    codexPanelState.error = null;
+    renderCodexActivity();
+    try {
+      await api('/api/codex/interrupt', {method: 'POST', body: {}});
+      const tId = codexPanelState.status?.thread_id || codexPanelState.selectedThread;
+      for (const row of codexPanelState.approvals.values()) {
+        if ((!tId || row.thread_id === tId) && ['pending', 'resolving'].includes(row.status || 'pending')) {
+          Object.assign(row, {status: 'resolved', decision: 'interrupted', can_approve: false, can_deny: false});
+        }
+      }
+      if (codexPanelState.pending) {
+        try { sessionStorage.removeItem(CODEX_PENDING_KEY); } catch { /* ignore */ }
+        codexPanelState.pending = null;
+      }
+      await refreshCodexStatus();
+      toast('已停止当前 AI 回合（未取消任何已启动的仿真）。');
+    } catch (error) {
+      codexPanelState.error = error.message;
+      toast(error.message);
+      await refreshCodexStatus();
+    } finally {
+      codexPanelState.interrupting = false;
+      renderCodexActivity();
+    }
+    return;
+  }
   if (codexPanelState.busy || button.disabled) return;
   codexPanelState.busy = true;
   codexPanelState.error = null;
@@ -5311,6 +5430,8 @@ document.addEventListener('click', async event => {
       approval.status = 'resolving';
       renderCodexActivity();
       await api('/api/codex/approval', {method: 'POST', body: {approval_id: approval.approval_id, decision}});
+      Object.assign(approval, {status: 'resolved', decision, can_approve: false, can_deny: false});
+      renderCodexActivity();
     }
     await refreshCodexStatus();
   } catch (error) {

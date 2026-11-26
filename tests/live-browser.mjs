@@ -376,7 +376,7 @@ try {
   const secondApproval = agentPage.locator('[data-approval-id="fixture-approval-1-second"]');
   await secondApproval.locator('[data-action="codex-approve"]:not([disabled])').waitFor();
   assert.match(await agentPage.locator('#codex-runtime-state').innerText(), /Awaiting approval/);
-  assert.equal(await firstApproval.locator('[data-action="codex-approve"]').isDisabled(), true);
+  assert.equal(await firstApproval.count(), 0, 'Resolved approval card must disappear immediately');
   assert.deepEqual(requests.findLast(item => item.path === '/api/codex/approval').body,
     {approval_id: 'fixture-approval-1', decision: 'approve'});
   await secondApproval.locator('[data-action="codex-approve"]').click();

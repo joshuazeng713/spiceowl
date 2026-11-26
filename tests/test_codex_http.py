@@ -59,6 +59,11 @@ class CodexHttpTests(unittest.TestCase):
             self.assertEqual(self.request('GET', '/api/codex/approval?approval_id=unknown')[0], 400)
             self.assertEqual(self.request('POST', '/api/codex/approval', {'approval_id': 'p-1', 'decision': 'deny'}, csrf=True)[0], 202)
             decide.assert_called_once_with(approval_id='p-1', decision='deny')
+        with patch.object(self.app.codex, 'interrupt', return_value={'interrupted': True, 'state': 'interrupted'}) as interrupt:
+            self.assertEqual(self.request('POST', '/api/codex/interrupt', {})[0], 403)
+            self.assertEqual(self.request('POST', '/api/codex/interrupt', {'force': True}, csrf=True)[0], 400)
+            self.assertEqual(self.request('POST', '/api/codex/interrupt', {}, csrf=True)[0], 202)
+            interrupt.assert_called_once_with()
 
     def test_sse_uses_last_event_id_and_returns_only_read_events(self):
         event = {'id': 8, 'method': 'item/agentMessage/delta', 'params': {'delta': 'hello'},

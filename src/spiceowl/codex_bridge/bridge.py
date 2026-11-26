@@ -53,7 +53,9 @@ Only the human client can decide a frozen approval. Stop dependent work after de
 Preserve exact source, model, experiment and run identities. Missing scientific inputs stay missing.
 Report execution, measurement validity, specification, operating qualification and dependency provenance separately.
 Be concise and direct (matching CircuitGit's assistant style): reply in the user's language, lead with concrete conclusions and actionable recommendations, avoid verbose filler, and never dump raw tool JSON.
-When a [SPICEOWL_CTX] workspace snapshot (active circuit, netlist, Maestro settings, host pool, and SPICE license availability) is attached to the user's message, read and use it directly as your current circuit context.
+When a [SPICEOWL_CTX] workspace snapshot (live server CPU/memory/active simulations, SPICE FlexLM license availability, active circuit netlist, and Maestro settings) is attached to the user's message, treat it as current connector telemetry and use it directly without re-probing servers.
+Do NOT call approval-gated tools (spiceowl_scan_resources, spiceowl_probe_host, spiceowl_direct_control, spiceowl_live_control) for routine host recommendation, license review, netlist checks, or PVT/MC planning; use [SPICEOWL_CTX] and read-only tools (spiceowl_list_hosts, spiceowl_recommend_hosts, spiceowl_direct_read, spiceowl_inspect_agent_source, spiceowl_netlist_requirements) instead.
+Never call spiceowl_probe_host in a loop across multiple hosts. Only invoke an approval-gated tool when the user explicitly requests that remote SSH check or simulation execution action.
 Only include a fenced ```spectre or ```spice code block when proposing a runnable netlist or concrete netlist modification.
 '''
 
@@ -843,12 +845,12 @@ class CodexBridge:
                     'original_sha256': hashlib.sha256(raw).hexdigest()}
                 success = False
             with self.lock:
-                if self.closed or self.data['recovery_required']:
+                if self.closed or self.data['recovery_required'] or not self._same_active_turn(message['params']):
                     return
                 self._tool_result(message, call_key, success, result)
         except Exception as exc:
             with self.lock:
-                if self.closed or self.data['recovery_required']:
+                if self.closed or self.data['recovery_required'] or not self._same_active_turn(message['params']):
                     return
                 if isinstance(exc, DomainError) and self.data['calls'][call_key]['policy'] == 'read':
                     self._tool_result(message, call_key, False, {'error': {'code': exc.code,
@@ -932,6 +934,111 @@ class CodexBridge:
                     row.update(status='unknown', can_approve=False, can_deny=False)
                     self._unknown('approval_outcome_unknown')
                 raise
+
+    def interrupt(self, reason='user_interrupt'):
+        """Human control plane: stop an active AI turn cleanly without cancelling remote simulations."""
+        _check(self.mode == 'standalone', 'CircuitGit owns the embedded conversation; standalone interrupt is disabled.', 'codex_embedded_mode')
+        _check(not self.closed, 'This bridge is closed.', 'codex_bridge_closed')
+        _check(isinstance(reason, str) and 1 <= len(reason) <= 128, 'Supply a bounded interrupt reason.')
+        with self.operation_lock:
+            rpc_replies = []
+            resolved_ids = []
+            with self.lock:
+                if self.data['state'] not in ACTIVE:
+                    return {
+                        'schema': 'spiceowl.codex-interrupt.v1',
+                        'interrupted': False,
+                        'state': self.data['state'],
+                        'recovery_required': bool(self.data['recovery_required']),
+                        'simulation_cancelled': False,
+                    }
+                tid = self.data['thread_id']
+                turn_id = self.data['turn_id']
+                req_key = self.data['request_key']
+                rpc = self.rpc
+                current = self.data['requests'].get(req_key)
+                if current is not None:
+                    current['tools_blocked'] = True
+                executing_side_effect = any(
+                    c['state'] == 'executing' and c['policy'] == 'approval' and c['request_key'] == req_key
+                    for c in self.data['calls'].values()
+                )
+                interrupted_tool_reply = {
+                    'success': False,
+                    'contentItems': [{'type': 'inputText', 'text': encode({'error': 'Human interrupted this turn.'})}],
+                }
+                for aid, row in self.data['approvals'].items():
+                    if row['status'] in ('pending', 'resolving') and row['request_key'] == req_key:
+                        if row['kind'] == 'dynamic_tool' and row['call_key'] in self.data['calls']:
+                            call = self.data['calls'][row['call_key']]
+                            call.update(state='complete', reply=interrupted_tool_reply)
+                            for rid in call['rpc_ids']:
+                                rpc_replies.append({'id': rid, 'result': interrupted_tool_reply})
+                        elif row['method'] in NATIVE_APPROVALS:
+                            rpc_replies.append({'id': row['rpc_id'], 'result': {'decision': 'decline'}})
+                        elif row['method'] == 'item/permissions/requestApproval':
+                            rpc_replies.append({'id': row['rpc_id'], 'result': {'permissions': {}, 'scope': 'turn'}})
+                        else:
+                            rpc_replies.append({'id': row['rpc_id'], 'error': {'code': -32601, 'message': 'Human interrupted turn'}})
+                        row.update(status='resolved', decision='interrupted', can_approve=False, can_deny=False)
+                        resolved_ids.append(aid)
+                for call in self.data['calls'].values():
+                    if call['state'] == 'pending' and call['request_key'] == req_key:
+                        call.update(state='complete', reply=interrupted_tool_reply)
+                        for rid in call['rpc_ids']:
+                            if not any(msg.get('id') == rid for msg in rpc_replies):
+                                rpc_replies.append({'id': rid, 'result': interrupted_tool_reply})
+                self._save()
+            rpc_failed = False
+            if rpc is not None and not rpc.closed:
+                for payload in rpc_replies:
+                    try:
+                        rpc.send(payload)
+                    except BridgeError:
+                        rpc_failed = True
+                if tid and turn_id and not rpc_failed:
+                    try:
+                        rpc.call('turn/interrupt', {'threadId': tid, 'turnId': turn_id})
+                    except BridgeError as exc:
+                        # codex_rpc_rejected indicates Codex already ended the turn; other failures are unknown.
+                        if exc.code != 'codex_rpc_rejected':
+                            with self.lock:
+                                for aid in resolved_ids:
+                                    self._event('approval/resolved', {'approval_id': aid, 'decision': 'interrupted', 'status': 'resolved'})
+                                self._unknown('interrupt_unconfirmed')
+                                self._event('bridge/interrupted', {
+                                    'reason': reason, 'thread_id': tid, 'turn_id': turn_id,
+                                    'request_key': req_key, 'recovery_required': True,
+                                    'simulation_cancelled': False, 'automatic_retry': False,
+                                })
+                            raise
+            with self.lock:
+                for aid in resolved_ids:
+                    self._event('approval/resolved', {'approval_id': aid, 'decision': 'interrupted', 'status': 'resolved'})
+                if executing_side_effect or rpc_failed:
+                    self._unknown('interrupted_during_executing_tool' if executing_side_effect else 'interrupt_unconfirmed')
+                    self._event('bridge/interrupted', {
+                        'reason': reason, 'thread_id': tid, 'turn_id': turn_id,
+                        'request_key': req_key, 'recovery_required': True,
+                        'simulation_cancelled': False, 'automatic_retry': False,
+                    })
+                else:
+                    current = self.data['requests'].get(req_key)
+                    if current is not None and current.get('state') not in TERMINAL | {'rejected'}:
+                        current.update(state='interrupted', interrupted_at=utcnow(), reason=reason)
+                    self.data.update(state='interrupted', turn_id=None, request_key=None)
+                    self._event('bridge/interrupted', {
+                        'reason': reason, 'thread_id': tid, 'turn_id': turn_id,
+                        'request_key': req_key, 'recovery_required': False,
+                        'simulation_cancelled': False, 'automatic_retry': False,
+                    })
+                return {
+                    'schema': 'spiceowl.codex-interrupt.v1',
+                    'interrupted': True,
+                    'state': self.data['state'],
+                    'recovery_required': bool(self.data['recovery_required']),
+                    'simulation_cancelled': False,
+                }
 
     def disconnect(self):
         with self.operation_lock:

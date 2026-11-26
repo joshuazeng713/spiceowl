@@ -444,8 +444,28 @@ class TestSshSetupUiAndServerRoutes(unittest.TestCase):
             self.assertNotIn("onclick=", html)
             self.assertEqual(
                 SSH_SETUP_ACTIONS,
-                frozenset({"state", "ensure_key", "upsert_host", "delete_host", "scan_host_key", "trust_host_keys", "deploy_key", "diagnose"}),
+                frozenset({"state", "ensure_key", "delete_key", "upsert_host", "delete_host", "scan_host_key", "trust_host_keys", "deploy_key", "diagnose"}),
             )
+
+            # Safe key deletion removes keypair, clears dangling host IdentityFile, and protects config/known_hosts
+            ssh_dir.mkdir(parents=True, exist_ok=True)
+            (ssh_dir / "config").write_text("Host keep\n  HostName 1.2.3.4\n", encoding="utf-8")
+            with self.assertRaises(DomainError):
+                dispatch_ssh_setup_action(ssh_dir, "delete_key", {"name": "config"})
+            (ssh_dir / "id_test_clean").write_text("PRIVATE-KEY\n", encoding="utf-8")
+            (ssh_dir / "id_test_clean.pub").write_text(_FAKE_PUBKEY + "\n", encoding="utf-8")
+            dispatch_ssh_setup_action(ssh_dir, "upsert_host", {
+                "alias": "host-using-key",
+                "hostname": "10.0.9.8",
+                "user": "designer",
+                "identity_file": str(ssh_dir / "id_test_clean"),
+            })
+            del_k = dispatch_ssh_setup_action(ssh_dir, "delete_key", {"name": "id_test_clean"})
+            self.assertTrue(del_k["deleted"])
+            self.assertEqual(del_k["cleared_hosts"], ["host-using-key"])
+            self.assertFalse((ssh_dir / "id_test_clean").exists())
+            self.assertFalse((ssh_dir / "id_test_clean.pub").exists())
+            self.assertEqual(list_managed_hosts(ssh_dir)[0]["identity_file"], "")
 
             res = dispatch_ssh_setup_action(ssh_dir, "upsert_host", {
                 "alias": "cg-eda-01",

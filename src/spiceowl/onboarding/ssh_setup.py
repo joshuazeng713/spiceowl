@@ -756,6 +756,64 @@ def list_local_keys(ssh_dir: str | Path | None = None) -> list[dict]:
     return results
 
 
+_PROTECTED_SSH_FILES = frozenset({
+    "config",
+    "known_hosts",
+    "known_hosts.old",
+    "authorized_keys",
+    "authorized_keys2",
+    MANAGED_FILENAME,
+})
+
+
+def delete_local_key(ssh_dir: str | Path | None, key_name: str) -> dict:
+    """Safely delete one local SSH keypair (``<name>`` and ``<name>.pub``) inside ``ssh_dir``.
+
+    Verifies that ``<name>.pub`` exists and parses as a valid OpenSSH public key
+    before unlinking anything, refuses symlinks and protected SSH files, and
+    clears dangling ``IdentityFile`` references from managed hosts.
+    """
+    clean_name = validate_key_name(key_name)
+    if clean_name.lower() in _PROTECTED_SSH_FILES:
+        raise DomainError(f"Refusing to delete protected SSH file '{clean_name}'.", "ssh_key_protected")
+    base = _ssh_dir_path(ssh_dir)
+    pub_path = base / f"{clean_name}.pub"
+    priv_path = base / clean_name
+    if pub_path.is_symlink() or priv_path.is_symlink():
+        raise DomainError("Refusing to delete a symlinked SSH key file.", "ssh_key_symlink")
+    if not pub_path.is_file():
+        return {"name": clean_name, "deleted": False, "cleared_hosts": []}
+    # Verify .pub is a genuine OpenSSH public key before removing the keypair
+    validate_public_key(_read_text_bounded(pub_path, MAX_PUBLIC_KEY_BYTES))
+
+    if priv_path.is_file():
+        priv_path.unlink()
+    pub_path.unlink()
+
+    # Clear any dangling IdentityFile reference in managed spiceowl_hosts.conf
+    cleared_hosts: list[str] = []
+    managed_path = base / MANAGED_FILENAME
+    if managed_path.is_file() and not managed_path.is_symlink():
+        text = _read_text_bounded(managed_path, MAX_CONFIG_BYTES)
+        hosts, extra_lines = _parse_managed_file(text)
+        changed = False
+        match_paths = {f"~/.ssh/{clean_name}", str(priv_path)}
+        for host in hosts:
+            if host.get("identity_file") in match_paths:
+                host["identity_file"] = ""
+                cleared_hosts.append(host["alias"])
+                changed = True
+        if changed:
+            _write_managed_file(base, hosts, extra_lines)
+
+    return {
+        "name": clean_name,
+        "deleted": True,
+        "managed": clean_name in (MANAGED_KEY_NAME, MANAGED_RSA_KEY_NAME),
+        "cleared_hosts": cleared_hosts,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Host key scanning & known_hosts trust
 # ---------------------------------------------------------------------------

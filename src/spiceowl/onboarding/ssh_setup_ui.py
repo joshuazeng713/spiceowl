@@ -31,6 +31,7 @@ from spiceowl.domain.common import DomainError
 from spiceowl.onboarding.ssh_setup import (
     MANAGED_KEY_NAME,
     MANAGED_RSA_KEY_NAME,
+    delete_local_key,
     delete_managed_host,
     deploy_public_key,
     diagnose_connection,
@@ -45,6 +46,7 @@ from spiceowl.onboarding.ssh_setup import (
 SSH_SETUP_ACTIONS = frozenset({
     "state",
     "ensure_key",
+    "delete_key",
     "upsert_host",
     "delete_host",
     "scan_host_key",
@@ -103,6 +105,11 @@ def dispatch_ssh_setup_action(ssh_dir: str | Path | None, action: str, payload: 
         key_name = data.get("key_name") or None
         key_info = ensure_managed_key(base, key_name=key_name, key_type=key_type)
         return {"ok": True, "key": key_info, "state": build_ssh_setup_state(base)}
+
+    if action == "delete_key":
+        key_name = data.get("name") or data.get("key_name") or ""
+        res = delete_local_key(base, key_name)
+        return {"ok": True, **res, "state": build_ssh_setup_state(base)}
 
     if action == "upsert_host":
         res = upsert_managed_host(base, data)
@@ -247,6 +254,11 @@ textarea.mono{{font:12px/1.45 var(--mono);background:#f6f8f6;border:1px solid va
 .key-bar{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f8faf8;border:1px solid var(--line);border-radius:9px;padding:9px 12px}}
 .key-bar label{{font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap}}
 .key-bar select{{flex:1 1 200px;padding:6px 9px;font-size:13px}}
+.key-mgr{{border:1px solid var(--line);border-radius:9px;background:#fbfcfa;padding:10px 12px;display:flex;flex-direction:column;gap:8px}}
+.key-row{{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 9px;border:1px solid #e4e9e4;border-radius:7px;background:#fff;flex-wrap:wrap}}
+.key-row-info{{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 180px}}
+.key-row-info strong{{font-size:12.5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
+.key-row-info small{{font:11px/1.3 var(--mono);color:var(--muted);overflow-wrap:anywhere}}
 .row{{display:flex;gap:8px;flex-wrap:wrap;align-items:center}}
 button{{border:1px solid transparent;border-radius:8px;padding:9px 15px;font:600 13.5px/1.2 var(--sans);cursor:pointer;transition:background .15s,border-color .15s}}
 button:disabled{{opacity:.55;cursor:not-allowed}}
@@ -336,6 +348,14 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
           <label for="f-key">🔑 免密密钥</label>
           <select id="f-key"></select>
           <button id="btn-quick-copy-key" class="btn-sec btn-sm" type="button">复制公钥</button>
+          <button id="btn-toggle-key-mgr" class="btn-sec btn-sm" type="button">管理密钥</button>
+        </div>
+        <div id="key-mgr" class="key-mgr hidden" style="margin-top:8px">
+          <div class="row" style="justify-content:space-between">
+            <span class="sub"><strong>本机 SSH 密钥列表</strong>（可复制公钥或删除不再使用的密钥）</span>
+            <button id="btn-close-key-mgr" class="btn-sec btn-sm" type="button">收起</button>
+          </div>
+          <div id="key-mgr-list" style="display:flex;flex-direction:column;gap:6px"></div>
         </div>
 
         <details id="adv-details" class="adv" style="margin-top:10px">
@@ -482,22 +502,69 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     sel.replaceChildren();
     const optAuto = document.createElement('option');
     optAuto.value = '__auto__';
-    optAuto.textContent = '自动管理密钥（新版 Ed25519 / 旧版服务器自动 RSA）';
+    optAuto.textContent = '自动管理密钥（推荐）';
     sel.appendChild(optAuto);
     for (const k of (appState.keys || [])) {{
-      if (!k.has_private) continue;
+      if (!k.has_private || k.managed) continue;
       const opt = document.createElement('option');
       opt.value = k.config_path;
-      opt.textContent = k.name + (k.managed ? '（托管）' : '（本机已有）') + ' · ' + k.key_type;
+      opt.textContent = k.name + '（本机已有）';
       sel.appendChild(opt);
     }}
-    const optNone = document.createElement('option');
-    optNone.value = '';
-    optNone.textContent = '使用 OpenSSH 默认密钥（不指定）';
-    sel.appendChild(optNone);
     if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
     else sel.value = '__auto__';
     syncPubKeyBox();
+    renderKeyManager();
+  }}
+
+  function renderKeyManager() {{
+    const list = $('key-mgr-list');
+    if (!list) return;
+    list.replaceChildren();
+    const keys = appState.keys || [];
+    if (!keys.length) {{
+      const p = document.createElement('p');
+      p.className = 'sub';
+      p.textContent = '本机当前暂无 SSH 密钥；点击「保存并测试连接」时会自动生成。';
+      list.appendChild(p);
+      return;
+    }}
+    for (const k of keys) {{
+      const row = document.createElement('div');
+      row.className = 'key-row';
+      const info = document.createElement('div');
+      info.className = 'key-row-info';
+      const title = document.createElement('strong');
+      title.textContent = k.name;
+      const badge = document.createElement('span');
+      badge.className = 'tag' + (k.managed ? ' managed' : '');
+      badge.textContent = k.managed ? '自动托管' : '本机已有';
+      title.appendChild(badge);
+      const sub = document.createElement('small');
+      sub.textContent = k.key_type + ' · ' + k.fingerprint;
+      info.append(title, sub);
+      const acts = document.createElement('div');
+      acts.className = 'row';
+      const bCopy = document.createElement('button');
+      bCopy.type = 'button'; bCopy.className = 'btn-sec btn-sm'; bCopy.textContent = '复制公钥';
+      bCopy.addEventListener('click', () => copyText(k.public_key, $('global-msg'), '已复制 ' + k.name + ' 的公钥。'));
+      const bDel = document.createElement('button');
+      bDel.type = 'button'; bDel.className = 'btn-danger btn-sm'; bDel.textContent = '删除';
+      bDel.addEventListener('click', async () => {{
+        const promptText = k.managed
+          ? ('确定删除自动托管密钥「' + k.name + '」吗？删除后下次连接会自动重新生成。')
+          : ('⚠️ 「' + k.name + '」是你本机原有的 SSH 密钥（可能用于 GitHub 或其他服务器）。删除后不可恢复，确定删除吗？');
+        if (!window.confirm(promptText)) return;
+        try {{
+          await callAction('delete_key', {{name: k.name}});
+          renderAll();
+          setMsg($('global-msg'), '已删除密钥 ' + k.name + '。', 'ok');
+        }} catch (e) {{ setMsg($('global-msg'), e.message, 'err'); }}
+      }});
+      acts.append(bCopy, bDel);
+      row.append(info, acts);
+      list.appendChild(row);
+    }}
   }}
 
   function syncPubKeyBox(overrideKeyObj) {{
@@ -555,8 +622,8 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     $('f-jump-user').value = jumpManaged && jumpManaged.user !== h.user ? jumpManaged.user : '';
     if (h.identity_file && [...$('f-key').options].some(o => o.value === h.identity_file)) {{
       $('f-key').value = h.identity_file;
-    }} else if (!h.identity_file) {{
-      $('f-key').value = '';
+    }} else {{
+      $('f-key').value = '__auto__';
     }}
     syncPubKeyBox();
     hideAssists();
@@ -994,6 +1061,11 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     syncPubKeyBox(k);
     await copyText(k.public_key, $('global-msg'), '已复制公钥 (' + k.name + ' · ' + k.fingerprint + ')。');
   }});
+  $('btn-toggle-key-mgr').addEventListener('click', () => {{
+    $('key-mgr').classList.toggle('hidden');
+    renderKeyManager();
+  }});
+  $('btn-close-key-mgr').addEventListener('click', () => $('key-mgr').classList.add('hidden'));
   $('btn-new-host').addEventListener('click', resetNewForm);
 
   $('host-form').addEventListener('submit', async (ev) => {{

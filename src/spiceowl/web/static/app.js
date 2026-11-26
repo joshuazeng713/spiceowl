@@ -28,7 +28,8 @@ let live = {loaded: false, loading: false, enabled: false, projectId: '', runtim
 let liveDraft = {configuration: '', source_commit: '', run_id: ''};
 let directState = {
   loaded: false, loading: false, busy: false, runs: [], monitor: null,
-  activeTab: 'waveforms',
+  activeTab: '',
+  quickLaunchNote: null, quickLaunchError: null,
   selectedId: null, detail: null, report: null, lookup: null, error: null,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
   recoveryQuery: '', recoveryOutcome: '',
@@ -836,36 +837,434 @@ function directReportSection(report) {
   return `<div class="direct-report"><h3>收集报告（${escape(report.simulator || 'direct')}）</h3><pre class="plan-json">${escape(JSON.stringify(report, null, 2))}</pre></div>`;
 }
 
+const SIM_STARTER_TEMPLATES = {
+  spectre_rc_smoke: {
+    label: 'RC 瞬态烟雾 (100ns)',
+    simulator: 'spectre',
+    output_format: 'psfbin',
+    run_prefix: 'sim-rc-smoke',
+    netlist: [
+      '// SpiceOwl Zero-PDK Spectre RC Step Smoke Testbench',
+      'simulator lang=spectre',
+      'global 0',
+      'parameters vdd=1.2 r_val=1k c_val=10p',
+      'V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=5n rise=1n fall=1n width=40n period=100n',
+      'R1 (in out) resistor r=r_val',
+      'C1 (out 0) capacitor c=c_val',
+      'save in out',
+      'tran tran stop=100n errpreset=moderate',
+    ].join('\n'),
+  },
+  spectre_mos1_inverter: {
+    label: 'CMOS 反相器瞬态',
+    simulator: 'spectre',
+    output_format: 'psfbin',
+    run_prefix: 'sim-cmos-inv',
+    netlist: [
+      '// SpiceOwl Zero-PDK Level-1 CMOS Inverter Transient',
+      'simulator lang=spectre',
+      'global 0',
+      'parameters vdd=1.2 cload=20f',
+      'model nch mos1 type=n vto=0.35 kp=180u',
+      'model pch mos1 type=p vto=-0.35 kp=90u',
+      'V_dd (vdd_n 0) vsource dc=vdd',
+      'V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=2n rise=0.2n fall=0.2n width=8n period=20n',
+      'MN (out in 0 0) nch w=1u l=0.18u',
+      'MP (out in vdd_n vdd_n) pch w=2u l=0.18u',
+      'CL (out 0) capacitor c=cload',
+      'save in out',
+      'tran tran stop=40n errpreset=moderate',
+    ].join('\n'),
+  },
+  spectre_opamp_ac: {
+    label: '两极点运放 AC 频响',
+    simulator: 'spectre',
+    output_format: 'psfascii',
+    run_prefix: 'sim-opamp-ac',
+    netlist: [
+      '// SpiceOwl Zero-PDK Two-Pole Macro Op-Amp AC Loop',
+      'simulator lang=spectre',
+      'global 0',
+      'parameters gm1=1m ro1=100k c1=10p gm2=1m ro2=10k c2=0.5p',
+      'V_ac (in 0) vsource type=dc dc=0 mag=1 phase=0',
+      'G1 (n1 0 in 0) vccs gm=gm1',
+      'R1 (n1 0) resistor r=ro1',
+      'C1 (n1 0) capacitor c=c1',
+      'G2 (out 0 n1 0) vccs gm=gm2',
+      'R2 (out 0) resistor r=ro2',
+      'C2 (out 0) capacitor c=c2',
+      'save out',
+      'ac ac start=10 stop=1G dec=20',
+    ].join('\n'),
+  },
+  spectre_rlc_ringing: {
+    label: '二阶 RLC 振铃',
+    simulator: 'spectre',
+    output_format: 'psfbin',
+    run_prefix: 'sim-rlc-step',
+    netlist: [
+      '// SpiceOwl Zero-PDK 2nd-Order RLC Underdamped Step',
+      'simulator lang=spectre',
+      'global 0',
+      'parameters vdd=1.2 r_val=120 l_val=200n c_val=5p',
+      'V_in (in 0) vsource type=pulse val0=0 val1=vdd delay=2n rise=0.2n fall=0.2n width=80n period=120n',
+      'R1 (in n1) resistor r=r_val',
+      'L1 (n1 out) inductor l=l_val',
+      'C1 (out 0) capacitor c=c_val',
+      'save in out',
+      'tran tran stop=60n maxstep=50p errpreset=conservative',
+    ].join('\n'),
+  },
+};
+
+function pickMostIdleHostId() {
+  const list = state.hosts || [];
+  if (!list.length) return '';
+  let best = list[0].host_id;
+  let bestScore = Infinity;
+  for (const h of list) {
+    const live = hostLiveState.byId.get(h.host_id);
+    const res = live?.ok ? live.resources : h.last_resources?.resources;
+    const cpu = Number.isFinite(res?.cpu_busy_percent) ? res.cpu_busy_percent : 999;
+    const memUsed = Number.isFinite(res?.memory_used_percent) ? res.memory_used_percent : 50;
+    const score = cpu + memUsed * 0.25;
+    if (score < bestScore) {
+      bestScore = score;
+      best = h.host_id;
+    }
+  }
+  return best;
+}
+
+function extractNetlistCodeBlock(text) {
+  if (typeof text !== 'string') return '';
+  const blocks = [...text.matchAll(/```(?:spectre|spice|scs|sp|cir|text)?\r?\n([\s\S]*?)```/gi)].map(m => m[1].trim()).filter(Boolean);
+  const spiceBlock = blocks.find(b => /simulator\s+lang=|tran\s+|ac\s+|dc\s+|\.tran|\.ac|vsource|resistor|capacitor/i.test(b));
+  return spiceBlock || blocks[0] || '';
+}
+
+function buildDirectPreparePayload() {
+  const payload = {
+    run_key: directDraft.run_key.trim(),
+    netlist_text: directDraft.netlist_text,
+    backend: directDraft.backend,
+    simulator: directDraft.simulator,
+    output_format: directDraft.output_format,
+    cpus: Number(directDraft.cpus),
+    memory_gib: Number(directDraft.memory_gib),
+    wall_seconds: Number(directDraft.wall_seconds),
+    remote_python: directDraft.remote_python.trim() || '/usr/bin/python3',
+    remote_root: directDraft.remote_root.trim() || '.spiceowl-runs',
+    recovery_policy: {
+      enabled: !!directDraft.rec_enabled,
+      max_recovery_attempts: Number(directDraft.rec_max_attempts),
+      max_memory_bytes: Math.round(Math.max(Number(directDraft.rec_max_memory_gib), Number(directDraft.memory_gib)) * 2**30),
+      max_elapsed_seconds: Math.max(60, Math.round(Number(directDraft.rec_max_elapsed_min) * 60)),
+      retry_on_license: !!directDraft.rec_retry_license,
+      license_backoff_seconds: Number(directDraft.rec_license_backoff),
+      retry_on_oom: !!directDraft.rec_retry_oom,
+      oom_memory_multiplier: Number(directDraft.rec_oom_multiplier) || 2.0,
+      allow_host_relocation: !!directDraft.rec_allow_relocate,
+    },
+  };
+  if (directDraft.target_mode === 'pool') {
+    payload.host_ids = state.hosts.slice(0, 32).map(h => h.host_id);
+  } else {
+    payload.host_id = directDraft.host_id;
+  }
+  const includes = directDraft.include_dirs.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (includes.length) payload.include_dirs = includes;
+  const mods = directDraft.env_modules.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+  const scs = directDraft.env_scripts.split(/[,\r\n]+/).map(s => s.trim()).filter(Boolean);
+  if (mods.length || scs.length) payload.remote_env = {modules: mods, setup_scripts: scs, shell: 'bash'};
+  if (directDraft.backend === 'lsf') {
+    payload.scheduler = {queue: directDraft.queue.trim(), exclusive: !!directDraft.exclusive};
+    if (directDraft.project.trim()) payload.scheduler.project = directDraft.project.trim();
+    if (directDraft.job_group.trim()) payload.scheduler.job_group = directDraft.job_group.trim();
+  } else if (directDraft.backend === 'slurm') {
+    payload.scheduler = {partition: directDraft.partition.trim(), exclusive: !!directDraft.exclusive};
+    if (directDraft.account.trim()) payload.scheduler.account = directDraft.account.trim();
+    if (directDraft.qos.trim()) payload.scheduler.qos = directDraft.qos.trim();
+  }
+  return payload;
+}
+
+async function quickLaunchDirectSimulation() {
+  if (isPublicDemo() || directState.busy) return;
+  if (!directDraft.netlist_text.trim()) {
+    toast('请先点选上方一个零 PDK 模板、导入本地网表，或让左侧 Agent 帮你生成网表。');
+    return;
+  }
+  if (!state.hosts.length) {
+    toast('还没有连接服务器，请先回「首页与连接」接入服务器。');
+    return;
+  }
+  directState.busy = true;
+  directState.error = null;
+  directState.quickLaunchError = null;
+  directState.quickLaunchNote = '① 正在本地冻结网表与仿真计划 (Prepare)…';
+  render();
+  try {
+    const prep = await api('/api/direct/prepare', {method: 'POST', body: buildDirectPreparePayload()});
+    const runId = prep.run.run_id;
+    directState.selectedId = runId;
+    directDraft.run_key = '';
+    directState.quickLaunchNote = `✓ 已冻结 ${runId} → ② 正在上传网表到 ${prep.run.host_id} (Stage)…`;
+    render();
+    await api(`/api/direct/runs/${encodeURIComponent(runId)}/stage`, {method: 'POST', body: {}});
+    directState.quickLaunchNote = `✓ 已冻结 → ✓ 已上传 → ③ 正在原子启动仿真 (Launch)…`;
+    render();
+    await api(`/api/direct/runs/${encodeURIComponent(runId)}/launch`, {
+      method: 'POST',
+      body: {recheck_resources: false},
+    });
+    directState.quickLaunchNote = `🚀 仿真 ${runId} 已在 ${prep.run.host_id} 成功启动！`;
+    hostLiveState.loaded = false;
+    toast(`🚀 仿真 ${runId} 已成功启动！可查看任务控制或回「服务器池资源」查看紫色个人资源条。`);
+  } catch (error) {
+    directState.quickLaunchError = error.message;
+    directState.quickLaunchNote = null;
+    toast(error.message);
+  } finally {
+    directState.busy = false;
+    await refreshDirect();
+  }
+}
+
+async function sendPromptToSimAgent(promptText) {
+  if (!isStandaloneAgent() || codexPanelState.busy) return;
+  const text = String(promptText || '').trim();
+  if (!text) return;
+  codexPanelState.busy = true;
+  codexPanelState.error = null;
+  renderCodexActivity();
+  try {
+    if (!codexPanelState.status?.connected) {
+      await api('/api/codex/connect', {method: 'POST', body: {}});
+      await refreshCodexStatus();
+    }
+    if (!codexPanelState.status?.thread_id) {
+      const th = await api('/api/codex/thread', {method: 'POST'});
+      codexPanelState.selectedThread = th.thread_id || null;
+      await refreshCodexStatus();
+    }
+    openCodexEvents();
+    const request = {
+      thread_id: codexPanelState.status.thread_id,
+      text,
+      request_key: `codex-${crypto.randomUUID()}`,
+    };
+    sessionStorage.setItem(CODEX_PENDING_KEY, JSON.stringify(request));
+    codexPanelState.pending = request;
+    codexItem(codexThread(request.thread_id), 'request:' + request.request_key, 'user', {
+      text: request.text,
+      status: 'unconfirmed',
+      requestKey: request.request_key,
+    });
+    codexPanelState.draft = '';
+    if ($('#codex-message')) $('#codex-message').value = '';
+    renderCodexActivity();
+    const receipt = await api('/api/codex/message', {method: 'POST', body: request});
+    if (receipt.request_key === request.request_key && !receipt.recovery_required) {
+      confirmCodexPending(receipt.request_key, receipt.turn_id);
+    }
+    await refreshCodexStatus();
+  } catch (error) {
+    codexPanelState.error = error.message;
+    toast(error.message);
+  } finally {
+    codexPanelState.busy = false;
+    renderCodexActivity();
+  }
+}
+
+function buildSimAgentContextSummary() {
+  const hostLines = (state.hosts || []).map(h => {
+    const live = hostLiveState.byId.get(h.host_id);
+    const r = live?.ok ? live.resources : h.last_resources?.resources;
+    const cpu = Number.isFinite(r?.cpu_busy_percent) ? `${r.cpu_busy_percent.toFixed(1)}%/${r.cpu_count || '?'}核` : '未采样';
+    const mem = Number.isFinite(r?.memory_available_bytes) ? `可用${(r.memory_available_bytes / 2**30).toFixed(0)}GiB` : '';
+    return `${h.host_id}(CPU ${cpu}${mem ? ', ' + mem : ''})`;
+  });
+  const licLines = (hostLiveState.licenses?.features || []).slice(0, 5).map(f => `${f.label}:${f.in_use}/${f.issued}(余${f.available})`);
+  return `当前已连接服务器：${hostLines.join('；') || '暂无'}。${licLines.length ? 'SPICE License：' + licLines.join('，') + '。' : ''}`;
+}
+
+function directAgentSetupPanel(hostsList) {
+  const bestHostId = pickMostIdleHostId();
+  const bestLive = bestHostId ? hostLiveState.byId.get(bestHostId) : null;
+  const bestRes = bestLive?.ok ? bestLive.resources : hostsList.find(h => h.host_id === bestHostId)?.last_resources?.resources;
+  const status = codexPanelState.status;
+  const agentReady = Boolean(status?.connected);
+
+  const hostOptionLabel = h => {
+    const lv = hostLiveState.byId.get(h.host_id);
+    const r = lv?.ok ? lv.resources : h.last_resources?.resources;
+    const cpu = Number.isFinite(r?.cpu_busy_percent) ? `CPU ${r.cpu_busy_percent.toFixed(1)}%` : '';
+    const mem = Number.isFinite(r?.memory_available_bytes) ? `空闲 ${(r.memory_available_bytes / 2**30).toFixed(0)} GiB` : '';
+    const rec = h.host_id === bestHostId && cpu ? ' · 推荐' : '';
+    const extra = [cpu, mem].filter(Boolean).join(' · ');
+    return `${h.host_id}${extra ? `（${extra}${rec}）` : ''}`;
+  };
+
+  const schedBox = directDraft.backend === 'lsf'
+    ? `<div class="direct-sched-box"><strong>LSF 集群参数（bsub）</strong><div class="direct-grid"><label>Queue（必填）<input id="direct-queue" value="${escape(directDraft.queue)}" placeholder="analog_long" required></label><label>Project（可选）<input id="direct-project" value="${escape(directDraft.project)}" placeholder="adc_proj"></label><label class="direct-wide">Job group（可选）<input id="direct-job-group" value="${escape(directDraft.job_group)}" placeholder="/analog/sim"></label></div><div class="direct-check-row"><label><input id="direct-exclusive" type="checkbox" ${directDraft.exclusive ? 'checked' : ''}> 独占计算节点 (-x)</label></div></div>`
+    : directDraft.backend === 'slurm'
+    ? `<div class="direct-sched-box"><strong>Slurm 集群参数（sbatch）</strong><div class="direct-grid"><label>Partition（必填）<input id="direct-partition" value="${escape(directDraft.partition)}" placeholder="sim_compute" required></label><label>Account（可选）<input id="direct-account" value="${escape(directDraft.account)}" placeholder="analog_lab"></label><label class="direct-wide">QoS（可选）<input id="direct-qos" value="${escape(directDraft.qos)}" placeholder="normal"></label></div><div class="direct-check-row"><label><input id="direct-exclusive" type="checkbox" ${directDraft.exclusive ? 'checked' : ''}> 独占计算节点 (--exclusive)</label></div></div>`
+    : '';
+
+  const recBox = `<details class="host-form-details" ${directDraft.rec_enabled ? 'open' : ''}><summary>夜间有界自动恢复（OOM 扩内存 / License 退避重试）</summary><div class="direct-check-row"><label><input id="direct-rec-enabled" type="checkbox" ${directDraft.rec_enabled ? 'checked' : ''}> 启用有界自动恢复</label></div><div class="direct-grid"><label>最大恢复次数 (0–5)<input id="direct-rec-attempts" type="number" min="0" max="5" value="${escape(directDraft.rec_max_attempts)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>内存上限 (GiB)<input id="direct-rec-maxmem" type="number" min="1" max="16384" value="${escape(directDraft.rec_max_memory_gib)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>许可证退避 (秒)<input id="direct-rec-backoff" type="number" min="0" max="3600" value="${escape(directDraft.rec_license_backoff)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label><label>时间预算 (分钟)<input id="direct-rec-elapsed" type="number" min="1" max="10080" value="${escape(directDraft.rec_max_elapsed_min)}" ${directDraft.rec_enabled ? '' : 'disabled'}></label></div><div class="direct-check-row"><label><input id="direct-rec-lic" type="checkbox" ${directDraft.rec_retry_license ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> License 退避重试</label><label><input id="direct-rec-oom" type="checkbox" ${directDraft.rec_retry_oom ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> OOM 自动内存翻倍</label><label><input id="direct-rec-relocate" type="checkbox" ${directDraft.rec_allow_relocate ? 'checked' : ''} ${directDraft.rec_enabled ? '' : 'disabled'}> 允许迁移空闲主机</label></div></details>`;
+
+  const agentCard = isStandaloneAgent() ? `
+    <section class="sim-agent-card">
+      <div class="sim-card-head">
+        <h2>✧ Agent 仿真配置助手 <span id="codex-runtime-state">${chip(agentReady ? 'Codex 已连接' : (status?.state || '待连接'), agentReady ? 'green' : '')}</span></h2>
+        <div class="direct-actions">
+          ${agentReady
+            ? `<button type="button" class="button secondary small" data-action="codex-thread">新对话</button>`
+            : `<button type="button" class="button primary small" data-action="sim-agent-connect" ${codexPanelState.busy ? 'disabled' : ''}>${codexPanelState.busy ? '正在连接…' : '一键连接 Codex'}</button>`}
+        </div>
+      </div>
+      <p class="subtle-note">直接用自然语言描述你想跑的仿真，或点下方快捷指令让 Agent 结合实时服务器余量与 SPICE License 帮你选机、写网表、查配置；生成的网表可一键填入右侧。</p>
+      <div class="sim-prompt-chips">
+        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="pick_host" ${codexPanelState.busy ? 'disabled' : ''}>🎯 帮我挑最空闲的服务器并核对 SPICE License</button>
+        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="smoke_netlist" ${codexPanelState.busy ? 'disabled' : ''}>⚡ 生成零 PDK Spectre 烟雾网表</button>
+        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="review_netlist" ${codexPanelState.busy ? 'disabled' : ''}>📝 帮我检查右侧当前网表与仿真设置</button>
+        <button type="button" class="sim-prompt-chip" data-action="sim-agent-prompt" data-kind="pvt_plan" ${codexPanelState.busy ? 'disabled' : ''}>▦ 帮我规划 PVT Corner / MC 扫描方案</button>
+      </div>
+      <div id="codex-notices" class="codex-notices"></div>
+      <span id="codex-stream-state" class="subtle-note" style="font-size:11.5px">${codexPanelState.streamState === 'connected' ? '实时对话流已连接' : '点上方指令或发送消息即自动开启对话'}</span>
+      <div id="codex-timeline" class="sim-agent-timeline" role="log" aria-live="polite" aria-label="Agent 仿真配置对话"></div>
+      <div id="codex-approvals" class="codex-approvals"></div>
+      <form id="sim-agent-form" class="codex-composer">
+        <textarea id="codex-message" maxlength="4000" rows="3" placeholder="例如：帮我在最空闲的服务器上配置一个 Spectre 100ns 瞬态仿真，保存 in 和 out 波形，并开启 OOM 自动扩内存…">${escape(codexPanelState.draft)}</textarea>
+        <div>
+          <span class="subtle-note">Agent 调用工具仍受权限审批保护，不会擅自改原网表。</span>
+          <button id="codex-send" class="button primary small" type="submit" ${codexPanelState.busy ? 'disabled' : ''}>发送给 Agent</button>
+        </div>
+      </form>
+    </section>` : `
+    <section class="sim-agent-card">
+      <div class="sim-card-head"><h2>✧ CircuitGit 协同 Agent</h2>${chip('协同模式', 'green')}</div>
+      <p class="subtle-note">当前工作区与 CircuitGit 共享同一条 Agent 对话通道，不重复启动第二个助手。</p>
+      <a class="button primary small" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">前往 CircuitGit 对话 ↗</a>
+    </section>`;
+
+  const bestBanner = bestHostId && Number.isFinite(bestRes?.cpu_busy_percent)
+    ? `<div class="sim-rec-host-bar"><span>💡 当前最空闲推荐节点：<strong>${escape(bestHostId)}</strong>（CPU ${bestRes.cpu_busy_percent.toFixed(1)}% · 可用内存 ${Number.isFinite(bestRes.memory_available_bytes) ? (bestRes.memory_available_bytes / 2**30).toFixed(0) + ' GiB' : '—'}）</span>${directDraft.host_id !== bestHostId ? `<button type="button" class="button secondary small" data-action="direct-pick-host" data-id="${escape(bestHostId)}">一键切到 ${escape(bestHostId)}</button>` : '<span>✓ 已选中</span>'}</div>`
+    : '';
+
+  const launchBanner = directState.quickLaunchNote
+    ? `<div class="sim-launch-status"><strong>${escape(directState.quickLaunchNote)}</strong><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-tab" data-tab="runs">查看任务状态与波形 →</button><a class="button secondary small" href="#hosts">回服务器池看紫色资源条</a></div></div>`
+    : directState.quickLaunchError
+    ? `<div class="sim-launch-status err"><strong>启动未完成：</strong><span>${escape(directState.quickLaunchError)}</span></div>`
+    : '';
+
+  const configCard = `
+    <section class="sim-config-card">
+      <div class="sim-card-head">
+        <h2>▷ 仿真配置与一键启动</h2>
+        <span class="subtle-note">${hostsList.length ? `已连接 ${hostsList.length} 台服务器` : '尚未连接服务器'}</span>
+      </div>
+      ${bestBanner}
+      <div>
+        <div class="subtle-note" style="margin-bottom:6px">快速载入零 PDK 模板（新手可直接点选跑通第一个仿真）：</div>
+        <div class="sim-tpl-chips">
+          ${Object.entries(SIM_STARTER_TEMPLATES).map(([k, t]) => `<button type="button" class="sim-tpl-chip" data-action="direct-tpl" data-id="${escape(k)}">${escape(t.label)}</button>`).join('')}
+          <label class="direct-file-label" style="margin-left:auto">📁 导入本地网表 (.scs/.sp)<input id="direct-netlist-file" type="file" accept=".scs,.sp,.cir,.net,.txt"></label>
+        </div>
+      </div>
+      <form id="direct-prepare-form">
+        <div class="direct-grid">
+          <label class="direct-wide">目标服务器
+            <select id="direct-host-id" ${!hostsList.length ? 'disabled' : ''}>
+              ${hostsList.length ? hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === directDraft.host_id ? 'selected' : ''}>${escape(hostOptionLabel(h))}</option>`).join('') : '<option value="">请先在首页连接服务器</option>'}
+            </select>
+          </label>
+          <label>仿真器
+            <select id="direct-simulator">
+              <option value="spectre" ${directDraft.simulator === 'spectre' ? 'selected' : ''}>Cadence Spectre</option>
+              <option value="ngspice" ${directDraft.simulator === 'ngspice' ? 'selected' : ''}>ngspice</option>
+            </select>
+          </label>
+          <label>任务名称
+            <input id="direct-run-key" value="${escape(directDraft.run_key)}" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" placeholder="sim-first-01">
+          </label>
+        </div>
+        <div class="direct-file-row" style="margin-top:10px">
+          <label for="direct-netlist">网表内容（input.scs · 可直接粘贴、导入或由左侧 Agent 一键填入）</label>
+        </div>
+        <textarea id="direct-netlist" class="direct-netlist" required placeholder="点上方模板按钮快速填入示例网表，或让左侧 Agent 帮你生成…">${escape(directDraft.netlist_text)}</textarea>
+        <details class="host-form-details" style="margin-top:10px">
+          <summary>更多选项（执行后端 SSH/LSF/Slurm · CPU/内存/波形格式 · 远端环境与夜间恢复）</summary>
+          <div class="direct-grid" style="margin-top:8px">
+            <label>执行后端<select id="direct-backend"><option value="ssh_direct" ${directDraft.backend === 'ssh_direct' ? 'selected' : ''}>SSH 直连工作站</option><option value="lsf" ${directDraft.backend === 'lsf' ? 'selected' : ''}>LSF 集群 (bsub)</option><option value="slurm" ${directDraft.backend === 'slurm' ? 'selected' : ''}>Slurm 集群 (sbatch)</option></select></label>
+            <label>选机方式<select id="direct-target-mode"><option value="host" ${directDraft.target_mode === 'host' ? 'selected' : ''}>指定单台主机</option><option value="pool" ${directDraft.target_mode === 'pool' ? 'selected' : ''}>按资源自动推荐</option></select></label>
+            <label>CPU 核数<input id="direct-cpus" type="number" min="1" max="4096" value="${escape(directDraft.cpus)}" required></label>
+            <label>内存 (GiB)<input id="direct-memory" type="number" min="0.1" step="any" max="16384" value="${escape(directDraft.memory_gib)}" required></label>
+            <label>最大时长 (秒)<input id="direct-wall" type="number" min="10" max="604800" value="${escape(directDraft.wall_seconds)}" required></label>
+            <label>波形格式<select id="direct-format"><option value="psfbin" ${directDraft.output_format === 'psfbin' ? 'selected' : ''}>PSF Binary</option><option value="psfascii" ${directDraft.output_format === 'psfascii' ? 'selected' : ''}>PSF ASCII</option><option value="psfxl" ${directDraft.output_format === 'psfxl' ? 'selected' : ''}>PSFXL</option></select></label>
+            <label>远端 Python3 路径<input id="direct-python" value="${escape(directDraft.remote_python)}"></label>
+            <label>远端工作根目录<input id="direct-root" value="${escape(directDraft.remote_root)}" placeholder=".spiceowl-runs"></label>
+            <label>远端 Modules（选填）<input id="direct-env-modules" value="${escape(directDraft.env_modules)}" placeholder="cadence/spectre-23.1"></label>
+            <label>远端 Setup 脚本（选填）<input id="direct-env-scripts" value="${escape(directDraft.env_scripts)}" placeholder="/opt/cadence/env.sh"></label>
+            <label class="direct-wide">Include 目录（每行一个绝对路径，选填）<textarea id="direct-includes" rows="2" placeholder="/opt/pdk/models">${escape(directDraft.include_dirs)}</textarea></label>
+          </div>
+          ${schedBox}
+          ${recBox}
+        </details>
+        <div class="direct-actions" style="margin-top:12px">
+          <button type="button" class="button primary" data-action="direct-quick-launch" ${directState.busy || !hostsList.length ? 'disabled' : ''}>${directState.busy ? '正在准备并启动…' : '🚀 一键准备并启动仿真'}</button>
+          <button type="submit" class="button secondary" ${directState.busy || !hostsList.length ? 'disabled' : ''}>仅冻结计划 (Prepare)</button>
+        </div>
+      </form>
+      ${launchBanner}
+    </section>`;
+
+  return `<div class="sim-setup-grid">${agentCard}${configCard}</div>`;
+}
+
 function directPage() {
   const pub = isPublicDemo();
-  const tab = ['waveforms', 'batches', 'runs', 'recovery'].includes(directState.activeTab) ? directState.activeTab : 'waveforms';
+  const validTabs = pub ? ['waveforms', 'batches', 'runs', 'recovery'] : ['setup', 'waveforms', 'batches', 'runs', 'recovery'];
+  const defaultTab = pub ? 'waveforms' : 'setup';
+  const tab = validTabs.includes(directState.activeTab) ? directState.activeTab : defaultTab;
   let html = heading(
-    'SIMULATION WORKBENCH · 仿真 · 波形 · 批量工作台',
-    '一站式查看波形、管理 PVT/MC 批量与控制仿真任务',
+    'SIMULATION WORKBENCH · 仿真配置与波形工作台',
+    pub ? '一站式查看波形、管理 PVT/MC 批量与控制仿真任务' : 'Agent 辅助仿真配置与执行工作台',
     pub
       ? '当前为浏览器内置交互沙箱：大波形缩放、500 周期毛刺钻取、27-Corner PVT、40 样本 MC、单次任务四步流与 OOM 恢复报告全部可直接点击体验。'
-      : '通过上方 4 个标签页切换：看大波形与周期切片、跑 PVT/MC 批量矩阵、提交或控制单次仿真、以及检索异常自动恢复审计报告。',
+      : '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，同时管理大波形、PVT/MC 批量与夜间值守。',
   );
 
-  // Clean 4-tab bar so beginners see one focused workspace at a time instead of 6 giant stacked panels
-  const tabs = [
+  const tabs = pub ? [
     ['waveforms', '📈 1. 大波形与周期切片', directState.wfIndex?.datasets?.length ? `${directState.wfIndex.datasets.length}` : ''],
     ['batches', '▦ 2. PVT / MC 批量实验', String(directState.batches.length || 0)],
     ['runs', '▷ 3. 单次仿真与控制', String(directState.runs.length || 0)],
     ['recovery', '🛡 4. 异常自动恢复报告', String(directState.recoveryReports.length || 0)],
+  ] : [
+    ['setup', '✧ 1. Agent 辅助配置', ''],
+    ['waveforms', '📈 2. 波形与周期切片', directState.wfIndex?.datasets?.length ? `${directState.wfIndex.datasets.length}` : ''],
+    ['batches', '▦ 3. PVT / MC 批量', String(directState.batches.length || 0)],
+    ['runs', '▷ 4. 任务列表与控制', String(directState.runs.length || 0)],
+    ['recovery', '🛡 5. 夜间值守与恢复', String(directState.recoveryReports.length || 0)],
   ];
   html += `<div class="direct-tabs" role="tablist" aria-label="工作台子模块">${tabs.map(([key, label, badge]) => `<button type="button" role="tab" aria-selected="${tab === key ? 'true' : 'false'}" class="direct-tab ${tab === key ? 'active' : ''}" data-action="direct-tab" data-tab="${key}"><span>${label}</span>${badge !== '' ? `<span class="direct-tab-badge">${escape(badge)}</span>` : ''}</button>`).join('')}</div>`;
 
   if (directState.error) html += `<p class="error-text" role="alert">${escape(directState.error)}</p>`;
 
   const hostsList = state.hosts || [];
-  if (!directDraft.host_id && hostsList.length) directDraft.host_id = hostsList[0].host_id;
+  if (!directDraft.host_id && hostsList.length) directDraft.host_id = pickMostIdleHostId() || hostsList[0].host_id;
   if (!directDraft.run_key) {
     const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-    directDraft.run_key = `direct-${stamp}`;
+    directDraft.run_key = `sim-${stamp}`;
   }
   const run = directState.detail || directState.runs.find(r => r.run_id === directState.selectedId) || null;
 
+  if (tab === 'setup') {
+    html += directAgentSetupPanel(hostsList);
+    return html;
+  }
   if (tab === 'waveforms') {
     html += directWaveformPanel(run);
     return html;
@@ -1552,8 +1951,55 @@ async function handleDirectClick(event) {
     directDraft.cpus = requestedCpus;
     directDraft.memory_gib = requestedMemory;
     directDraft.simulator = requestedSimulator;
-    directState.activeTab = 'runs';
+    directState.activeTab = isPublicDemo() ? 'runs' : 'setup';
     location.hash = '#direct';
+    return;
+  }
+  if (action === 'pick-host') {
+    if (id) {
+      directDraft.target_mode = 'host';
+      directDraft.host_id = id;
+      render();
+    }
+    return;
+  }
+  if (action === 'tpl') {
+    const tpl = SIM_STARTER_TEMPLATES[id];
+    if (tpl) {
+      directDraft.simulator = tpl.simulator;
+      directDraft.output_format = tpl.output_format;
+      directDraft.netlist_text = tpl.netlist;
+      const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
+      directDraft.run_key = `${tpl.run_prefix}-${stamp}`;
+      directState.quickLaunchNote = null;
+      directState.quickLaunchError = null;
+      render();
+      toast(`已载入「${tpl.label}」模板，点击「🚀 一键准备并启动仿真」即可运行。`);
+    }
+    return;
+  }
+  if (action === 'quick-launch') {
+    await quickLaunchDirectSimulation();
+    return;
+  }
+  if (action === 'apply-agent-code') {
+    const thread = codexPanelState.threads.find(item => item.id === codexPanelState.selectedThread);
+    const msgItem = (thread?.items || []).find(item => item.id === id);
+    const code = extractNetlistCodeBlock(msgItem?.text || '');
+    if (code) {
+      directDraft.netlist_text = code;
+      if (/\.tran|\.ac|^\*/m.test(code) && !/simulator\s+lang=spectre/i.test(code)) {
+        directDraft.simulator = 'ngspice';
+        directDraft.output_format = 'psfascii';
+      } else if (/simulator\s+lang=spectre/i.test(code)) {
+        directDraft.simulator = 'spectre';
+        directDraft.output_format = 'psfbin';
+      }
+      render();
+      toast('✨ 已将 Agent 生成的网表填入右侧配置！');
+    } else {
+      toast('未在该回复中找到可导入的网表代码块。');
+    }
     return;
   }
   if (action === 'refresh') { await refreshDirect(); return; }
@@ -2524,7 +2970,7 @@ function hosts() {
     'SERVER POOL & LIVE SIMULATIONS',
     '服务器池资源与运行中仿真',
     '实时展示首页已连接的所有服务器的 CPU、内存、磁盘占用，以及当前正在运行的仿真进程与 FlexLM License 余量。',
-    `<div class="host-page-actions"><button type="button" class="button primary" data-action="host-live-refresh" ${hostLiveState.loading || !state.hosts.length ? 'disabled' : ''}>${hostLiveState.loading ? '正在采样全部服务器…' : '刷新全部资源与仿真'}</button><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 管理 / 新增服务器 ↗</button></div>`
+    `<div class="host-page-actions"><button type="button" class="button secondary" data-action="host-live-refresh" ${hostLiveState.loading || !state.hosts.length ? 'disabled' : ''}>${hostLiveState.loading ? '正在采样全部服务器…' : '刷新全部资源与仿真'}</button><button type="button" class="button secondary" data-action="open-ssh-setup-wizard">＋ 管理 / 新增服务器 ↗</button><button type="button" class="button primary" data-action="hosts-next-sim" ${!state.hosts.length ? 'disabled' : ''}>${directState.runs.length ? '下一步：配置并运行仿真 →' : '下一步：运行第一个仿真 →'}</button></div>`
   );
 
   if (hostLiveState.error) {
@@ -2798,7 +3244,7 @@ function closeCodexEvents() {
 }
 
 function openCodexEvents() {
-  if (!isStandaloneAgent() || location.hash !== '#agents' || codexPanelState.stream
+  if (!isStandaloneAgent() || !['#agents', '#direct'].includes(location.hash) || codexPanelState.stream
       || (!codexPanelState.status?.connected && (!codexPanelState.status?.cursor
         || codexPanelState.cursor >= codexPanelState.status.cursor))) return;
   const sseBase = isConnectorLive() ? connectorState.baseUrl : '';
@@ -2935,7 +3381,7 @@ async function refreshCodexStatus() {
     codexPanelState.error = null;
     openCodexEvents();
   } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
-  finally { codexPanelState.loading = false; if (!location.hash || location.hash === '#quickstart' || location.hash === '#agents') render(); }
+  finally { codexPanelState.loading = false; if (!location.hash || ['#quickstart', '#agents', '#direct'].includes(location.hash)) render(); }
 }
 
 function codexApprovalCard(approval) {
@@ -2954,40 +3400,67 @@ function codexApprovalCard(approval) {
 function renderCodexActivity() {
   const timeline = $('#codex-timeline');
   if (!timeline || !isStandaloneAgent()) return;
+  const onDirectSetup = location.hash === '#direct';
   const thread = codexPanelState.threads.find(item => item.id === codexPanelState.selectedThread);
   const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 80;
-  timeline.innerHTML = (thread?.items || []).map(item => item.type === 'tool'
-    ? `<details class="codex-tool" open><summary><strong>${escape(item.name || 'Tool call')}</strong>${chip(item.status)}</summary>${item.preview ? '<p class="subtle-note">Retained preview · incomplete tool result. The operation status does not establish that the full result is displayed.</p>' : ''}<pre>${escape(item.text)}</pre>${item.ownerReview ? '<p class="subtle-note">This operation needs the execution owner’s human review. Open the review page supplied in the result. A Codex tool approval does not approve that separate operation.</p>' : ''}</details>`
-    : `<article class="codex-message codex-${item.type}"><div>${item.type === 'user' ? 'You' : 'Codex'}${item.status === 'unconfirmed' ? ' · delivery unconfirmed' : ''}</div>${item.preview ? '<p class="subtle-note">Retained preview · incomplete message.</p>' : ''}<p>${escape(item.text || 'Waiting for response text…')}</p></article>`).join('')
-    || '<div class="codex-chat-empty"><strong>Your simulation workspace, in conversation.</strong><p>Connect explicitly, create a conversation, then send a message. Tool requests and any required human approvals appear here.</p></div>';
+  timeline.innerHTML = (thread?.items || []).map(item => {
+    if (item.type === 'tool') {
+      return `<details class="codex-tool" open><summary><strong>${escape(item.name || 'Tool call')}</strong>${chip(item.status)}</summary>${item.preview ? '<p class="subtle-note">Retained preview · incomplete tool result. The operation status does not establish that the full result is displayed.</p>' : ''}<pre>${escape(item.text)}</pre>${item.ownerReview ? '<p class="subtle-note">This operation needs the execution owner’s human review. Open the review page supplied in the result. A Codex tool approval does not approve that separate operation.</p>' : ''}</details>`;
+    }
+    const hasNetlist = onDirectSetup && item.type === 'assistant' && Boolean(extractNetlistCodeBlock(item.text || ''));
+    return `<article class="codex-message codex-${item.type}"><div>${item.type === 'user' ? 'You' : 'Codex'}${item.status === 'unconfirmed' ? ' · delivery unconfirmed' : ''}</div>${item.preview ? '<p class="subtle-note">Retained preview · incomplete message.</p>' : ''}<p>${escape(item.text || 'Waiting for response text…')}</p>${hasNetlist ? `<button type="button" class="button secondary small sim-apply-code-btn" data-action="direct-apply-agent-code" data-id="${escape(item.id)}">✨ 一键填入右侧网表</button>` : ''}</article>`;
+  }).join('')
+    || (onDirectSetup
+      ? '<div class="codex-chat-empty"><strong>Agent 辅助仿真配置已就绪</strong><p>点击上方快捷指令，或在下方输入你的仿真需求，Agent 会结合实时服务器负载与 SPICE License 协助你配置并生成网表。</p></div>'
+      : '<div class="codex-chat-empty"><strong>Your simulation workspace, in conversation.</strong><p>Connect explicitly, create a conversation, then send a message. Tool requests and any required human approvals appear here.</p></div>');
   if (nearBottom) timeline.scrollTop = timeline.scrollHeight;
   const status = codexPanelState.status;
-  $('#native-count').textContent = codexPanelState.threads.length;
-  $('#native-count').title = 'Conversations received in this browser';
-  $('#codex-runtime-state').innerHTML = chip(status?.state || 'disconnected', status?.connected ? 'green' : '');
-  $('#codex-stream-state').textContent = codexPanelState.streamState === 'reconnecting'
-    ? 'Updates interrupted; reconnecting the read-only event stream. Messages are not resent.'
-    : codexPanelState.streamState === 'connected' ? 'Live event stream' : 'No live event stream';
-  $('#codex-approvals').innerHTML = [...codexPanelState.approvals.values()]
-    .filter(item => item.thread_id === codexPanelState.selectedThread).map(codexApprovalCard).join('');
+  if ($('#native-count')) {
+    $('#native-count').textContent = codexPanelState.threads.length;
+    $('#native-count').title = 'Conversations received in this browser';
+  }
+  if ($('#codex-runtime-state')) $('#codex-runtime-state').innerHTML = chip(status?.state || 'disconnected', status?.connected ? 'green' : '');
+  if ($('#codex-stream-state')) {
+    $('#codex-stream-state').textContent = codexPanelState.streamState === 'reconnecting'
+      ? 'Updates interrupted; reconnecting the read-only event stream. Messages are not resent.'
+      : codexPanelState.streamState === 'connected' ? 'Live event stream' : 'No live event stream';
+  }
+  if ($('#codex-approvals')) {
+    $('#codex-approvals').innerHTML = [...codexPanelState.approvals.values()]
+      .filter(item => item.thread_id === codexPanelState.selectedThread).map(codexApprovalCard).join('');
+  }
   const pending = codexPanelState.pending;
   const recSnap = codexPanelState.recoverySnapshot;
   const recBox = status?.recovery_required
     ? `<div class="denial"><p>The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情 (Inspect Recovery)</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并解除锁定 (Reconcile &amp; Unlock)</button>` : ''}</div>${recSnap ? `<p class="subtle-note">${escape(recSnap.guidance)}（受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}）</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已通过 status/lookup 核对远端任务状态，确认不会盲目重放副作用</label>` : ''}` : ''}</div>`
     : '';
-  $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+  if ($('#codex-notices')) {
+    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+  }
   const evalOut = $('#codex-eval-output');
   if (evalOut) {
     evalOut.innerHTML = renderAgentEvalHtml(codexPanelState.evalReport);
   }
-  $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
-  $('#codex-send').disabled = !codexCanSend() || !codexPanelState.draft.trim();
-  $('#codex-message').disabled = !codexCanSend();
-  $('[data-action="codex-thread"]').disabled = codexPanelState.busy || !status?.connected || codexPanelState.streamState !== 'connected' || !!status?.recovery_required || codexActiveTurn() || !!pending;
-  $('[data-action="codex-disconnect"]').disabled = codexPanelState.busy || !status?.connected;
+  if ($('#codex-session')) {
+    $('#codex-session').innerHTML = codexPanelState.threads.length ? codexPanelState.threads.map(item => `<option value="${escape(item.id)}" ${item.id === codexPanelState.selectedThread ? 'selected' : ''}>${item.id === status?.thread_id ? 'Current' : 'History'} · ${escape(item.id)}</option>`).join('') : '<option value="">No conversation yet</option>';
+  }
+  if ($('#codex-send')) {
+    $('#codex-send').disabled = onDirectSetup
+      ? (codexPanelState.busy || !codexPanelState.draft.trim())
+      : (!codexCanSend() || !codexPanelState.draft.trim());
+  }
+  if ($('#codex-message')) {
+    $('#codex-message').disabled = onDirectSetup ? codexPanelState.busy : !codexCanSend();
+  }
+  const threadBtn = $('[data-action="codex-thread"]');
+  if (threadBtn) threadBtn.disabled = codexPanelState.busy || !status?.connected || codexPanelState.streamState !== 'connected' || !!status?.recovery_required || codexActiveTurn() || !!pending;
+  const discBtn = $('[data-action="codex-disconnect"]');
+  if (discBtn) discBtn.disabled = codexPanelState.busy || !status?.connected;
   const connect = $('#codex-connect-form [type="submit"]');
-  connect.disabled = codexPanelState.busy || !!status?.connected || !!status?.recovery_required;
-  connect.textContent = status?.connected ? 'Codex connected' : codexPanelState.busy ? 'Connecting…' : 'Connect Codex';
+  if (connect) {
+    connect.disabled = codexPanelState.busy || !!status?.connected || !!status?.recovery_required;
+    connect.textContent = status?.connected ? 'Codex connected' : codexPanelState.busy ? 'Connecting…' : 'Connect Codex';
+  }
 }
 
 function standaloneAgentPanel() {
@@ -3055,16 +3528,23 @@ function render() {
   routeEpoch++;
   sessionView = null;
   const page = location.hash.slice(1) || 'quickstart';
-  if (page !== 'agents' || !isStandaloneAgent()) closeCodexEvents();
+  if (!['agents', 'direct'].includes(page) || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? '仿真与波形' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? '仿真配置与波形' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (page === 'quickstart' && !isPublicDemo()) {
     if (!wizardState.loaded && !wizardState.loading) refreshWizard();
     if (isStandaloneAgent() && !codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
   }
-  if (page === 'direct' && !directState.loaded && !directState.loading) refreshDirect();
+  if (page === 'direct') {
+    if (!directState.loaded && !directState.loading) refreshDirect();
+    if (!isPublicDemo() && isStandaloneAgent()) {
+      renderCodexActivity();
+      if (!codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
+      else openCodexEvents();
+    }
+  }
   if (page === 'live' && !isPublicDemo() && !live.loaded && !live.loading) refreshLive();
   if (run && selectedSession) pollSession();
   if (page === 'hosts' && !isPublicDemo()) {
@@ -3256,6 +3736,48 @@ document.addEventListener('click', async event => {
       await refresh();
       if (location.hash !== '#overview') location.hash = '#overview';
       render(); toast('演示数据已重置。可随时前往「✦ 新手步步教程」重新开始。'); return;
+    }
+    if (action === 'hosts-next-sim') {
+      const best = pickMostIdleHostId();
+      if (best) {
+        directDraft.target_mode = 'host';
+        directDraft.host_id = best;
+      }
+      directState.activeTab = isPublicDemo() ? 'waveforms' : 'setup';
+      location.hash = '#direct';
+      return;
+    }
+    if (action === 'sim-agent-connect') {
+      if (!isStandaloneAgent() || codexPanelState.busy) return;
+      codexPanelState.busy = true;
+      renderCodexActivity();
+      try {
+        await api('/api/codex/connect', {method: 'POST', body: {}});
+        await refreshCodexStatus();
+        if (codexPanelState.status?.connected && !codexPanelState.status?.thread_id) {
+          const th = await api('/api/codex/thread', {method: 'POST'});
+          codexPanelState.selectedThread = th.thread_id || null;
+          await refreshCodexStatus();
+        }
+        openCodexEvents();
+        toast('🟢 Codex Agent 已连接，可以直接帮你配置并启动仿真！');
+      } finally {
+        codexPanelState.busy = false;
+        renderCodexActivity();
+      }
+      return;
+    }
+    if (action === 'sim-agent-prompt') {
+      const kind = button.dataset.kind || '';
+      const ctx = buildSimAgentContextSummary();
+      const prompts = {
+        pick_host: `${ctx}\n请帮我分析哪台服务器现在最适合跑新的 Spectre 仿真，确认 SPICE License 余量是否充足，并推荐合适的 CPU 线程数和内存上限。`,
+        smoke_netlist: `${ctx}\n请为我生成一个可直接运行的零 PDK Spectre 瞬态烟雾验证网表（带 save 语句和 tran 分析，放在 \`\`\`spectre 代码块里），方便我一键填入右侧跑通第一个仿真并验证 PSF 波形。`,
+        review_netlist: `${ctx}\n请帮我检查下面这份准备提交到 ${directDraft.host_id || '空闲服务器'} 的 ${directDraft.simulator} 网表配置（分析语句、收敛选项、save 节点和资源参数），如有改进建议请给出修改后的 \`\`\`spectre 代码块：\n\n\`\`\`spectre\n${directDraft.netlist_text || '(当前网表为空，请帮我给一份起手模板)'}\n\`\`\``,
+        pvt_plan: `${ctx}\n我想对当前电路做 PVT Corner 与 Monte Carlo 批量仿真，请帮我规划合理的工艺角、电压、温度组合、样本数和并发控制策略，避免打满 SPICE License 或 OOM。`,
+      };
+      await sendPromptToSimAgent(prompts[kind] || prompts.pick_host);
+      return;
     }
     if (action === 'host-live-refresh') {
       await refreshHostLiveStatus();
@@ -3548,7 +4070,13 @@ document.addEventListener('input', event => {
   const codexFields = {'codex-profile': 'profile', 'codex-model': 'model', 'codex-message': 'draft'};
   if (codexFields[event.target.id]) {
     codexPanelState[codexFields[event.target.id]] = event.target.value;
-    if (event.target.id === 'codex-message') $('#codex-send').disabled = !codexCanSend() || !event.target.value.trim();
+    if (event.target.id === 'codex-message') {
+    if ($('#codex-send')) {
+      $('#codex-send').disabled = location.hash === '#direct'
+        ? (codexPanelState.busy || !event.target.value.trim())
+        : (!codexCanSend() || !event.target.value.trim());
+    }
+  }
   }
   const liveFields = {'live-configuration': 'configuration', 'live-source-commit': 'source_commit', 'live-run-id': 'run_id'};
   if (liveFields[event.target.id]) {
@@ -3789,6 +4317,11 @@ document.addEventListener('submit', async event => {
 });
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'sim-agent-form') {
+    event.preventDefault();
+    await sendPromptToSimAgent(codexPanelState.draft);
+    return;
+  }
   if (!['codex-connect-form', 'codex-message-form'].includes(event.target.id)) return;
   event.preventDefault();
   if (!isStandaloneAgent() || codexPanelState.busy) return;

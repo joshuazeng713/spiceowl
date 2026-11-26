@@ -42,8 +42,11 @@ class TestLocalConnectorAndPairing(unittest.TestCase):
 
             # macOS .app bundle + LaunchAgent plist
             mac = install_connector(port=8765, data_dir=data, autostart=True, home_dir=home, platform_override="macos")
+            self.assertIn("readiness", mac)
+            self.assertIn("python_version", mac["readiness"])
             app_dir = Path(mac["app_bundle"])
-            self.assertTrue((app_dir / "Contents" / "MacOS" / "spiceowl-connector").is_file())
+            launcher_text = (app_dir / "Contents" / "MacOS" / "spiceowl-connector").read_text(encoding="utf-8")
+            self.assertIn("spiceowl://*)", launcher_text)
             plist = plistlib.loads((app_dir / "Contents" / "Info.plist").read_bytes())
             self.assertEqual(plist["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["spiceowl"])
             self.assertTrue(plist["LSBackgroundOnly"])

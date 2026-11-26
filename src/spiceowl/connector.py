@@ -49,6 +49,43 @@ def connector_health(port: int = DEFAULT_CONNECTOR_PORT, *, timeout: float = 1.2
     return {"running": False, "port": int(port), "health": None}
 
 
+def _needs_source_pythonpath() -> Path | None:
+    """Return src root ONLY when running from a source checkout outside site-packages."""
+    src_root = Path(__file__).resolve().parents[1]
+    prefix = Path(sys.prefix).resolve()
+    try:
+        src_root.relative_to(prefix)
+        return None  # Installed inside the Python environment's own site-packages (permanent!)
+    except ValueError:
+        pass
+    if (src_root / "spiceowl" / "__init__.py").is_file():
+        return src_root
+    return None
+
+
+def connector_readiness_summary() -> dict:
+    """Inspect local OpenSSH aliases and optional Codex CLI presence without network I/O."""
+    from spiceowl.onboarding.ssh_discovery import discover_ssh_hosts
+
+    ssh_bin = shutil.which("ssh")
+    codex_bin = shutil.which("codex")
+    aliases = []
+    try:
+        cfg = Path.home() / ".ssh" / "config"
+        if cfg.is_file():
+            res = discover_ssh_hosts(cfg)
+            if isinstance(res, dict) and isinstance(res.get("hosts"), list):
+                aliases = res["hosts"]
+    except Exception:
+        aliases = []
+    return {
+        "python_version": ".".join(map(str, sys.version_info[:3])),
+        "python_executable": str(Path(sys.executable)),
+        "installed_in_venv": _needs_source_pythonpath() is None,
+        "ssh_available": bool(ssh_bin),
+        "ssh_alias_count": len(aliases),
+        "codex_available": bool(codex_bin),
+    }
 def _python_for_background() -> str:
     exe = Path(sys.executable)
     if IS_WINDOWS:
@@ -67,7 +104,7 @@ def start_connector_background(
     """Ensure the headless SpiceOwl Connector is running on 127.0.0.1:<port>."""
     st = connector_health(port)
     if st["running"]:
-        return {"started": False, "already_running": True, "port": int(port), "url": f"http://127.0.0.1:{int(port)}"}
+        return {"started": False, "already_running": True, "ready": True, "port": int(port), "url": f"http://127.0.0.1:{int(port)}"}
 
     state_root = Path(data_dir) if data_dir is not None else default_state_dir("spiceowl")
     state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -88,8 +125,8 @@ def start_connector_background(
         cmd.append("--enable-direct-exec")
 
     env = dict(os.environ)
-    src_root = Path(__file__).resolve().parents[1]
-    if (src_root / "spiceowl" / "__init__.py").is_file():
+    src_root = _needs_source_pythonpath()
+    if src_root is not None:
         existing_pp = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = str(src_root) + (os.pathsep + existing_pp if existing_pp else "")
 
@@ -168,11 +205,12 @@ def _install_macos(
     macos_dir.mkdir(parents=True, exist_ok=True)
 
     python_bin = str(Path(sys.executable))
-    src_root = Path(__file__).resolve().parents[1]
+    src_root = _needs_source_pythonpath()
     launcher = macos_dir / "spiceowl-connector"
-    launcher_script = "\n".join([
-        "#!/bin/sh",
-        f'export PYTHONPATH="{src_root}${{PYTHONPATH:+:$PYTHONPATH}}"',
+    script_lines = ["#!/bin/sh"]
+    if src_root is not None:
+        script_lines.append(f'export PYTHONPATH="{src_root}${{PYTHONPATH:+:$PYTHONPATH}}"')
+    script_lines.extend([
         'case "${1:-}" in',
         '  spiceowl://*) URI="$1" ;;',
         '  *) URI="spiceowl://start" ;;',
@@ -180,7 +218,7 @@ def _install_macos(
         f'exec "{python_bin}" -m spiceowl --data-dir "{data_dir}" connector handle-uri "$URI" --port {int(port)}',
         "",
     ])
-    launcher.write_text(launcher_script, encoding="utf-8")
+    launcher.write_text("\n".join(script_lines), encoding="utf-8")
     launcher.chmod(0o755)
 
     info_plist = {
@@ -230,12 +268,13 @@ def _install_macos(
                 "--headless",
                 "--enable-direct-exec",
             ],
-            "EnvironmentVariables": {"PYTHONPATH": str(src_root)},
             "RunAtLoad": True,
             "KeepAlive": False,
             "StandardOutPath": str(data_dir / "connector.log"),
             "StandardErrorPath": str(data_dir / "connector.log"),
         }
+        if src_root is not None:
+            agent_plist["EnvironmentVariables"] = {"PYTHONPATH": str(src_root)}
         with launch_agent_path.open("wb") as fh:
             plistlib.dump(agent_plist, fh)
 
@@ -370,10 +409,13 @@ def install_connector(
     home = Path(home_dir).expanduser().resolve() if home_dir is not None else Path.home()
     plat = platform_override or ("windows" if IS_WINDOWS else "macos" if IS_MACOS else "linux")
     if plat == "windows":
-        return _install_windows(port=port, data_dir=state_root, autostart=autostart, dry_run=dry_run)
-    if plat == "macos":
-        return _install_macos(port=port, data_dir=state_root, autostart=autostart, home_dir=home)
-    return _install_linux(port=port, data_dir=state_root, autostart=autostart, home_dir=home)
+        res = _install_windows(port=port, data_dir=state_root, autostart=autostart, dry_run=dry_run)
+    elif plat == "macos":
+        res = _install_macos(port=port, data_dir=state_root, autostart=autostart, home_dir=home)
+    else:
+        res = _install_linux(port=port, data_dir=state_root, autostart=autostart, home_dir=home)
+    res["readiness"] = connector_readiness_summary()
+    return res
 
 
 def uninstall_connector(

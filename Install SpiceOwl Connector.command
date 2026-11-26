@@ -1,21 +1,31 @@
 #!/bin/bash
+# Zero-setup one-click installer for SpiceOwl Connector (macOS).
+# Automatically prepares an isolated permanent Python 3.12 runtime (~/.local/share/spiceowl/venv),
+# installs SpiceOwl into it (safe to delete the downloaded zip folder afterwards!),
+# registers spiceowl:// + background autostart, starts the connector, verifies /health,
+# and opens https://spiceowl-dev.github.io/spiceowl/.
 cd -- "$(dirname -- "$0")" || exit 1
+SRC_DIR="$(pwd)"
+APP_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/spiceowl"
+VENV_DIR="$APP_HOME/venv"
+UV_BIN_DIR="$APP_HOME/bin"
+UV_BIN="$UV_BIN_DIR/uv"
 
-echo "=================================================="
-echo "  SpiceOwl Connector 一键安装（仅需运行一次）"
-echo "=================================================="
-echo "将注册 spiceowl:// 协议（免管理员权限）并启动后台无界面连接器，"
-echo "之后只需在浏览器打开 https://spiceowl-dev.github.io/spiceowl/ 即可！"
+echo "============================================================"
+echo "  🦉 SpiceOwl Connector 全自动一键安装（macOS · 零环境配置）"
+echo "============================================================"
+echo "无需提前安装 Python 或 Homebrew，无需管理员权限。"
+echo "安装完成后，所有操作全部在网页端完成（安装包也可随时删除）。"
 echo
 
 find_python311() {
   local candidates=()
   candidates+=(
-    ".venv/bin/python"
+    "$VENV_DIR/bin/python"
+    "$SRC_DIR/.venv/bin/python"
     "/opt/homebrew/bin/python3.14" "/opt/homebrew/bin/python3.13" "/opt/homebrew/bin/python3.12" "/opt/homebrew/bin/python3.11" "/opt/homebrew/bin/python3"
     "/usr/local/bin/python3.14" "/usr/local/bin/python3.13" "/usr/local/bin/python3.12" "/usr/local/bin/python3.11" "/usr/local/bin/python3"
   )
-  # Homebrew keg-only Python, python.org Framework, Conda/Miniforge, Pyenv, uv, and Codex runtime Python
   for pattern in \
     /opt/homebrew/opt/python@3.*/bin/python3* \
     /usr/local/opt/python@3.*/bin/python3* \
@@ -32,7 +42,6 @@ find_python311() {
       candidates+=("$pattern")
     fi
   done
-  # Also query user's login shell PATH (Finder double-click does not load ~/.zshrc)
   if command -v zsh >/dev/null 2>&1; then
     while IFS= read -r p; do
       [ -n "$p" ] && candidates+=("$p")
@@ -51,50 +60,109 @@ find_python311() {
   return 1
 }
 
+ensure_uv() {
+  if [ -x "$UV_BIN" ]; then
+    echo "$UV_BIN"
+    return 0
+  fi
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+  echo "[1/4] 本机未检测到 Python 3.11+，正在自动下载轻量独立的 Python 3.12 运行时（免管理员、不影响系统）…"
+  mkdir -p "$UV_BIN_DIR"
+  if command -v curl >/dev/null 2>&1; then
+    if env UV_UNMANAGED_INSTALL="$UV_BIN_DIR" sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' >/dev/null 2>&1; then
+      if [ -x "$UV_BIN" ]; then
+        echo "$UV_BIN"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+echo "[1/4] 准备独立 Python 3.11+ 运行环境…"
+mkdir -p "$APP_HOME"
+USE_UV=""
 PY_BIN="$(find_python311 || true)"
 
 if [ -z "$PY_BIN" ]; then
-  echo "[SpiceOwl] 未找到 Python 3.11+（系统自带的 /usr/bin/python3 版本过低）。"
-  if [ -x "/opt/homebrew/bin/brew" ] || command -v brew >/dev/null 2>&1; then
+  USE_UV="$(ensure_uv || true)"
+  if [ -n "$USE_UV" ]; then
+    "$USE_UV" python install 3.12
+  elif [ -x "/opt/homebrew/bin/brew" ] || command -v brew >/dev/null 2>&1; then
     BREW_BIN="$(command -v brew 2>/dev/null || echo /opt/homebrew/bin/brew)"
-    echo "检测到您已安装 Homebrew，是否立即自动安装 python@3.12？"
-    read -r -p "按回车自动安装（或输入 n 取消）: " ans
-    if [ "$ans" != "n" ] && [ "$ans" != "N" ]; then
-      "$BREW_BIN" install python@3.12
-      PY_BIN="$(find_python311 || true)"
-    fi
+    echo "      正在通过 Homebrew 自动安装 python@3.12…"
+    "$BREW_BIN" install python@3.12
+    PY_BIN="$(find_python311 || true)"
   fi
 fi
 
-if [ -z "$PY_BIN" ]; then
-  echo
-  echo "❌ [安装未完成] 仍未检测到 Python 3.11+。"
-  echo "   请安装 Python 3.12 后重新双击本脚本："
-  echo "   方式 1：brew install python@3.12"
-  echo "   方式 2：https://www.python.org/downloads/macos/"
-  read -r -p "按回车关闭。"
-  exit 1
+echo "[2/4] 创建永久独立虚拟环境并安装 SpiceOwl (${VENV_DIR})…"
+if [ -n "$USE_UV" ]; then
+  if ! "$USE_UV" venv --python 3.12 --clear "$VENV_DIR"; then
+    echo "❌ 创建独立虚拟环境失败，请检查网络连接后重试。"
+    read -r -p "按回车关闭。"
+    exit 1
+  fi
+  if ! "$USE_UV" pip install --python "$VENV_DIR/bin/python" --no-build-isolation --no-deps "$SRC_DIR" 2>/dev/null; then
+    "$USE_UV" pip install --python "$VENV_DIR/bin/python" "$SRC_DIR"
+  fi
+else
+  if [ -z "$PY_BIN" ]; then
+    echo "❌ 自动准备 Python 3.12 失败（可能处于离线环境且本机无 Python 3.11+）。"
+    echo "   请联网后重新双击，或安装 Python 3.12：https://www.python.org/downloads/macos/"
+    read -r -p "按回车关闭。"
+    exit 1
+  fi
+  PY_VER="$("$PY_BIN" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null)"
+  echo "      使用本机 Python ${PY_VER} (${PY_BIN})"
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    "$PY_BIN" -m venv "$VENV_DIR"
+  fi
+  # Fast zero-dependency install (works offline too!); upgrade/install package into permanent site-packages
+  if ! "$VENV_DIR/bin/python" -m pip install --no-deps --no-build-isolation --quiet "$SRC_DIR" 2>/dev/null; then
+    # Fallback: copy package cleanly into venv site-packages so offline installs without setuptools wheel also succeed!
+    SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+    rm -rf "$SITE_DIR/spiceowl"
+    cp -R "$SRC_DIR/src/spiceowl" "$SITE_DIR/spiceowl"
+  fi
 fi
 
-PY_VER="$("$PY_BIN" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null)"
-echo "[SpiceOwl] 已识别 Python ${PY_VER} (${PY_BIN})"
-echo "[SpiceOwl] 正在注册 spiceowl:// 协议并启动后台无界面连接器…"
+PERM_PY="$VENV_DIR/bin/python"
+if ! "$PERM_PY" -c 'import spiceowl' >/dev/null 2>&1; then
+  SITE_DIR="$("$PERM_PY" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+  rm -rf "$SITE_DIR/spiceowl"
+  cp -R "$SRC_DIR/src/spiceowl" "$SITE_DIR/spiceowl"
+fi
 
-export PYTHONPATH="$(pwd)/src${PYTHONPATH:+:$PYTHONPATH}"
-if ! "$PY_BIN" -m spiceowl connector install; then
+echo "[3/4] 注册 spiceowl:// 协议并启动后台无界面连接器…"
+if ! "$PERM_PY" -m spiceowl connector install; then
   echo
   echo "❌ [安装失败] 请查看上方错误信息。"
-  read -r -p "按回车关闭。"
+  if [ -z "${SPICEOWL_NO_PAUSE:-}" ]; then read -r -p "按回车关闭。"; fi
   exit 1
 fi
 
-echo
-if "$PY_BIN" -m spiceowl connector status >/dev/null 2>&1; then
-  echo "✅ [安装并启动成功] 本机连接器已在后台运行 (http://127.0.0.1:8765/health)！"
-  echo "正在为您打开正式网页工作台：https://spiceowl-dev.github.io/spiceowl/"
-  open "https://spiceowl-dev.github.io/spiceowl/" 2>/dev/null || true
-  echo "以后无需再双击此脚本，直接在网页点击「一键连接 Codex」或「一键识别我的 SSH 服务器」即可。"
+echo "[4/4] 核验本机连接器健康状态…"
+if "$PERM_PY" -m spiceowl connector status >/dev/null 2>&1; then
+  echo
+  echo "============================================================"
+  echo "✅ 安装并启动全部完成！(安装目录：${APP_HOME})"
+  echo "   • 后台连接器已就绪：http://127.0.0.1:8765/health"
+  echo "   • spiceowl:// 唤醒协议与开机静默常驻已自动配置"
+  echo "   • 本次下载的压缩包和解压目录现在可以安全删除"
+  echo "============================================================"
+  echo "正在为您打开 SpiceOwl 正式网页工作台…"
+  if [ -z "${SPICEOWL_NO_BROWSER:-}" ]; then
+    open "https://spiceowl-dev.github.io/spiceowl/" 2>/dev/null || true
+  fi
 else
-  echo "⚠️  协议已注册，但后台服务尚未就绪。请检查日志 ~/.local/state/spiceowl/connector.log。"
+  echo
+  echo "⚠️  协议已注册，但后台服务尚未就绪。请查看日志：~/.local/state/spiceowl/connector.log"
 fi
-read -r -p "按回车关闭此安装窗口（后台连接器将继续运行）。"
+echo
+if [ -z "${SPICEOWL_NO_PAUSE:-}" ]; then
+  read -r -p "按回车关闭此窗口（后台连接器会持续静默运行）。"
+fi

@@ -49,6 +49,7 @@ vm.runInContext(`(async () => {\n${body}\nglobalThis.__exports = {
   renderMySimulationsStrip,
   renderHostLiveCard,
   hosts,
+  quickstartPage,
   directAgentSetupPanel,
   renderCodexActivity,
   renderCleanDirectTimeline,
@@ -181,6 +182,19 @@ assert.equal(domEls['#codex-stop'].hidden, true, 'Stop button hides once AI turn
 assert(domEls['#codex-runtime-state'].innerHTML.includes('已暂停'), 'Interrupted state displays 已暂停 chip');
 sandbox.document.querySelector = origQuerySelector;
 sandbox.location.hash = '#hosts';
+
+// 4c. Page 1 (#quickstart) shows inline Chinese recovery unlock button when recovery_required is true
+ex.setCodex(c => {
+  c.status = {connected: false, state: 'unknown', recovery_required: true, request_key: 'codex-old-1'};
+  c.recoverySnapshot = null;
+});
+const qsRecHtml = ex.quickstartPage();
+assert(qsRecHtml.includes('上次会话中断待解锁'), 'Page 1 must display clear recovery status badge');
+assert(qsRecHtml.includes('data-action="codex-inspect-recovery"'), 'Page 1 must offer inline recovery unlock action');
+assert(!qsRecHtml.includes('data-action="home-connect-codex"'), 'Page 1 must not show broken connect button while recovery_required');
+ex.setCodex(c => {
+  c.status = {connected: true, state: 'complete', thread_id: 'th-1', recovery_required: false};
+});
 
 // 5. When invoked by CircuitGit, Page 3 directly reuses CircuitGit entry AND CircuitGit Agent channel
 const applied = ex.applyCircuitGitEntry({

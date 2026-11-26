@@ -772,28 +772,37 @@ function quickstartPage() {
   };
   const verifiedAliasCount = pub ? 0 : aliases.filter(isAliasVerified).length;
 
+  const codexNeedsRecovery = !pub && Boolean(codexPanelState.status?.recovery_required);
   const codexStatusTag = codexConnected
     ? '<span class="home-status-tag ready">● 已连接</span>'
+    : codexNeedsRecovery
+    ? '<span class="home-status-tag amber">● 上次会话中断待解锁</span>'
     : pub
     ? '<span class="home-status-tag">网页一键授权</span>'
     : '<span class="home-status-tag">待连接</span>';
 
+  const recSnap = codexNeedsRecovery ? codexPanelState.recoverySnapshot : null;
+  const recTools = (recSnap?.unresolved_approvals || []).map(a => a?.params?.tool || a?.method).filter(Boolean);
   const codexBtn = codexConnected
-    ? '<a class="button primary" href="#agents">打开 Codex 对话 →</a>'
+    ? '<a class="button primary" href="#direct">打开 Agent 仿真助手 →</a>'
+    : codexNeedsRecovery
+    ? `<div class="home-recovery-box">${recSnap
+        ? `<p class="subtle-note">挂起记录：${recTools.length ? `未完成审批 <code>${escape(recTools.join(', '))}</code>` : `受影响请求 ${recSnap.interrupted_requests.length} 条`}（未自动重放）。</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row" style="margin:6px 0"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已核对远端无重复任务，确认归档旧会话</label>` : ''}<button type="button" class="button primary" data-action="codex-reconcile" data-reconnect="1" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档旧会话并重新连接 Codex</button>`
+        : `<button type="button" class="button primary" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情并解锁 Codex</button>`}</div>`
     : `<button type="button" class="button primary" data-action="home-connect-codex" ${codexPanelState.busy ? 'disabled' : ''}>${codexPanelState.busy ? '正在连接 Codex…' : '一键连接 Codex'}</button>`;
 
   const agentSection = `
     <section class="home-section" aria-label="连接 AI Agent">
       <div class="home-section-head">
         <h2><span class="home-step-num">1</span> 连接你的 AI Agent</h2>
-        <span class="home-status-tag ${codexConnected ? 'ready' : ''}">${codexConnected ? '● Codex 已就绪，可接收夜间异常交接' : '只需点选你正在用的 Agent，零 API Key 手填'}</span>
+        <span class="home-status-tag ${codexConnected ? 'ready' : ''}">${codexConnected ? '● Codex 已就绪，可接收夜间异常交接' : codexNeedsRecovery ? '上次重启/断线有未决请求，先归档解锁即可恢复连接' : '只需点选你正在用的 Agent，零 API Key 手填'}</span>
       </div>
       <div class="home-agent-grid">
         <article class="home-agent-card featured ${codexConnected ? 'is-connected' : ''}">
           <div>
             <div class="home-agent-top"><span class="home-agent-icon" aria-hidden="true">✧</span>${codexStatusTag}</div>
             <h3>Codex</h3>
-            <p>直接授权本机已登录的 Codex，排队超时或 OOM 时自动交给它查资源并重提。</p>
+            <p>${codexNeedsRecovery ? '上次连接器重启或断线时有一条未完成的 Agent 请求被安全挂起（防止自动重放），归档解锁后即可重新连接。' : '直接授权本机已登录的 Codex，排队超时或 OOM 时自动交给它查资源并重提。'}</p>
           </div>
           ${codexBtn}
         </article>
@@ -4529,7 +4538,9 @@ function renderCodexActivity() {
   const pending = codexPanelState.pending;
   const recSnap = codexPanelState.recoverySnapshot;
   const recBox = status?.recovery_required
-    ? `<div class="denial"><p>The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情 (Inspect Recovery)</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并解除锁定 (Reconcile &amp; Unlock)</button>` : ''}</div>${recSnap ? `<p class="subtle-note">${escape(recSnap.guidance)}（受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}）</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已通过 status/lookup 核对远端任务状态，确认不会盲目重放副作用</label>` : ''}` : ''}</div>`
+    ? (onDirectSetup
+        ? `<div class="denial"><p>上次连接器重启或断线时有一条未完成的 Agent 请求被安全挂起（未自动重放），需先归档解锁后才能继续对话。请求 ID：<code>${escape(status.request_key || '未返回')}</code>。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" data-reconnect="1" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并重新连接</button>` : ''}</div>${recSnap ? `<p class="subtle-note">受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}（不会自动重放）。</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已确认远端无重复任务，允许归档旧会话</label>` : ''}` : ''}</div>`
+        : `<div class="denial"><p>The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情 (Inspect Recovery)</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并解除锁定 (Reconcile &amp; Unlock)</button>` : ''}</div>${recSnap ? `<p class="subtle-note">${escape(recSnap.guidance)}（受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}）</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已通过 status/lookup 核对远端任务状态，确认不会盲目重放副作用</label>` : ''}` : ''}</div>`)
     : '';
   if ($('#codex-notices')) {
     $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
@@ -5250,7 +5261,8 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'codex-rec-confirm') {
     codexPanelState.recoveryConfirmed = event.target.checked;
-    renderCodexActivity();
+    if (!location.hash || location.hash === '#quickstart') render();
+    else renderCodexActivity();
   }
   if (event.target.matches('[data-host-select]')) {
     if (!poolScanning) {
@@ -5347,8 +5359,10 @@ document.addEventListener('click', async event => {
     try {
       codexPanelState.recoverySnapshot = await api('/api/codex/recovery');
       codexPanelState.recoveryConfirmed = false;
-    } catch (error) { codexPanelState.error = error.message; }
-    renderCodexActivity(); return;
+    } catch (error) { codexPanelState.error = error.message; toast(error.message); }
+    if (!location.hash || location.hash === '#quickstart') render();
+    else renderCodexActivity();
+    return;
   }
   if (action === 'codex-run-eval') {
     if (codexPanelState.evalBusy) return;
@@ -5402,7 +5416,16 @@ document.addEventListener('click', async event => {
       }});
       codexPanelState.recoverySnapshot = null;
       codexPanelState.recoveryConfirmed = false;
-      toast('中断回合已归档（未重放任何操作）并解除锁定。');
+      if (button.dataset.reconnect === '1') {
+        await api('/api/codex/connect', {method: 'POST', body: {}});
+        if (location.hash === '#direct') {
+          const th = await api('/api/codex/thread', {method: 'POST'});
+          codexPanelState.selectedThread = th.thread_id || null;
+        }
+        toast('🟢 已归档旧中断记录并重新连接 Codex！');
+      } else {
+        toast('中断回合已归档（未重放任何操作）并解除锁定。');
+      }
     } else if (action === 'codex-thread') {
       const status = codexPanelState.status;
       if (!status?.connected || status.recovery_required || codexActiveTurn() || codexPanelState.pending) return;
@@ -5437,8 +5460,13 @@ document.addEventListener('click', async event => {
   } catch (error) {
     await refreshCodexStatus();
     codexPanelState.error = error.message;
+    toast(error.message);
     if (approval) Object.assign(approval, {status: 'unknown', can_approve: false, can_deny: false});
-  } finally { codexPanelState.busy = false; renderCodexActivity(); }
+  } finally {
+    codexPanelState.busy = false;
+    if (!location.hash || location.hash === '#quickstart') render();
+    else renderCodexActivity();
+  }
 });
 
 document.addEventListener('submit', async event => {

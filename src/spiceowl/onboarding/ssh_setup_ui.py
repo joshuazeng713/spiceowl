@@ -334,13 +334,14 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
           <div class="grid2">
             <label class="field">跳板机地址或已有别名
               <input id="f-jump" maxlength="320" placeholder="例如：101.6.68.50 或 bastion">
-              <small>支持填 IP/域名（自动托管），也支持多跳逗号分隔。</small>
+              <small id="jump-hint">支持填 IP/域名（自动托管），也支持多跳逗号分隔。</small>
             </label>
-            <label class="field">跳板机用户名（选填）
+            <label id="jump-user-field" class="field">跳板机用户名（选填）
               <input id="f-jump-user" maxlength="64" placeholder="留空默认与目标机用户名相同">
               <small>若跳板机账号不同再填即可。</small>
             </label>
           </div>
+          <div id="jump-reused-note" class="notice ok hidden" style="padding:7px 10px;font-size:12px"></div>
           <div id="jump-chips" class="chips"></div>
         </div>
 
@@ -426,8 +427,13 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       </section>
 
       <div class="footer-bar">
-        <span class="sub">配置独立保存在 <code>spiceowl_hosts.conf</code></span>
         <div class="row">
+          <span class="sub">配置独立保存在 <code>spiceowl_hosts.conf</code></span>
+          <span id="session-pw-pill" class="pill hidden">🔑 本次会话已暂存免密部署密码（关闭即毁）</span>
+          <button id="btn-clear-session-pw" class="btn-sec btn-sm hidden" type="button">清除临时密码</button>
+        </div>
+        <div class="row">
+          <button id="btn-add-another" class="btn-sec hidden" type="button">+ 继续添加下一台</button>
           <button id="btn-close-only" class="btn-sec btn-sm" type="button">关闭</button>
           <button id="btn-done-return" class="btn-primary" type="button">完成并返回网页工作台</button>
         </div>
@@ -445,8 +451,53 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   let lastDiagnosis = null;
   let activeHop = null;
   let aliasTouched = false;
+  // Ephemeral in-RAM password cache strictly for this popup session (never persisted to disk/storage; wiped on close)
+  let sessionPassword = '';
+  const autoTriedSessionPw = new Set();
 
   const $ = (id) => document.getElementById(id);
+
+  function updateSessionPwUi() {{
+    const hasPw = Boolean(sessionPassword);
+    $('session-pw-pill').classList.toggle('hidden', !hasPw);
+    $('btn-clear-session-pw').classList.toggle('hidden', !hasPw);
+  }}
+
+  function rememberDefaults() {{
+    const managed = appState.managed || [];
+    let defaultUser = '';
+    let defaultJump = '';
+    for (let i = managed.length - 1; i >= 0; i--) {{
+      const h = managed[i];
+      if (!defaultUser && h.user) defaultUser = h.user;
+      if (!defaultJump && h.proxy_jump) defaultJump = h.proxy_jump;
+    }}
+    if (!defaultJump) {{
+      const jumpHost = managed.find(h => h.alias.startsWith('jump-'));
+      if (jumpHost) defaultJump = jumpHost.alias;
+    }}
+    return {{defaultUser, defaultJump}};
+  }}
+
+  function syncJumpUserVisibility() {{
+    const raw = $('f-jump').value.trim();
+    const managed = appState.managed || [];
+    const existing = new Set(appState.existing_aliases || []);
+    const matchedManaged = managed.find(m => m.alias === raw);
+    const isKnownAlias = Boolean(raw && !raw.includes(',') && existing.has(raw));
+    $('jump-user-field').classList.toggle('hidden', isKnownAlias);
+    const note = $('jump-reused-note');
+    if (matchedManaged) {{
+      note.textContent = '✓ 已直接复用跳板机 ' + matchedManaged.alias + '（' + (matchedManaged.user ? matchedManaged.user + '@' : '') + matchedManaged.hostname + '），无需再填跳板机账号与密码。';
+      note.classList.remove('hidden');
+    }} else if (isKnownAlias) {{
+      note.textContent = '✓ 已复用已有跳板机配置 ' + raw + '，无需重复填写账号与密码。';
+      note.classList.remove('hidden');
+    }} else {{
+      note.classList.add('hidden');
+      note.textContent = '';
+    }}
+  }}
 
   function setMsg(el, text, kind) {{
     if (!el) return;
@@ -594,6 +645,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
         const parts = cur ? cur.split(',').map(s => s.trim()).filter(Boolean) : [];
         if (!parts.includes(alias)) parts.push(alias);
         input.value = parts.join(',');
+        syncJumpUserVisibility();
       }});
       box.appendChild(btn);
     }}
@@ -602,6 +654,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   function hideAssists() {{
     $('assist-hostkey').classList.add('hidden');
     $('assist-deploy').classList.add('hidden');
+    $('btn-add-another').classList.add('hidden');
     setMsg($('deploy-msg'), '', '');
   }}
 
@@ -620,6 +673,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     $('f-jump').value = h.proxy_jump || '';
     const jumpManaged = (appState.managed || []).find(m => m.alias === h.proxy_jump);
     $('f-jump-user').value = jumpManaged && jumpManaged.user !== h.user ? jumpManaged.user : '';
+    syncJumpUserVisibility();
     if (h.identity_file && [...$('f-key').options].some(o => o.value === h.identity_file)) {{
       $('f-key').value = h.identity_file;
     }} else {{
@@ -633,25 +687,29 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     renderJumpChips();
   }}
 
-  function resetNewForm() {{
+  function resetNewForm({{preserveDefaults = true}} = {{}}) {{
     selectedAlias = '';
     aliasTouched = false;
     lastDiagnosis = null;
     activeHop = null;
-    $('form-title').textContent = '新增 SSH 服务器';
+    const defs = preserveDefaults ? rememberDefaults() : {{defaultUser: '', defaultJump: ''}};
+    $('form-title').textContent = defs.defaultJump ? '新增服务器（已自动沿用上次跳板机与账号）' : '新增 SSH 服务器';
     $('f-alias').value = '';
     $('f-hostname').value = '';
-    $('f-user').value = '';
+    $('f-user').value = defs.defaultUser || '';
     $('f-port').value = '22';
     $('f-legacy-rsa').checked = false;
-    $('f-use-jump').checked = false;
-    $('jump-box').classList.add('hidden');
-    $('f-jump').value = '';
+    const useJump = Boolean(defs.defaultJump);
+    $('f-use-jump').checked = useJump;
+    $('jump-box').classList.toggle('hidden', !useJump);
+    $('f-jump').value = defs.defaultJump || '';
     $('f-jump-user').value = '';
+    syncJumpUserVisibility();
     hideAssists();
     $('diag-section').classList.add('hidden');
     setMsg($('global-msg'), '', '');
     renderAll();
+    $('f-hostname').focus();
   }}
 
   function renderHosts() {{
@@ -722,6 +780,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
         const parts = cur ? cur.split(',').map(s => s.trim()).filter(Boolean) : [];
         if (!parts.includes(alias)) parts.push(alias);
         $('f-jump').value = parts.join(',');
+        syncJumpUserVisibility();
       }});
       const bDiag = document.createElement('button');
       bDiag.type = 'button'; bDiag.className = 'btn-sec btn-sm'; bDiag.textContent = '测试';
@@ -1000,7 +1059,8 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
 
       if (d.ok) {{
         selectedAlias = target;
-        setMsg($('global-msg'), '✅ 连接成功！' + target + ' 已全部就绪，点击底部「完成并返回网页工作台」即可直接使用。', 'ok');
+        $('btn-add-another').classList.remove('hidden');
+        setMsg($('global-msg'), '✅ 连接成功！' + target + ' 已全部就绪；可以点「+ 继续添加下一台」或「完成并返回网页工作台」。', 'ok');
       }} else if (d.code === 'need_host_key' && hop) {{
         setMsg($('global-msg'), '首次连接 ' + hopLabel + '，请核对下方指纹后点信任即可继续。', 'warn');
         $('hk-title').textContent = '🔑 首次连接' + hopLabel + '：确认指纹';
@@ -1012,9 +1072,32 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
           ? (appState.keys || []).find(k => k.config_path === hopManaged.identity_file)
           : null;
         if (!keyObj) keyObj = await ensureKeyOfType(hop.legacy_rsa ? 'rsa' : 'ed25519');
+        const hopKey = (hop.alias || hop.hostname) + ':' + (hop.port || 22) + ':' + (hop.username || '');
+        // If user already entered a password in THIS popup session, try reusing it once automatically!
+        if (sessionPassword && !autoTriedSessionPw.has(hopKey)) {{
+          autoTriedSessionPw.add(hopKey);
+          setMsg($('global-msg'), '正在复用本次会话密码为 ' + hopLabel + ' 自动配置免密…', 'warn');
+          const autoRes = await callAction('deploy_key', {{
+            hostname: hop.hostname,
+            port: Number(hop.port || 22),
+            username: hop.username || $('f-user').value.trim(),
+            proxy_jump: hop.proxy_jump || '',
+            public_key: keyObj.public_key,
+            password: sessionPassword,
+            accept_new_host_key: true,
+            legacy_rsa: Boolean(hop.legacy_rsa),
+            legacy_kex: Boolean(hop.legacy_kex),
+          }});
+          if (autoRes.ok) {{
+            await runDiagnosis(target, depth);
+            return;
+          }}
+        }}
         syncPubKeyBox(keyObj);
         $('dp-title').textContent = '🔐 为' + hopLabel + '配置免密登录（账号 ' + (hop.username || $('f-user').value.trim()) + '）';
-        $('dp-desc').textContent = '只需配置这一次免密，之后永久免密码。输入一次登录密码可自动写入公钥（密码用完即销毁）；若本机已有授权密钥也可一键切换。';
+        $('dp-desc').textContent = sessionPassword
+          ? '该服务器密码与本次会话之前输入的密码不同，请单独输入本台服务器的登录密码（或一键切换已有密钥）。'
+          : '只需输入一次登录密码即可自动写入公钥（本次会话内再添同密码服务器无需重复输入，关闭窗口即销毁、绝不落盘）。';
         renderAltKeyButtonsForHop(hop);
         setMsg($('global-msg'), hopLabel + ' 网络与指纹均已通过，只需完成下方免密密钥配置即可！', 'warn');
         $('assist-deploy').classList.remove('hidden');
@@ -1052,8 +1135,18 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   $('f-alias').addEventListener('input', () => {{ aliasTouched = Boolean($('f-alias').value.trim()); renderJumpChips(); }});
   $('f-use-jump').addEventListener('change', () => {{
     $('jump-box').classList.toggle('hidden', !$('f-use-jump').checked);
+    syncJumpUserVisibility();
     renderJumpChips();
   }});
+  $('f-jump').addEventListener('input', syncJumpUserVisibility);
+  $('btn-clear-session-pw').addEventListener('click', () => {{
+    sessionPassword = '';
+    autoTriedSessionPw.clear();
+    updateSessionPwUi();
+    setMsg($('global-msg'), '已清除本次会话内存中的临时密码。', 'ok');
+  }});
+  $('btn-add-another').addEventListener('click', () => resetNewForm({{preserveDefaults: true}}));
+  window.addEventListener('beforeunload', () => {{ sessionPassword = ''; }});
   $('f-key').addEventListener('change', () => syncPubKeyBox());
   $('btn-quick-copy-key').addEventListener('click', async () => {{
     let k = findSelectedKeyObj();
@@ -1066,7 +1159,7 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
     renderKeyManager();
   }});
   $('btn-close-key-mgr').addEventListener('click', () => $('key-mgr').classList.add('hidden'));
-  $('btn-new-host').addEventListener('click', resetNewForm);
+  $('btn-new-host').addEventListener('click', () => resetNewForm({{preserveDefaults: true}}));
 
   $('host-form').addEventListener('submit', async (ev) => {{
     ev.preventDefault();
@@ -1139,6 +1232,9 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       pwEl.value = '';
       const info = res.deploy || {{}};
       if (res.ok) {{
+        // Cache strictly in-RAM for this popup session so subsequent hops/servers reuse it without retyping
+        sessionPassword = pw;
+        updateSessionPwUi();
         setMsg($('deploy-msg'), info.message || '公钥写入成功，正在自动继续测试…', 'ok');
         await runDiagnosis(selectedAlias || $('f-alias').value.trim(), 0);
       }} else {{
@@ -1161,8 +1257,9 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
   }});
   $('btn-retest-after-copy').addEventListener('click', () => runDiagnosis(selectedAlias || $('f-alias').value.trim(), 0));
 
-  $('btn-close-only').addEventListener('click', () => window.close());
+  $('btn-close-only').addEventListener('click', () => {{ sessionPassword = ''; window.close(); }});
   $('btn-done-return').addEventListener('click', () => {{
+    sessionPassword = '';
     if (window.opener) {{
       try {{
         window.opener.postMessage({{
@@ -1189,6 +1286,9 @@ details.adv[open] summary{{margin-bottom:10px;color:var(--ink);font-weight:600}}
       renderHosts();
       runDiagnosis(BOOT.initialAlias, 0);
     }}
+  }} else {{
+    // Auto-prefill remembered jump host & username when opening to add another server!
+    resetNewForm({{preserveDefaults: true}});
   }}
 }})();
 </script>

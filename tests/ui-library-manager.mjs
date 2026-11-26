@@ -164,6 +164,7 @@ ex.setLibMgr(m => {
 });
 ex.renderLibraryManagerDialog();
 assert(renderedLibHtml.includes('data-virtuoso-schematic-card="true"'), 'Virtuoso schematic card must render inside schematic view dir');
+assert(renderedLibHtml.includes('id="lib-mgr-preserve-rnl"'), 'RNL geometry preservation checkbox must render');
 assert(renderedLibHtml.includes('id="lib-mgr-include-maestro"'), 'Maestro import toggle checkbox must render');
 assert(renderedLibHtml.includes('从 Schematic 导出并导入'), 'Export schematic CTA must render');
 assert.match(css, /\.lib-mgr-check input\[type="checkbox"\][\s\S]*width:\s*auto/, 'Checkbox width must not stretch');

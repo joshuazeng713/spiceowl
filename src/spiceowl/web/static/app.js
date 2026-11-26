@@ -108,6 +108,8 @@ let simSourceState = {
   fromSchematic: false,
   maestroApplied: false,
   maestroConfig: null,
+  rnlApplied: false,
+  rnlStats: null,
   serverEntryChecked: false,
   urlHandoffChecked: false,
 };
@@ -122,6 +124,7 @@ let libMgrState = {
   cdsLibraries: [],
   virtuosoContext: null,
   includeMaestro: true,
+  preserveRnl: true,
   selectedMaestroView: '',
   truncated: false,
   selectedPath: '',
@@ -1487,6 +1490,9 @@ function directAgentSetupPanel(hostsList) {
         simSourceState.fromSchematic
           ? (simSourceState.maestroApplied ? '已通过 Virtuoso schematic 导出并合并 Maestro 仿真配置' : '已通过 Virtuoso schematic 导出纯电路网表')
           : (simSourceState.remotePath || simSourceState.entryPath),
+        simSourceState.rnlApplied && simSourceState.rnlStats
+          ? `含 RNL 原图几何（${simSourceState.rnlStats.cells || 1} 级 · ${simSourceState.rnlStats.placed || 0} 器件 · ${simSourceState.rnlStats.wires || 0} 连线）`
+          : '',
         supportEntries.length ? `含 ${supportEntries.length} 个相对 include 依赖` : '',
       ].filter(Boolean).join(' · ');
     } else if (simSourceState.origin === 'local') {
@@ -1674,7 +1680,7 @@ async function browseLibrarySsh(targetPath) {
   }
 }
 
-async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestroView = null} = {}) {
+async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestroView = null, preserveRnl = null} = {}) {
   if (isPublicDemo() || libMgrState.busy) return;
   const target = String(targetPath || libMgrState.virtuosoContext?.schematic_dir || libMgrState.cwd || '').trim();
   if (!target) {
@@ -1683,11 +1689,16 @@ async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestr
     return;
   }
   const useMaestro = includeMaestro !== null ? Boolean(includeMaestro) : Boolean(libMgrState.includeMaestro);
+  const useRnl = preserveRnl !== null ? Boolean(preserveRnl) : Boolean(libMgrState.preserveRnl);
   const chosenView = maestroView !== null ? maestroView : (libMgrState.selectedMaestroView || '');
   libMgrState.busy = true;
-  libMgrState.busyMessage = useMaestro
-    ? '正在远端调用 Cadence si 从 schematic 导出网表并解析 Maestro 配置（约 5–15 秒）…'
-    : '正在远端调用 Cadence si 从 schematic 导出纯原理图 Spectre 网表（约 5–15 秒）…';
+  libMgrState.busyMessage = useRnl
+    ? (useMaestro
+      ? '正在远端调用 Cadence si + SKILL 导出网表、保留 RNL 原理图几何并解析 Maestro 配置（约 6–15 秒）…'
+      : '正在远端调用 Cadence si + SKILL 导出网表并保留原图元件位置与连线（RNL，约 6–15 秒）…')
+    : (useMaestro
+      ? '正在远端调用 Cadence si 从 schematic 导出网表并解析 Maestro 配置（约 5–15 秒）…'
+      : '正在远端调用 Cadence si 从 schematic 导出纯原理图 Spectre 网表（约 5–15 秒）…');
   libMgrState.error = '';
   renderLibraryManagerDialog();
   try {
@@ -1695,6 +1706,7 @@ async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestr
       ...(libMgrState.hostId ? {host_id: libMgrState.hostId} : {ssh_target: libMgrState.sshTarget}),
       path: target,
       include_maestro: useMaestro,
+      preserve_rnl: useRnl,
       ...(chosenView ? {maestro_view: chosenView} : {}),
       ...(libMgrState.virtuosoContext?.cds_lib ? {cds_lib: libMgrState.virtuosoContext.cds_lib} : {}),
     };
@@ -1719,6 +1731,8 @@ async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestr
     simSourceState.sourceCommit = '';
     simSourceState.maestroApplied = Boolean(res.maestro_applied);
     simSourceState.maestroConfig = res.maestro_config || null;
+    simSourceState.rnlApplied = Boolean(res.rnl_applied);
+    simSourceState.rnlStats = res.rnl_stats || null;
 
     directDraft.netlist_text = res.text || '';
     directDraft.simulator = res.maestro_config?.simulator === 'ngspice' ? 'ngspice' : 'spectre';
@@ -1744,7 +1758,8 @@ async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestr
     render();
     toast(
       `已从远端 Virtuoso schematic（${res.lib_name}/${res.cell_name}）导出网表` +
-      (res.maestro_applied ? `并导入 ${res.maestro_config?.view_name || 'maestro'} 仿真配置！` : '（纯原理图网表）！')
+      (res.rnl_applied && res.rnl_stats ? `（已转为 RNL · 保留 ${res.rnl_stats.placed || 0} 器件与 ${res.rnl_stats.wires || 0} 连线）` : '') +
+      (res.maestro_applied ? `并导入 ${res.maestro_config?.view_name || 'maestro'} 仿真配置！` : '！')
     );
   } catch (error) {
     libMgrState.error = error.message || '远端 Virtuoso schematic 网表导出失败。';
@@ -1780,6 +1795,8 @@ async function importLibrarySsh(filePath) {
     simSourceState.fromSchematic = false;
     simSourceState.maestroApplied = false;
     simSourceState.maestroConfig = null;
+    simSourceState.rnlApplied = false;
+    simSourceState.rnlStats = null;
     simSourceState.projectName = dirName || fileName.replace(/\.[^.]+$/, '') || fileName;
     simSourceState.fileName = fileName;
     simSourceState.entryPath = fileName;
@@ -1938,15 +1955,24 @@ function renderLibraryManagerDialog() {
             </div>
           </div>` : `<p class="subtle-note" style="margin:6px 0 0">未在同单元目录下检测到 <code>maestro</code> / <code>adexl</code> / <code>spectre_state</code> 视图，将导出纯原理图 Spectre 网表。</p>`;
 
+        const rnlToggleHtml = `
+          <div class="lib-mgr-maestro-box">
+            <label class="lib-mgr-check">
+              <input id="lib-mgr-preserve-rnl" type="checkbox" ${libMgrState.preserveRnl ? 'checked' : ''} ${libMgrState.busy ? 'disabled' : ''}>
+              <span>自动转为 <strong>RNL</strong> 保留原图元件坐标、方向、符号、连线与层次关系（通用 SKILL 只读导出，兼容各版本 Virtuoso 与 CircuitGit）</span>
+            </label>
+          </div>`;
+
         virtuosoCardHtml = `
           <div class="lib-mgr-virtuoso-card" data-virtuoso-schematic-card="true">
             <div class="lib-mgr-virtuoso-head">
               <div>
                 <strong>📐 检测到 Virtuoso 原理图：${escape(vctx.lib_name)} / ${escape(vctx.cell_name)} <span class="chip green">${escape(vctx.view_name)}</span></strong>
-                <small class="subtle-note" style="display:block;margin-top:2px">直接调用远端 Cadence <code>si -batch -command nl</code> 在隔离临时目录只读导出完整层次 Spectre 网表，不改动原设计。</small>
+                <small class="subtle-note" style="display:block;margin-top:2px">直接调用远端 Cadence <code>si</code> + 只读 SKILL 在隔离临时目录导出完整层次 Spectre/RNL 网表，不改动原设计。</small>
               </div>
               <button type="button" class="button primary small" data-action="lib-mgr-export-schematic" data-path="${escape(vctx.schematic_dir)}" ${libMgrState.busy ? 'disabled' : ''}>${libMgrState.busy ? '导出中…' : '⚡ 从 Schematic 导出并导入'}</button>
             </div>
+            ${rnlToggleHtml}
             ${maestroBlockHtml}
           </div>`;
       }
@@ -5368,6 +5394,9 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'lib-mgr-include-maestro') {
     libMgrState.includeMaestro = Boolean(event.target.checked);
+  }
+  if (event.target.id === 'lib-mgr-preserve-rnl') {
+    libMgrState.preserveRnl = Boolean(event.target.checked);
   }
   if (event.target.id === 'lib-mgr-maestro-view') {
     libMgrState.selectedMaestroView = event.target.value;

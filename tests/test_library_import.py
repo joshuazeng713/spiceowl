@@ -233,6 +233,31 @@ class TestSshBrowseAndImportExecution(unittest.TestCase):
             )
             fake_si.chmod(0o755)
 
+            # Fake headless Cadence `dbAccess` executable that emits valid OA geometry JSON
+            fake_db = bin_dir / "dbAccess"
+            fake_db.write_text(
+                "#!/bin/sh\n"
+                "cat > oa_geometry.json <<'J'\n"
+                "{\"ok\":true,\"top\":{\"lib\":\"my_adc_lib\",\"cell\":\"tb_amp\",\"view\":\"schematic\"},"
+                "\"cells\":[{\"lib\":\"my_adc_lib\",\"cell\":\"tb_amp\",\"view\":\"schematic\",\"dbu\":160.0,"
+                "\"instances\":["
+                "{\"name\":\"R0\",\"lib\":\"analogLib\",\"cell\":\"res\",\"view\":\"symbol\",\"purpose\":\"\",\"xy\":[0.0,1.0],\"orient\":\"R0\",\"nlAction\":\"\",\"instTerms\":[[\"PLUS\",\"IN\"],[\"MINUS\",\"VOUT\"]]},"
+                "{\"name\":\"C0\",\"lib\":\"analogLib\",\"cell\":\"cap\",\"view\":\"symbol\",\"purpose\":\"\",\"xy\":[2.0,0.0],\"orient\":\"MY\",\"nlAction\":\"\",\"instTerms\":[[\"PLUS\",\"VOUT\"],[\"MINUS\",\"0\"]]},"
+                "{\"name\":\"G0\",\"lib\":\"basic\",\"cell\":\"gnd\",\"view\":\"symbol\",\"purpose\":\"\",\"xy\":[2.0,-1.0],\"orient\":\"R0\",\"nlAction\":\"\",\"instTerms\":[[\"gnd!\",\"gnd!\"]]}"
+                "],\"terminals\":[{\"name\":\"VOUT\",\"dir\":\"output\",\"xy\":[3.0,1.0],\"bBox\":null,\"orient\":\"R0\"}],"
+                "\"wires\":[{\"net\":\"VOUT\",\"pts\":[[0.5,1.0],[2.0,1.0],[2.0,0.5]]}],"
+                "\"labels\":[{\"net\":\"VOUT\",\"text\":\"VOUT\",\"xy\":[1.25,1.1],\"orient\":\"R0\"}]}],"
+                "\"symbols\":{"
+                "\"analogLib/res/symbol\":{\"lib\":\"analogLib\",\"cell\":\"res\",\"view\":\"symbol\",\"dbu\":160.0,\"bBox\":[-0.5,-0.2,0.5,0.2],\"termOrder\":[\"PLUS\",\"MINUS\"],\"terms\":[{\"name\":\"PLUS\",\"dir\":\"inputOutput\",\"bBox\":[-0.55,-0.05,-0.45,0.05]},{\"name\":\"MINUS\",\"dir\":\"inputOutput\",\"bBox\":[0.45,-0.05,0.55,0.05]}],\"shapes\":[{\"type\":\"line\",\"layer\":\"device\",\"purpose\":\"drawing\",\"pts\":[[-0.5,0],[0.5,0]]}]},"
+                "\"analogLib/cap/symbol\":{\"lib\":\"analogLib\",\"cell\":\"cap\",\"view\":\"symbol\",\"dbu\":160.0,\"bBox\":[-0.2,-0.5,0.2,0.5],\"termOrder\":[\"PLUS\",\"MINUS\"],\"terms\":[{\"name\":\"PLUS\",\"dir\":\"inputOutput\",\"bBox\":[-0.05,0.45,0.05,0.55]},{\"name\":\"MINUS\",\"dir\":\"inputOutput\",\"bBox\":[-0.05,-0.55,0.05,-0.45]}],\"shapes\":[{\"type\":\"line\",\"layer\":\"device\",\"purpose\":\"drawing\",\"pts\":[[0,0.5],[0,-0.5]]}]},"
+                "\"basic/gnd/symbol\":{\"lib\":\"basic\",\"cell\":\"gnd\",\"view\":\"symbol\",\"dbu\":160.0,\"bBox\":[-0.2,-0.3,0.2,0.0],\"termOrder\":[],\"terms\":[{\"name\":\"gnd!\",\"dir\":\"inputOutput\",\"bBox\":[-0.05,-0.05,0.05,0.05]}],\"shapes\":[{\"type\":\"line\",\"layer\":\"device\",\"purpose\":\"drawing\",\"pts\":[[0,0],[0,-0.2]]}]}"
+                "}}\n"
+                "J\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_db.chmod(0o755)
+
             def runner_with_fake_si(argv, *, input=b"", capture_output=True, timeout=25):
                 env = dict(os.environ)
                 env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
@@ -264,27 +289,141 @@ class TestSshBrowseAndImportExecution(unittest.TestCase):
             self.assertEqual(msum["variables"]["vin"], "1m")
             self.assertEqual(len(msum["analyses"]), 2)
 
-            # 3. Export WITH Maestro merged
+            # 3. Export WITH Maestro merged AND RNL geometry preserved (default)
             exp_with = export_remote_schematic(
-                "sim-node-a", None, str(sch_dir), include_maestro=True, runner=runner_with_fake_si
+                "sim-node-a", None, str(sch_dir), include_maestro=True, preserve_rnl=True, runner=runner_with_fake_si
             )
             self.assertEqual(exp_with["schema"], SCHEMATIC_EXPORT_SCHEMA)
             self.assertEqual(exp_with["file_name"], "tb_amp.scs")
             self.assertTrue(exp_with["maestro_applied"])
+            self.assertTrue(exp_with["rnl_applied"])
+            self.assertEqual(exp_with["oa_tool"], "dbAccess")
+            self.assertEqual(exp_with["rnl_stats"]["placed"], 2)
+            self.assertGreaterEqual(exp_with["rnl_stats"]["wires"], 2)
+            self.assertEqual(exp_with["text"].splitlines()[1], '// @RNL(type="header") { @VERSION("0.3") }')
+            self.assertIn('#"R0" @PLACE(0, 16) => @ORIENT("R0")', exp_with["text"])
+            self.assertIn('#"C0" @PLACE(32, 0) => @ORIENT("MY")', exp_with["text"])
             self.assertIn('include "/opt/pdk/models.scs" section=tt_mos', exp_with["text"])
             self.assertIn("parameters vdd=1.2 vin=1m", exp_with["text"])
             self.assertIn("tran tran stop=50n errpreset=conservative", exp_with["text"])
             self.assertIn("dcOp dc ", exp_with["text"])
             self.assertIn("save VOUT I0.M1:D", exp_with["text"])
 
-            # 4. Export WITHOUT Maestro (pure schematic netlist)
+            # 4. Export WITHOUT Maestro and WITHOUT RNL (pure schematic netlist)
             exp_pure = export_remote_schematic(
-                "sim-node-a", None, str(sch_dir), include_maestro=False, runner=runner_with_fake_si
+                "sim-node-a", None, str(sch_dir), include_maestro=False, preserve_rnl=False, runner=runner_with_fake_si
             )
             self.assertFalse(exp_pure["maestro_applied"])
+            self.assertFalse(exp_pure["rnl_applied"])
+            self.assertNotIn("@RNL", exp_pure["text"])
             self.assertIn("R0 (IN VOUT) resistor r=1k", exp_pure["text"])
             self.assertNotIn("tran tran stop=50n", exp_pure["text"])
             self.assertEqual(len(exp_pure["detected_maestro"]), 1)
+
+
+class TestVirtuosoRnlInjection(unittest.TestCase):
+    def test_multi_level_subckt_bundle_junction_and_line2_header(self):
+        from spiceowl.onboarding.virtuoso_rnl import inject_rnl_geometry
+
+        netlist = "\n".join([
+            "// Generated for: spectre",
+            "simulator lang=spectre",
+            "global 0",
+            "subckt InvBlock IN OUT VDD VSS",
+            "    M0_0 (OUT IN VSS VSS) nch l=40n w=1u",
+            "    M0_1 (OUT IN VSS VSS) nch l=40n w=1u",
+            "ends InvBlock",
+            "I0 (VIN VOUT VDD 0) InvBlock",
+            "R0 (VOUT 0) resistor r=1k",
+        ]) + "\n"
+        oa_geom = {
+            "ok": True,
+            "top": {"lib": "demo_lib", "cell": "tb_top", "view": "schematic"},
+            "cells": [
+                {
+                    "lib": "demo_lib", "cell": "InvBlock", "view": "schematic", "dbu": 160.0,
+                    "instances": [
+                        {"name": "M0<1:0>", "lib": "pdk", "cell": "nch", "view": "symbol", "purpose": "",
+                         "xy": [1.0, 2.0], "orient": "R90", "nlAction": "",
+                         "instTerms": [["D", "OUT"], ["G", "IN"], ["S", "VSS"], ["B", "VSS"]]},
+                    ],
+                    "terminals": [
+                        {"name": "IN", "dir": "input", "xy": [0.0, 2.0], "bBox": None, "orient": "R0"},
+                        {"name": "OUT", "dir": "output", "xy": [3.0, 2.0], "bBox": None, "orient": "R0"},
+                    ],
+                    "wires": [
+                        {"net": "OUT", "pts": [[1.0, 2.0], [2.0, 2.0]]},
+                        {"net": "OUT", "pts": [[2.0, 2.0], [3.0, 2.0]]},
+                        {"net": "OUT", "pts": [[2.0, 2.0], [2.0, 3.0]]},
+                    ],
+                    "labels": [{"net": "OUT", "text": "OUT", "xy": [2.5, 2.1], "orient": "R0"}],
+                },
+                {
+                    "lib": "demo_lib", "cell": "tb_top", "view": "schematic", "dbu": 160.0,
+                    "instances": [
+                        {"name": "I0", "lib": "demo_lib", "cell": "InvBlock", "view": "symbol", "purpose": "",
+                         "xy": [0.0, 0.0], "orient": "R0", "nlAction": "",
+                         "instTerms": [["IN", "VIN"], ["OUT", "VOUT"], ["VDD", "VDD"], ["VSS", "0"]]},
+                        {"name": "R0", "lib": "analogLib", "cell": "res", "view": "symbol", "purpose": "",
+                         "xy": [2.0, 0.0], "orient": "MX", "nlAction": "",
+                         "instTerms": [["PLUS", "VOUT"], ["MINUS", "0"]]},
+                    ],
+                    "terminals": [],
+                    "wires": [{"net": "VOUT", "pts": [[0.5, 0.0], [1.5, 0.0]]}],
+                    "labels": [],
+                },
+            ],
+            "symbols": {
+                "demo_lib/InvBlock/symbol": {
+                    "lib": "demo_lib", "cell": "InvBlock", "view": "symbol", "dbu": 160.0,
+                    "bBox": [-0.5, -0.5, 0.5, 0.5], "termOrder": ["IN", "OUT", "VDD", "VSS"],
+                    "terms": [
+                        {"name": "IN", "dir": "input", "bBox": [-0.55, -0.05, -0.45, 0.05]},
+                        {"name": "OUT", "dir": "output", "bBox": [0.45, -0.05, 0.55, 0.05]},
+                    ],
+                    "shapes": [{"type": "rect", "layer": "device", "purpose": "drawing", "bBox": [-0.5, -0.5, 0.5, 0.5]}],
+                },
+                "pdk/nch/symbol": {
+                    "lib": "pdk", "cell": "nch", "view": "symbol", "dbu": 160.0,
+                    "bBox": [0.0, -0.25, 0.25, 0.25], "termOrder": ["D", "G", "S", "B"],
+                    "terms": [
+                        {"name": "D", "dir": "inputOutput", "bBox": [0.2, 0.2, 0.3, 0.3]},
+                        {"name": "G", "dir": "inputOutput", "bBox": [-0.05, -0.05, 0.05, 0.05]},
+                    ],
+                    "shapes": [{"type": "line", "layer": "device", "purpose": "drawing", "pts": [[0, 0], [0.25, 0]]}],
+                },
+                "analogLib/res/symbol": {
+                    "lib": "analogLib", "cell": "res", "view": "symbol", "dbu": 160.0,
+                    "bBox": [-0.5, -0.1, 0.5, 0.1], "termOrder": ["PLUS", "MINUS"],
+                    "terms": [
+                        {"name": "PLUS", "dir": "inputOutput", "bBox": [-0.55, -0.05, -0.45, 0.05]},
+                        {"name": "MINUS", "dir": "inputOutput", "bBox": [0.45, -0.05, 0.55, 0.05]},
+                    ],
+                    "shapes": [{"type": "line", "layer": "device", "purpose": "drawing", "pts": [[-0.5, 0], [0.5, 0]]}],
+                },
+            },
+        }
+        annotated, stats = inject_rnl_geometry(netlist, oa_geom)
+        self.assertTrue(stats["applied"])
+        self.assertEqual(stats["cells"], 2)
+        self.assertEqual(stats["placed"], 4)  # M0_0, M0_1 (bundled), I0, R0
+        lines = annotated.splitlines()
+        self.assertEqual(lines[0], "// Generated for: spectre")
+        self.assertEqual(lines[1], '// @RNL(type="header") { @VERSION("0.3") }')
+        self.assertIn("%block_symbol = @DEFINE-SYMBOL", annotated)
+        self.assertIn("# @SET-SYMBOL %block_symbol", annotated)
+        self.assertIn('@BUNDLE', annotated)
+        self.assertIn('$IO_PORT @ATTACH &"OUT"', annotated)
+        self.assertIn('$JUNCTION @ATTACH %p', annotated)
+        self.assertIn('#"I0":2', annotated)
+
+    def test_failed_oa_geometry_returns_original_netlist(self):
+        from spiceowl.onboarding.virtuoso_rnl import inject_rnl_geometry
+
+        src = "// title\nsimulator lang=spectre\nR0 (a 0) resistor r=1k\n"
+        out, stats = inject_rnl_geometry(src, {"ok": False})
+        self.assertEqual(out, src)
+        self.assertFalse(stats["applied"])
 
 
 class TestCircuitGitEntryContractAndHttp(unittest.TestCase):

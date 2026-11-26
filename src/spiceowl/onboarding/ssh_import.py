@@ -24,6 +24,7 @@ from typing import Any
 
 from spiceowl.adapters.executors.ssh import resolve_ssh_executable
 from spiceowl.domain.common import DomainError
+from spiceowl.onboarding.virtuoso_rnl import REMOTE_OA_DUMP_SKILL, inject_rnl_geometry
 
 BROWSE_SCHEMA = "ic.onboarding.ssh-browse.v1"
 IMPORT_SCHEMA = "ic.onboarding.ssh-import.v1"
@@ -1159,28 +1160,28 @@ def _run_si_netlist(work_dir):
     direct_si = _find_on_path('si')
     attempts = []
     if direct_si:
-        attempts.append(('path', [direct_si, '-batch', '-command', 'nl']))
+        attempts.append(('path', None, None, [direct_si, '-batch', '-command', 'nl']))
 
     for _, skind, script_path in _discover_cadence_setup_scripts():
         if skind == 'csh':
             csh_bin = _find_on_path('csh') or _find_on_path('tcsh')
             if csh_bin:
                 cmd = 'source "%s" >& /dev/null; si -batch -command nl' % script_path.replace('"', '\\"')
-                attempts.append((script_path, [csh_bin, '-f', '-c', cmd]))
+                attempts.append((script_path, 'csh', script_path, [csh_bin, '-f', '-c', cmd]))
         else:
             sh_bin = _find_on_path('bash') or '/bin/sh'
             cmd = '. "%s" >/dev/null 2>&1; si -batch -command nl' % script_path.replace('"', '\\"')
-            attempts.append((script_path, [sh_bin, '-c', cmd]))
+            attempts.append((script_path, 'sh', script_path, [sh_bin, '-c', cmd]))
 
     fallback_si = _discover_si_binary_direct()
     if fallback_si and fallback_si != direct_si:
-        attempts.append((fallback_si, [fallback_si, '-batch', '-command', 'nl']))
+        attempts.append((fallback_si, None, None, [fallback_si, '-batch', '-command', 'nl']))
 
     if not attempts:
-        return None, 'No Cadence si netlister found on PATH, shell rc setup scripts, or standard EDA install directories.'
+        return None, None, 'No Cadence si netlister found on PATH, shell rc setup scripts, or standard EDA install directories.'
 
     last_err = ''
-    for label, argv in attempts:
+    for label, skind, script_path, argv in attempts:
         try:
             proc = subprocess.Popen(
                 argv,
@@ -1193,12 +1194,62 @@ def _run_si_netlist(work_dir):
             err_s = (err_b or b'').decode('utf-8', 'replace')
             nl_path = os.path.join(work_dir, 'netlist')
             if proc.returncode == 0 and os.path.isfile(nl_path) and os.path.getsize(nl_path) > 0:
-                return label, None
+                return label, (skind, script_path), None
             snippet = (err_s.strip() or out_s.strip() or ('exit code %d' % proc.returncode))[-260:]
             last_err = '[%s] %s' % (os.path.basename(label), snippet)
         except Exception as exc:
             last_err = '[%s] %s' % (os.path.basename(label), str(exc))
-    return None, 'Cadence si netlist export failed: ' + last_err
+    return None, None, 'Cadence si netlist export failed: ' + last_err
+
+
+def _run_oa_geometry_dump(work_dir, env_hint, skill_text):
+    '''Run read-only SKILL geometry extraction via dbAccess (preferred) or virtuoso -nograph / ocean.'''
+    skill_path = os.path.join(work_dir, 'dump_oa.il')
+    out_json = os.path.join(work_dir, 'oa_geometry.json')
+    with io.open(skill_path, 'w', encoding='utf-8') as fh:
+        fh.write(skill_text)
+
+    skind, script_path = env_hint if env_hint else (None, None)
+    csh_bin = _find_on_path('csh') or _find_on_path('tcsh')
+    sh_bin = _find_on_path('bash') or '/bin/sh'
+
+    def _build_env_cmds(tool_cmd):
+        cmds = []
+        if script_path and skind == 'csh' and csh_bin:
+            cmds.append([csh_bin, '-f', '-c', 'source "%s" >& /dev/null; %s' % (script_path.replace('"', '\\"'), tool_cmd)])
+        elif script_path and skind == 'sh':
+            cmds.append([sh_bin, '-c', '. "%s" >/dev/null 2>&1; %s' % (script_path.replace('"', '\\"'), tool_cmd)])
+        else:
+            cmds.append([sh_bin, '-c', tool_cmd])
+        return cmds
+
+    tool_invocations = [
+        ('dbAccess', 'dbAccess -load "%s"' % skill_path),
+        ('virtuoso', 'virtuoso -nograph -nocdsinit -replay "%s" -log "%s"' % (skill_path, os.path.join(work_dir, 'v_rnl.log'))),
+        ('ocean', 'ocean -nograph < "%s"' % skill_path),
+    ]
+    last_err = ''
+    for tname, tcmd in tool_invocations:
+        for argv in _build_env_cmds(tcmd):
+            try:
+                proc = subprocess.Popen(
+                    argv,
+                    cwd=work_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                out_b, err_b = proc.communicate()
+                if os.path.isfile(out_json) and os.path.getsize(out_json) > 10:
+                    raw = read_utf8(out_json, 1400 * 1024)
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict) and parsed.get('ok'):
+                        return parsed, tname, None
+                snippet = ((err_b or b'').decode('utf-8', 'replace').strip() or (out_b or b'').decode('utf-8', 'replace').strip())[-220:]
+                if snippet:
+                    last_err = '[%s] %s' % (tname, snippet)
+            except Exception as exc:
+                last_err = '[%s] %s' % (tname, str(exc))
+    return None, None, last_err or 'OA SKILL geometry extraction unavailable'
 
 
 def do_export_schematic():
@@ -1269,9 +1320,27 @@ def do_export_schematic():
         with io.open(os.path.join(work_dir, 'si.env'), 'w', encoding='utf-8') as fh:
             fh.write(si_env)
 
-        si_tool, err = _run_si_netlist(work_dir)
+        si_tool, env_hint, err = _run_si_netlist(work_dir)
         if err:
             return {'error': err}
+
+        oa_geometry = None
+        oa_tool = None
+        if PAYLOAD.get('preserve_rnl', True) and PAYLOAD.get('oa_skill_b64'):
+            try:
+                raw_skill = base64.b64decode(PAYLOAD['oa_skill_b64']).decode('utf-8')
+                skill_filled = (
+                    raw_skill
+                    .replace('__LIB__', lib_name.replace('\\', '\\\\').replace('"', '\\"'))
+                    .replace('__CELL__', cell_name.replace('\\', '\\\\').replace('"', '\\"'))
+                    .replace('__VIEW__', view_name.replace('\\', '\\\\').replace('"', '\\"'))
+                    .replace('__OUT_JSON__', os.path.join(work_dir, 'oa_geometry.json').replace('\\', '\\\\').replace('"', '\\"'))
+                )
+                oa_geometry, oa_tool, oa_err = _run_oa_geometry_dump(work_dir, env_hint, skill_filled)
+                if oa_err and oa_geometry is None:
+                    warnings.append('RNL geometry fallback (electrical netlist still exported): ' + oa_err[:200])
+            except Exception as exc:
+                warnings.append('RNL geometry extraction skipped: ' + str(exc)[:180])
 
         body_text = read_utf8(os.path.join(work_dir, 'netlist'), max_file)
         header_path = os.path.join(work_dir, 'netlistHeader')
@@ -1341,6 +1410,8 @@ def do_export_schematic():
             'maestro_config': maestro_cfg,
             'detected_maestro': [{'name': m['name'], 'kind': m['kind'], 'path': m['path']} for m in mviews],
             'si_tool': os.path.basename(si_tool) if si_tool else 'si',
+            'oa_tool': oa_tool,
+            'oa_geometry': oa_geometry,
             'warnings': warnings,
         }
     finally:
@@ -1547,17 +1618,20 @@ def export_remote_schematic(
     path: str | None = None,
     *,
     include_maestro: bool = True,
+    preserve_rnl: bool = True,
     maestro_view: str | None = None,
     maestro_test: str | None = None,
     cds_lib: str | None = None,
     ssh_hostname: str | None = None,
     runner=None,
 ) -> dict[str, Any]:
-    """Export a Spectre netlist directly from a remote Virtuoso OA schematic view (with optional Maestro config)."""
+    """Export a Spectre/RNL netlist directly from a remote Virtuoso OA schematic view (with optional Maestro & RNL geometry)."""
     target = validate_ssh_target(ssh_target)
     clean_path = validate_remote_path(path, allow_empty=False, require_circuit_ext=False)
     if not isinstance(include_maestro, bool):
         raise DomainError("include_maestro must be an explicit boolean.")
+    if not isinstance(preserve_rnl, bool):
+        raise DomainError("preserve_rnl must be an explicit boolean.")
     clean_cds = validate_remote_path(cds_lib, allow_empty=True, require_circuit_ext=False) if cds_lib else ""
     if maestro_view is not None and (
         not isinstance(maestro_view, str) or len(maestro_view) > 120 or "/" in maestro_view or ".." in maestro_view
@@ -1569,6 +1643,8 @@ def export_remote_schematic(
         "action": "export_schematic",
         "path": clean_path,
         "include_maestro": include_maestro,
+        "preserve_rnl": preserve_rnl,
+        "oa_skill_b64": base64.b64encode(REMOTE_OA_DUMP_SKILL.encode("utf-8")).decode("ascii") if preserve_rnl else "",
         "maestro_view": maestro_view or "",
         "maestro_test": maestro_test or "",
         "cds_lib": clean_cds,
@@ -1593,6 +1669,14 @@ def export_remote_schematic(
     support = data.get("support_files")
     if not isinstance(file_name, str) or not isinstance(text, str) or not isinstance(support, dict):
         raise DomainError("Incomplete remote schematic export payload.")
+    rnl_stats: dict[str, Any] = {"applied": False, "cells": 0, "placed": 0, "wires": 0, "ports": 0, "labels": 0}
+    oa_geom = data.get("oa_geometry")
+    if preserve_rnl and isinstance(oa_geom, dict) and oa_geom.get("ok"):
+        annotated, rnl_stats = inject_rnl_geometry(text, oa_geom)
+        if len(annotated.encode("utf-8")) <= MAX_FILE_BYTES:
+            text = annotated
+        else:
+            rnl_stats = {"applied": False, "reason": "exceeds_1mib_with_rnl", "cells": 0, "placed": 0, "wires": 0, "ports": 0, "labels": 0}
     if len(text.encode("utf-8")) > MAX_FILE_BYTES:
         raise DomainError("Exported schematic netlist exceeds 1 MiB import limit.", "too_large")
     return {
@@ -1610,7 +1694,10 @@ def export_remote_schematic(
         "maestro_applied": bool(data.get("maestro_applied")),
         "maestro_config": data.get("maestro_config") if isinstance(data.get("maestro_config"), dict) else None,
         "detected_maestro": list(data.get("detected_maestro") or [])[:16],
+        "rnl_applied": bool(rnl_stats.get("applied")),
+        "rnl_stats": rnl_stats,
         "si_tool": str(data.get("si_tool") or "si"),
+        "oa_tool": str(data.get("oa_tool") or "") or None,
         "warnings": list(data.get("warnings") or [])[:16],
     }
 

@@ -647,7 +647,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 from pathlib import Path as _Path
                 from spiceowl.onboarding.ssh_import import export_remote_schematic
                 body = self.body()
-                allowed_fields = {"host_id", "ssh_target", "path", "include_maestro", "maestro_view", "maestro_test", "cds_lib"}
+                allowed_fields = {"host_id", "ssh_target", "path", "include_maestro", "preserve_rnl", "maestro_view", "maestro_test", "cds_lib"}
                 if set(body) - allowed_fields or "path" not in body:
                     raise DomainError("Schematic export requires path and either host_id or ssh_target.")
                 if not body.get("host_id") and not body.get("ssh_target"):
@@ -665,6 +665,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     ssh_cfg,
                     body["path"],
                     include_maestro=body.get("include_maestro", True),
+                    preserve_rnl=body.get("preserve_rnl", True),
                     maestro_view=body.get("maestro_view"),
                     maestro_test=body.get("maestro_test"),
                     cds_lib=body.get("cds_lib"),

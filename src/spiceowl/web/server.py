@@ -590,8 +590,10 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             if path == "/api/direct/runs" and self.command == "GET":
                 if url.query:
                     raise DomainError("Direct runs read does not accept query parameters.")
+                batch_map = batch_manager.run_batch_map()
+                runs_list = direct_manager.list(batch_map=batch_map)
                 return self.reply({
-                    "runs": direct_manager.list(),
+                    "runs": runs_list,
                     "monitor": direct_monitor.snapshot(),
                     "recovery_reports": direct_manager.list_recovery_reports(),
                 })
@@ -605,6 +607,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     "wall_seconds", "license_queue_seconds", "enforce_rlimit_as", "scheduler",
                     "include_dirs", "remote_python", "remote_root", "source_commit", "recovery_policy",
                     "remote_env",
+                    "project_name", "library_name", "cell_name", "view_name",
+                    "submission_group_id", "submission_label", "source_origin",
                 }
                 if set(payload) - allowed or not {"run_key", "netlist_text"} <= set(payload):
                     raise DomainError("Direct prepare requires run_key, netlist_text, and supported direct parameters only.")
@@ -643,6 +647,13 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     remote_env=payload.get("remote_env"),
                     source_commit=payload.get("source_commit"),
                     recovery_policy=payload.get("recovery_policy"),
+                    project_name=payload.get("project_name"),
+                    library_name=payload.get("library_name"),
+                    cell_name=payload.get("cell_name"),
+                    view_name=payload.get("view_name"),
+                    submission_group_id=payload.get("submission_group_id"),
+                    submission_label=payload.get("submission_label"),
+                    source_origin=payload.get("source_origin"),
                 )
                 return self.reply({"run": run}, 201)
             if path == "/api/library/ssh-browse" and self.command == "POST":
@@ -849,6 +860,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     "backend", "simulator", "output_format", "cpus", "memory_gib",
                     "wall_seconds", "license_queue_seconds", "enforce_rlimit_as",
                     "scheduler", "include_dirs", "remote_python", "remote_root", "recovery_policy",
+                    "project_name", "library_name", "cell_name", "view_name", "source_origin",
                 }
                 if set(req) - allowed or not {"batch_id", "netlist_template"} <= set(req):
                     raise DomainError("Batch prepare requires batch_id, netlist_template, and supported batch fields only.")
@@ -894,6 +906,11 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     remote_python=req.get("remote_python", "/usr/bin/python3"),
                     remote_root=req.get("remote_root", ".spiceowl-runs"),
                     recovery_policy=req.get("recovery_policy"),
+                    project_name=req.get("project_name"),
+                    library_name=req.get("library_name"),
+                    cell_name=req.get("cell_name"),
+                    view_name=req.get("view_name"),
+                    source_origin=req.get("source_origin"),
                 )
                 return self.reply(created, 201)
             if path.startswith("/api/direct/batches/"):

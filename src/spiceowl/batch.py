@@ -23,7 +23,7 @@ import re
 import uuid
 
 from spiceowl._platform import file_lock
-from spiceowl.direct import DirectExecutionManager
+from spiceowl.direct import DirectExecutionManager, extract_netlist_organization_hints
 from spiceowl.domain.common import DomainError, utcnow
 from spiceowl.experiments.analog_metrics import (
     SUPPORTED_TRANSIENT_METRICS,
@@ -511,8 +511,45 @@ class DirectBatchManager:
                 "pending_cases": counts["pending"],
                 "updated_at": summary["updated_at"],
                 "created_at": batch["created_at"],
+                "project_name": batch.get("project_name"),
+                "library_name": batch.get("library_name"),
+                "cell_name": batch.get("cell_name"),
+                "view_name": batch.get("view_name"),
             }
             _atomic_write_json(idx_path, idx)
+
+    def run_batch_map(self) -> dict[str, dict]:
+        """Map child run_id -> batch & case metadata for unified history archiving."""
+        mapping: dict[str, dict] = {}
+        if not self.root.is_dir():
+            return mapping
+        for entry in self.root.iterdir():
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            bfile = entry / "batch.json"
+            if not bfile.is_file() or bfile.is_symlink():
+                continue
+            try:
+                batch = _read_json(bfile)
+            except DomainError:
+                continue
+            bid = batch.get("batch_id")
+            if not bid:
+                continue
+            base = {
+                "batch_id": bid,
+                "title": batch.get("title") or bid,
+                "kind": batch.get("kind"),
+                "project_name": batch.get("project_name"),
+                "library_name": batch.get("library_name"),
+                "cell_name": batch.get("cell_name"),
+                "view_name": batch.get("view_name"),
+            }
+            for case in batch.get("cases") or []:
+                rid = case.get("run_id")
+                if rid:
+                    mapping[rid] = {**base, "case_label": case.get("label") or case.get("case_id")}
+        return mapping
 
     def list(self) -> list[dict]:
         idx_path = self._index_path()
@@ -555,6 +592,11 @@ class DirectBatchManager:
         remote_python: str = "/usr/bin/python3",
         remote_root: str = ".spiceowl-runs",
         recovery_policy: dict | None = None,
+        project_name: str | None = None,
+        library_name: str | None = None,
+        cell_name: str | None = None,
+        view_name: str | None = None,
+        source_origin: str | None = None,
     ) -> dict:
         """Pure local batch preparation: expands PVT/MC cases and freezes each child run."""
         batch_id = validate_batch_id(batch_id)
@@ -575,6 +617,13 @@ class DirectBatchManager:
             mc_variation=mc_variation,
             mc_seeds=mc_seeds,
         )
+
+        hints = extract_netlist_organization_hints(netlist_template)
+        resolved_lib = (library_name or "").strip()[:160] or hints.get("library_name")
+        resolved_proj = (project_name or "").strip()[:160] or resolved_lib or hints.get("project_name")
+        resolved_cell = (cell_name or "").strip()[:160] or hints.get("cell_name")
+        resolved_view = (view_name or "").strip()[:120] or hints.get("view_name")
+        resolved_title = (title or batch_id).strip()[:160]
 
         template_sha = hashlib.sha256(netlist_template.encode("utf-8")).hexdigest()
         prepared_cases: list[dict] = []
@@ -597,6 +646,14 @@ class DirectBatchManager:
                 remote_python=remote_python,
                 remote_root=remote_root,
                 recovery_policy=recovery_policy,
+                project_name=resolved_proj,
+                library_name=resolved_lib,
+                cell_name=resolved_cell,
+                view_name=resolved_view,
+                submission_group_id=f"batch:{batch_id}",
+                submission_label=resolved_title,
+                source_origin=source_origin or "batch",
+                batch_id=batch_id,
             )
             prepared_cases.append({
                 **case,
@@ -614,9 +671,13 @@ class DirectBatchManager:
         batch_record = {
             "schema": BATCH_SCHEMA,
             "batch_id": batch_id,
-            "title": (title or batch_id).strip()[:160],
+            "title": resolved_title,
             "kind": kind,
             "synthetic": False,
+            "project_name": resolved_proj,
+            "library_name": resolved_lib,
+            "cell_name": resolved_cell,
+            "view_name": resolved_view,
             "backend": backend,
             "simulator": simulator,
             "output_format": output_format,

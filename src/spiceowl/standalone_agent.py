@@ -332,7 +332,12 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         def direct_control(args, *, context):
             op, params = args['operation'], args['arguments']
             if op == 'prepare':
-                return direct_manager.prepare(**params)
+                prep_params = dict(params)
+                if not prep_params.get('submission_group_id') and context.get('turn_id'):
+                    prep_params['submission_group_id'] = f"turn:{context['turn_id']}"
+                if not prep_params.get('source_origin'):
+                    prep_params['source_origin'] = 'agent'
+                return direct_manager.prepare(**prep_params)
             if op == 'stage':
                 return direct_manager.stage(params['run_id'])
             if op == 'launch':

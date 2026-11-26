@@ -55,6 +55,125 @@ _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", re.ASCII)
 _COMMIT = re.compile(r"[a-f0-9]{40}", re.ASCII)
 
 _TERMINAL_ADAPTER_STATES = frozenset({"completed", "failed", "timed_out", "cancelled", "preflight_failed"})
+_VIRTUOSO_EXPORT_RE = re.compile(
+    r"//\s*Exported from Virtuoso schematic\s+([^\s/]+)/([^\s(]+)(?:\s*\(([^)]+)\))?",
+    re.IGNORECASE,
+)
+_CADENCE_LIB_RE = re.compile(r"//\s*Library name:\s*(\S+)", re.IGNORECASE)
+_CADENCE_CELL_RE = re.compile(r"//\s*Cell name:\s*(\S+)", re.IGNORECASE)
+_CADENCE_VIEW_RE = re.compile(r"//\s*View name:\s*(\S+)", re.IGNORECASE)
+_RUN_SUFFIX_RE = re.compile(r"(?:-(?:20\d{10,12}|\d{6}|r\d+))+$")
+
+
+def _clean_meta_text(value, field_name: str, *, max_len: int = 160) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise DomainError(f"{field_name} must be a string or null.", "invalid_direct_plan")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > max_len or any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        raise DomainError(f"{field_name} must be a printable string up to {max_len} characters.", "invalid_direct_plan")
+    return cleaned
+
+
+def extract_netlist_organization_hints(netlist_text: str | None) -> dict[str, str | None]:
+    """Infer Virtuoso library / cell (TB) / view hints from standard Spectre netlist headers."""
+    hints: dict[str, str | None] = {"project_name": None, "library_name": None, "cell_name": None, "view_name": None}
+    if not isinstance(netlist_text, str) or not netlist_text:
+        return hints
+    head = netlist_text[:4096]
+    m_exp = _VIRTUOSO_EXPORT_RE.search(head)
+    if m_exp:
+        hints["library_name"] = m_exp.group(1).strip()[:160] or None
+        hints["cell_name"] = m_exp.group(2).strip()[:160] or None
+        hints["view_name"] = (m_exp.group(3) or "").strip()[:120] or None
+    if not hints["library_name"]:
+        m_lib = _CADENCE_LIB_RE.search(head)
+        if m_lib:
+            hints["library_name"] = m_lib.group(1).strip()[:160] or None
+    if not hints["cell_name"]:
+        m_cell = _CADENCE_CELL_RE.search(head)
+        if m_cell:
+            hints["cell_name"] = m_cell.group(1).strip()[:160] or None
+    if not hints["view_name"]:
+        m_view = _CADENCE_VIEW_RE.search(head)
+        if m_view:
+            hints["view_name"] = m_view.group(1).strip()[:120] or None
+    if hints["library_name"]:
+        hints["project_name"] = hints["library_name"]
+    return hints
+
+
+def _infer_tb_from_run_id(run_id: str) -> str:
+    stem = _RUN_SUFFIX_RE.sub("", str(run_id or "")).strip("-_")
+    if len(stem) >= 2 and stem.lower() not in {"sim", "direct", "run", "test"}:
+        return stem[:160]
+    return str(run_id or "unnamed")[:160]
+
+
+def build_run_organization(
+    record: dict,
+    *,
+    netlist_head: str | None = None,
+    batch_info: dict | None = None,
+) -> dict:
+    """Compute normalized Project / Testbench / Submission-Group metadata for a run record."""
+    hints = extract_netlist_organization_hints(netlist_head) if netlist_head else {}
+    binfo = batch_info if isinstance(batch_info, dict) else {}
+    run_id = str(record.get("run_id") or "")
+    root_id = str(record.get("root_run_id") or run_id)
+    has_chain = bool(
+        record.get("parent_run_id")
+        or record.get("child_run_ids")
+        or (isinstance(record.get("attempt_number"), int) and record["attempt_number"] > 1)
+    )
+    library = record.get("library_name") or binfo.get("library_name") or hints.get("library_name")
+    project = (
+        record.get("project_name")
+        or binfo.get("project_name")
+        or library
+        or hints.get("project_name")
+        or "未归类项目"
+    )
+    testbench = (
+        record.get("cell_name")
+        or binfo.get("cell_name")
+        or hints.get("cell_name")
+        or _infer_tb_from_run_id(root_id or run_id)
+    )
+    view = record.get("view_name") or binfo.get("view_name") or hints.get("view_name")
+    batch_id = record.get("batch_id") or binfo.get("batch_id")
+    explicit_group = record.get("submission_group_id")
+    if batch_id:
+        group_id = explicit_group or f"batch:{batch_id}"
+        kind = "batch"
+        label = record.get("submission_label") or binfo.get("title") or str(batch_id)
+    elif explicit_group:
+        group_id = explicit_group
+        kind = "recovery_chain" if has_chain else ("multi_run" if explicit_group != run_id else "single")
+        label = record.get("submission_label") or (f"{testbench} · 批量提交" if kind == "multi_run" else testbench)
+    elif has_chain:
+        group_id = f"chain:{root_id}"
+        kind = "recovery_chain"
+        label = record.get("submission_label") or f"{testbench} · 重试链"
+    else:
+        group_id = run_id
+        kind = "single"
+        label = record.get("submission_label") or run_id
+    return {
+        "project": project,
+        "library": library,
+        "testbench": testbench,
+        "view": view,
+        "submission_group_id": group_id,
+        "submission_label": label,
+        "submission_kind": kind,
+        "batch_id": batch_id,
+        "case_label": binfo.get("case_label"),
+        "source_origin": record.get("source_origin") or ("batch" if batch_id else "direct"),
+    }
 
 
 def _atomic_write(path, value):
@@ -192,12 +311,38 @@ class DirectExecutionManager:
         _atomic_write(target, payload)
         return str(target)
 
-    def read(self, run_id: str) -> dict:
-        return deepcopy(_read_json(self.path(run_id) / "run.json"))
+    def _read_netlist_head(self, run_id: str) -> str:
+        try:
+            plan_path = self.path(run_id) / "plan.json"
+            if not plan_path.is_file() or plan_path.is_symlink():
+                return ""
+            plan = _read_json(plan_path)
+            raw_b64 = (plan.get("files") or {}).get("input.scs")
+            if not isinstance(raw_b64, str) or not raw_b64:
+                return ""
+            # Decode up to first 6 KiB of base64 (~4.5 KiB text) for header comments only
+            chunk = raw_b64[:6144]
+            chunk = chunk[: len(chunk) - (len(chunk) % 4)]
+            if not chunk:
+                return ""
+            return base64.b64decode(chunk, validate=False).decode("utf-8", errors="ignore")[:4096]
+        except Exception:
+            return ""
 
-    def list(self) -> list[dict]:
+    def _enrich_record(self, record: dict, *, batch_info: dict | None = None) -> dict:
+        rec = deepcopy(record)
+        needs_hints = not (rec.get("library_name") or rec.get("cell_name") or rec.get("project_name"))
+        head = self._read_netlist_head(rec["run_id"]) if needs_hints and rec.get("run_id") else ""
+        rec["organization"] = build_run_organization(rec, netlist_head=head, batch_info=batch_info)
+        return rec
+
+    def read(self, run_id: str) -> dict:
+        return self._enrich_record(_read_json(self.path(run_id) / "run.json"))
+
+    def list(self, *, batch_map: dict[str, dict] | None = None) -> list[dict]:
         if not self.root.is_dir():
             return []
+        bmap = batch_map if isinstance(batch_map, dict) else {}
         runs = []
         for entry in sorted(self.root.iterdir()):
             if not entry.is_dir() or entry.name.startswith("."):
@@ -205,7 +350,8 @@ class DirectExecutionManager:
             run_file = entry / "run.json"
             if run_file.is_file() and not run_file.is_symlink():
                 try:
-                    runs.append(_read_json(run_file))
+                    raw_rec = _read_json(run_file)
+                    runs.append(self._enrich_record(raw_rec, batch_info=bmap.get(raw_rec.get("run_id"))))
                 except DomainError:
                     continue
         runs.sort(key=lambda item: item.get("created_at", ""), reverse=True)
@@ -261,6 +407,14 @@ class DirectExecutionManager:
         attempt_number: int = 1,
         origin_submission_key: str | None = None,
         recovery_trigger: dict | None = None,
+        project_name: str | None = None,
+        library_name: str | None = None,
+        cell_name: str | None = None,
+        view_name: str | None = None,
+        submission_group_id: str | None = None,
+        submission_label: str | None = None,
+        source_origin: str | None = None,
+        batch_id: str | None = None,
     ) -> dict:
         """Freeze a direct execution plan locally; never launches a remote job."""
         run_id = _validate_run_id(run_key)
@@ -269,6 +423,15 @@ class DirectExecutionManager:
         if type(attempt_number) is not int or not 1 <= attempt_number <= 16:
             raise DomainError("attempt_number must be an integer between 1 and 16.", "invalid_direct_plan")
         validated_policy = validate_recovery_policy(recovery_policy)
+        hints = extract_netlist_organization_hints(netlist_text)
+        clean_library = _clean_meta_text(library_name, "library_name") or hints.get("library_name")
+        clean_project = _clean_meta_text(project_name, "project_name") or clean_library or hints.get("project_name")
+        clean_cell = _clean_meta_text(cell_name, "cell_name") or hints.get("cell_name")
+        clean_view = _clean_meta_text(view_name, "view_name", max_len=120) or hints.get("view_name")
+        clean_group_id = _clean_meta_text(submission_group_id, "submission_group_id")
+        clean_group_label = _clean_meta_text(submission_label, "submission_label")
+        clean_origin = _clean_meta_text(source_origin, "source_origin", max_len=64)
+        clean_batch_id = _clean_meta_text(batch_id, "batch_id", max_len=128)
         if source_commit is not None and (not isinstance(source_commit, str) or _COMMIT.fullmatch(source_commit) is None):
             raise DomainError("source_commit must be a lowercase 40-character Git SHA.", "invalid_direct_plan")
         if (host_id is None) == (host_ids is None):
@@ -388,7 +551,16 @@ class DirectExecutionManager:
                 "updated_at": now,
                 "submitted_at": None,
                 "observed_at": None,
+                "project_name": clean_project,
+                "library_name": clean_library,
+                "cell_name": clean_cell,
+                "view_name": clean_view,
+                "submission_group_id": clean_group_id,
+                "submission_label": clean_group_label,
+                "source_origin": clean_origin,
+                "batch_id": clean_batch_id,
             }
+            record["organization"] = build_run_organization(record, netlist_head=netlist_text[:4096])
             _atomic_write(run_dir / "run.json", record)
             index["entries"][run_id] = {
                 "run_id": run_id,
@@ -926,6 +1098,14 @@ class DirectExecutionManager:
                 attempt_number=next_attempt,
                 origin_submission_key=record.get("origin_submission_key") or record["submission_key"],
                 recovery_trigger=trigger,
+                project_name=record.get("project_name"),
+                library_name=record.get("library_name"),
+                cell_name=record.get("cell_name"),
+                view_name=record.get("view_name"),
+                submission_group_id=record.get("submission_group_id") or f"chain:{root_id}",
+                submission_label=record.get("submission_label"),
+                source_origin=record.get("source_origin"),
+                batch_id=record.get("batch_id"),
             )
             decision["child_run_id"] = child_run["run_id"]
             with _locked(self.path(run_id) / "run.lock"):
@@ -934,7 +1114,10 @@ class DirectExecutionManager:
                 if child_run["run_id"] not in children:
                     children.append(child_run["run_id"])
                 latest_parent["child_run_ids"] = children
+                if not latest_parent.get("submission_group_id"):
+                    latest_parent["submission_group_id"] = f"chain:{root_id}"
                 latest_parent["updated_at"] = utcnow()
+                latest_parent["organization"] = build_run_organization(latest_parent)
                 _atomic_write(self.path(run_id) / "run.json", latest_parent)
 
             if execute:

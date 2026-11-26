@@ -651,6 +651,96 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
             finally:
                 ctrl.close()
 
+    def test_direct_run_organization_metadata_inference_and_grouping(self):
+        from spiceowl.batch import DirectBatchManager
+        from spiceowl.direct import DirectExecutionManager
+        from spiceowl.service import Controller
+        from spiceowl.standalone_agent import build_standalone_dispatcher
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctrl = Controller(root / "state", agent_mode="standalone")
+            try:
+                ctrl.hosts.register({
+                    "schema": "spiceowl.host.v1",
+                    "host_id": "sim-node-a",
+                    "label": "Sim Node A",
+                    "ssh_target": "sim-node-a",
+                    "expected_host": "sim-node-a",
+                    "expected_user": "researcher",
+                    "tools": [{"kind": "spectre", "executable": "/opt/cadence/bin/spectre"}],
+                })
+                dm = DirectExecutionManager(ctrl.store.directory, hosts=ctrl.hosts)
+                bm = DirectBatchManager(ctrl.store.directory, dm)
+
+                # 1. Legacy-style run without explicit metadata still infers Project/TB from Virtuoso header
+                r_legacy = dm.prepare(
+                    run_key="tb_amp-123456",
+                    host_id="sim-node-a",
+                    netlist_text="// Exported from Virtuoso schematic analog_lib/tb_const_amp (schematic)\nsimulator lang=spectre\nR0 (a 0) resistor r=1k\n",
+                )
+                self.assertEqual(r_legacy["organization"]["project"], "analog_lib")
+                self.assertEqual(r_legacy["organization"]["testbench"], "tb_const_amp")
+                self.assertEqual(r_legacy["organization"]["view"], "schematic")
+
+                # Strip fields on disk to verify read()/list() fallback from plan.json
+                run_json_path = dm.path("tb_amp-123456") / "run.json"
+                raw = json.loads(run_json_path.read_text(encoding="utf-8"))
+                for k in ("project_name", "library_name", "cell_name", "view_name", "organization"):
+                    raw.pop(k, None)
+                run_json_path.write_text(json.dumps(raw), encoding="utf-8")
+                inferred = dm.read("tb_amp-123456")
+                self.assertEqual(inferred["organization"]["project"], "analog_lib")
+                self.assertEqual(inferred["organization"]["testbench"], "tb_const_amp")
+
+                # 2. Batch runs are co-archived under batch:<batch_id> with Project & TB
+                bm.prepare(
+                    batch_id="amp-pvt-01",
+                    title="Amp PVT Corners",
+                    netlist_template="// Library name: analog_lib\n// Cell name: tb_const_amp\nsimulator lang=spectre\nR0 (a 0) resistor r=1k\n",
+                    kind="pvt",
+                    process_corners=["tt", "ss"],
+                    voltages=[1.2],
+                    temperatures=[27.0],
+                    host_id="sim-node-a",
+                )
+                listed = dm.list(batch_map=bm.run_batch_map())
+                batch_children = [r for r in listed if r["organization"]["batch_id"] == "amp-pvt-01"]
+                self.assertEqual(len(batch_children), 2)
+                self.assertEqual({r["organization"]["submission_group_id"] for r in batch_children}, {"batch:amp-pvt-01"})
+                self.assertEqual({r["organization"]["project"] for r in batch_children}, {"analog_lib"})
+                self.assertEqual({r["organization"]["testbench"] for r in batch_children}, {"tb_const_amp"})
+
+                # 3. Multiple runs prepared by Agent in one turn share submission_group_id = turn:<turn_id>
+                disp = build_standalone_dispatcher(ctrl, direct_manager=dm)
+                ctx = {"turn_id": "turn-multi-99"}
+                r_a1 = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "prepare",
+                    "arguments": {
+                        "run_key": "agent-tt-01",
+                        "host_id": "sim-node-a",
+                        "netlist_text": "simulator lang=spectre\nR0 (a 0) resistor r=1k\n",
+                        "project_name": "adc_proj",
+                        "cell_name": "tb_sar",
+                    },
+                }, context=ctx)
+                r_a2 = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "prepare",
+                    "arguments": {
+                        "run_key": "agent-ff-02",
+                        "host_id": "sim-node-a",
+                        "netlist_text": "simulator lang=spectre\nR0 (a 0) resistor r=2k\n",
+                        "project_name": "adc_proj",
+                        "cell_name": "tb_sar",
+                    },
+                }, context=ctx)
+                self.assertEqual(r_a1["organization"]["submission_group_id"], "turn:turn-multi-99")
+                self.assertEqual(r_a2["organization"]["submission_group_id"], "turn:turn-multi-99")
+                self.assertEqual(r_a1["organization"]["project"], "adc_proj")
+                self.assertEqual(r_a2["organization"]["testbench"], "tb_sar")
+            finally:
+                ctrl.close()
+
 
 if __name__ == "__main__":
     unittest.main()

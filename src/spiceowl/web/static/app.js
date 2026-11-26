@@ -48,6 +48,12 @@ let directState = {
   batches: [], selectedBatchId: null, batchDetail: null, batchMetric: '',
   batchBusy: false, batchError: null,
 };
+let overviewState = {
+  project: '',
+  testbench: '',
+  status: '',
+  query: '',
+};
 let batchDraft = {
   batch_id: '', title: '', kind: 'pvt', corners: 'tt, ss, ff',
   voltages: '1.08, 1.20, 1.32', temps: '-40, 27, 125', voltage_param: 'vdd',
@@ -1030,7 +1036,8 @@ async function refreshDirect() {
   } finally {
     directState.loaded = true;
     directState.loading = false;
-    if (location.hash === '#direct') render();
+    renderSidebarRecentRuns();
+    if (location.hash === '#direct' || location.hash === '#overview') render();
   }
   if (shouldAutoPlotWf && location.hash === '#direct') {
     await runWaveformQuery();
@@ -1391,6 +1398,21 @@ function buildDirectPreparePayload() {
   const supKeys = Object.keys(simSourceState.supportFiles || {});
   if (supKeys.length) payload.support_files = {...simSourceState.supportFiles};
   if (/^[a-f0-9]{40}$/.test(simSourceState.sourceCommit || '')) payload.source_commit = simSourceState.sourceCommit;
+  const metaProject = (simSourceState.projectName || simSourceState.libraryName || '').trim();
+  const metaLibrary = (simSourceState.libraryName || '').trim();
+  const metaCell = (simSourceState.cellName || (simSourceState.fileName ? simSourceState.fileName.replace(/\.[^.]+$/, '') : '')).trim();
+  const metaView = (simSourceState.viewId || '').trim();
+  if (metaProject) payload.project_name = metaProject.slice(0, 160);
+  if (metaLibrary) payload.library_name = metaLibrary.slice(0, 160);
+  if (metaCell) payload.cell_name = metaCell.slice(0, 160);
+  if (metaView) payload.view_name = metaView.slice(0, 120);
+  if (simSourceState.origin && simSourceState.origin !== 'none') payload.source_origin = simSourceState.origin;
+  if (typeof directDraft.submission_group_id === 'string' && directDraft.submission_group_id.trim()) {
+    payload.submission_group_id = directDraft.submission_group_id.trim().slice(0, 160);
+  }
+  if (typeof directDraft.submission_label === 'string' && directDraft.submission_label.trim()) {
+    payload.submission_label = directDraft.submission_label.trim().slice(0, 160);
+  }
   const mods = directDraft.env_modules.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
   const scs = directDraft.env_scripts.split(/[,\r\n]+/).map(s => s.trim()).filter(Boolean);
   if (mods.length || scs.length) payload.remote_env = {modules: mods, setup_scripts: scs, shell: 'bash'};
@@ -1644,7 +1666,7 @@ function directAgentSetupPanel(hostsList) {
     : '';
 
   const launchBanner = directState.quickLaunchNote
-    ? `<div class="sim-launch-status"><strong>${escape(directState.quickLaunchNote)}</strong><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-tab" data-tab="runs">查看任务状态与波形 →</button><a class="button secondary small" href="#hosts">回服务器池看紫色资源条</a></div></div>`
+    ? `<div class="sim-launch-status"><strong>${escape(directState.quickLaunchNote)}</strong><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-tab" data-tab="runs">查看任务列表与控制 →</button><a class="button secondary small" href="#overview">去仿真总览看归档</a><a class="button secondary small" href="#hosts">回服务器池看紫色资源条</a></div></div>`
     : directState.quickLaunchError
     ? `<div class="sim-launch-status err"><strong>启动未完成：</strong><span>${escape(directState.quickLaunchError)}</span></div>`
     : '';
@@ -2258,15 +2280,15 @@ function renderLibraryManagerDialog() {
 
 function directPage() {
   const pub = isPublicDemo();
-  const validTabs = pub ? ['waveforms', 'batches', 'runs', 'recovery'] : ['setup', 'waveforms', 'batches', 'runs', 'recovery'];
+  const validTabs = pub ? ['waveforms', 'batches', 'runs', 'recovery'] : ['setup', 'runs', 'recovery'];
   const defaultTab = pub ? 'waveforms' : 'setup';
   const tab = validTabs.includes(directState.activeTab) ? directState.activeTab : defaultTab;
   let html = heading(
-    'SIMULATION WORKBENCH · 仿真配置与波形工作台',
+    pub ? 'SIMULATION WORKBENCH · 仿真配置与波形工作台' : 'SIMULATION WORKBENCH · 仿真配置与执行工作台',
     pub ? '一站式查看波形、管理 PVT/MC 批量与控制仿真任务' : 'Agent 辅助仿真配置与执行工作台',
     pub
       ? '当前为浏览器内置交互沙箱：大波形缩放、500 周期毛刺钻取、27-Corner PVT、40 样本 MC、单次任务四步流与 OOM 恢复报告全部可直接点击体验。'
-      : '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，同时管理大波形、PVT/MC 批量与夜间值守。',
+      : '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，统一管理任务执行与夜间值守。',
   );
 
   const tabs = pub ? [
@@ -2276,10 +2298,8 @@ function directPage() {
     ['recovery', '🛡 4. 异常自动恢复报告', String(directState.recoveryReports.length || 0)],
   ] : [
     ['setup', '✧ 1. Agent 辅助配置', ''],
-    ['waveforms', '📈 2. 波形与周期切片', directState.wfIndex?.datasets?.length ? `${directState.wfIndex.datasets.length}` : ''],
-    ['batches', '▦ 3. PVT / MC 批量', String(directState.batches.length || 0)],
-    ['runs', '▷ 4. 任务列表与控制', String(directState.runs.length || 0)],
-    ['recovery', '🛡 5. 夜间值守与恢复', String(directState.recoveryReports.length || 0)],
+    ['runs', '▷ 2. 任务列表与控制', String(directState.runs.length || 0)],
+    ['recovery', '🛡 3. 夜间值守与恢复', String(directState.recoveryReports.length || 0)],
   ];
   html += `<div class="direct-tabs" role="tablist" aria-label="工作台子模块">${tabs.map(([key, label, badge]) => `<button type="button" role="tab" aria-selected="${tab === key ? 'true' : 'false'}" class="direct-tab ${tab === key ? 'active' : ''}" data-action="direct-tab" data-tab="${key}"><span>${label}</span>${badge !== '' ? `<span class="direct-tab-badge">${escape(badge)}</span>` : ''}</button>`).join('')}</div>`;
 
@@ -2340,7 +2360,7 @@ function directPage() {
   html += `<div class="detail-stack"><section class="panel direct-panel"><div class="section-title"><h2>仿真任务列表 (${directState.runs.length})</h2><button class="button secondary small" data-action="direct-refresh" ${directState.busy ? 'disabled' : ''}>刷新列表</button></div><div class="direct-run-list">${directState.runs.map(item => `<button type="button" class="direct-run-row ${item.run_id === run?.run_id ? 'selected' : ''}" data-action="direct-select" data-id="${escape(item.run_id)}"><div><strong>${escape(item.run_id)}</strong><small>${escape(item.backend.toUpperCase())} · ${escape(item.simulator)} · ${escape(item.host_id)}${item.scheduler?.job_id ? ' · Job ' + escape(item.scheduler.job_id) : ''}</small></div>${directRunChip(item)}</button>`).join('') || '<p class="subtle-note">还没有运行记录。先在左侧准备一个实验。</p>'}</div>${!pub ? `<div class="direct-lookup"><input id="direct-lookup-key" value="${escape(directDraft.lookup_key)}" placeholder="按原 Run Key / Submission Key 对账查询"><button type="button" class="button secondary small" data-action="direct-lookup" ${directState.busy ? 'disabled' : ''}>查询原 Key</button></div>${directState.lookup ? `<p class="subtle-note" role="status">${directState.lookup.found ? `已找到原记录：<code>${escape(directState.lookup.run_id)}</code>（状态：${escape(title(directState.lookup.run?.state))}）` : escape(directState.lookup.note)}</p>` : ''}` : ''}</section>`;
 
   if (run) {
-    html += `<section class="panel direct-panel"><div class="section-title"><h2>任务控制 · ${escape(run.run_id)}</h2>${directRunChip(run)}</div><p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试（主机：<strong>${escape(run.host_id)}</strong> · 后端：<strong>${escape(run.backend)}</strong> · 仿真器：<strong>${escape(run.simulator)}</strong>${run.scheduler?.job_id ? ` · Job ID：<code>${escape(run.scheduler.job_id)}</code>` : ''}）<br>网表冻结摘要：<code>${escape((run.manifest_sha256 || '').slice(0, 16))}…</code> · 最近观察：${escape(run.observed_at ? new Date(run.observed_at).toLocaleString() : '尚未联网')}</p>${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「③ 查询状态」与远端对账。</p>' : ''}${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}<div class="direct-actions"><button type="button" class="button secondary" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>① 上传输入 (Stage)</button><button type="button" class="button primary" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>② 启动仿真 (Launch)</button><button type="button" class="button secondary" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>③ 查询状态 (Status)</button><button type="button" class="button primary" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>④ 收集报告与波形 (Collect)</button>${directState.wfIndex?.datasets?.length ? `<button type="button" class="button secondary" data-action="direct-tab" data-tab="waveforms">📈 打开该任务波形 →</button>` : ''}</div>${!pub ? `<details class="host-form-details"><summary>进阶控制：后台盯守 (Watch) / 取消作业 / M4 有界自动恢复</summary><div class="direct-check-row"><label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label><label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label></div><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button><button type="button" class="button secondary small" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button><button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button><button type="button" class="button secondary small" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button><button type="button" class="button primary small" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button></div>${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}</details>` : `<div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消当前沙箱作业 (Cancel)</button></div>`}${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${run.collection.skipped_files.length} 个超大原始文件已跳过并保留日志`}</p>` : ''}${directReportSection(directState.report)}</section>`;
+    html += `<section class="panel direct-panel"><div class="section-title"><h2>任务控制 · ${escape(run.run_id)}</h2>${directRunChip(run)}</div><p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试（主机：<strong>${escape(run.host_id)}</strong> · 后端：<strong>${escape(run.backend)}</strong> · 仿真器：<strong>${escape(run.simulator)}</strong>${run.scheduler?.job_id ? ` · Job ID：<code>${escape(run.scheduler.job_id)}</code>` : ''}）<br>网表冻结摘要：<code>${escape((run.manifest_sha256 || '').slice(0, 16))}…</code> · 最近观察：${escape(run.observed_at ? new Date(run.observed_at).toLocaleString() : '尚未联网')}</p>${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「③ 查询状态」与远端对账。</p>' : ''}${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}<div class="direct-actions"><button type="button" class="button secondary" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>① 上传输入 (Stage)</button><button type="button" class="button primary" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>② 启动仿真 (Launch)</button><button type="button" class="button secondary" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>③ 查询状态 (Status)</button><button type="button" class="button primary" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>④ 收集报告与结果 (Collect)</button>${pub && directState.wfIndex?.datasets?.length ? `<button type="button" class="button secondary" data-action="direct-tab" data-tab="waveforms">📈 打开该任务波形 →</button>` : ''}</div>${!pub ? `<details class="host-form-details"><summary>进阶控制：后台盯守 (Watch) / 取消作业 / M4 有界自动恢复</summary><div class="direct-check-row"><label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label><label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label></div><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button><button type="button" class="button secondary small" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button><button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button><button type="button" class="button secondary small" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button><button type="button" class="button primary small" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button></div>${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}</details>` : `<div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消当前沙箱作业 (Cancel)</button></div>`}${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${run.collection.skipped_files.length} 个超大原始文件已跳过并保留日志`}</p>` : ''}${directReportSection(directState.report)}</section>`;
   }
   html += '</div></div>';
   return html;
@@ -3442,6 +3462,26 @@ async function api(path, options = {}) {
 }
 
 let connectorSessionChecked = false;
+function renderSidebarRecentRuns() {
+  const el = $('#recent-runs');
+  if (!el) return;
+  if (!isPublicDemo()) {
+    const recent = (directState.runs || []).slice(0, 6);
+    if (!recent.length) {
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = recent.map(run => {
+      const org = resolveRunOrganization(run);
+      const st = classifyDirectRunState(run);
+      const label = org.testbench && org.testbench !== run.run_id ? `${org.testbench} · ${run.run_id}` : run.run_id;
+      return `<a href="#direct" data-open-direct-run="${escape(run.run_id)}" title="${escape(org.project + ' / ' + label)}"><i class="dot dot-${escape(st.dot)}"></i><span class="run-title">${escape(label)}</span></a>`;
+    }).join('');
+    return;
+  }
+  el.innerHTML = (state.runs || []).slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
+}
+
 async function refresh() {
   readCircuitGitUrlHandoff();
   if (!connectorSessionChecked) {
@@ -3467,7 +3507,7 @@ async function refresh() {
   if ($('#direct-count')) $('#direct-count').textContent = directState.loaded ? directState.runs.length : (isPublicDemo() ? '2' : '0');
   $('#native-count').textContent = isStandaloneAgent() ? codexPanelState.threads.length : state.questions.length;
   if (!isPublicDemo()) $('.prototype-badge').textContent = isStandaloneAgent() ? 'Standalone · Codex Agent' : 'CircuitGit channel · Engine';
-  $('#recent-runs').innerHTML = state.runs.slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
+  renderSidebarRecentRuns();
 }
 
 function currentRun() {
@@ -3602,7 +3642,395 @@ async function handleLiveClick(event) {
   } finally { live.busy = false; if (location.hash === '#live') render(); }
 }
 
+function classifyDirectRunState(run) {
+  const s = String(run?.state || 'unknown');
+  if (s === 'simulator_complete_pending_measurements') {
+    const collected = run?.collection_phase === 'complete';
+    return {bucket: 'completed', label: collected ? '已完成 · 已收集' : '已完成', color: 'green', dot: 'green'};
+  }
+  if (s === 'running_observed') return {bucket: 'active', label: '运行中', color: 'blue', dot: 'blue'};
+  if (s === 'submitted' || s === 'staged') return {bucket: 'active', label: s === 'submitted' ? '排队中' : '已上传', color: 'blue', dot: 'blue'};
+  if (s === 'prepared') return {bucket: 'prepared', label: '待启动 (Prepared)', color: '', dot: 'muted'};
+  if (s === 'simulator_failed' || s === 'job_setup_failed' || s === 'input_hash_failure') {
+    const oom = Boolean(run?.oom_evidence?.oom_kill);
+    return {bucket: 'failed', label: oom ? 'OOM 失败' : '执行失败', color: 'red', dot: 'red'};
+  }
+  if (s === 'launch_outcome_unknown' || s === 'reconcile_required') {
+    return {bucket: 'failed', label: '待对账核查', color: 'amber', dot: 'amber'};
+  }
+  return {bucket: 'prepared', label: title(s), color: '', dot: 'muted'};
+}
+
+function resolveRunOrganization(run) {
+  const org = run?.organization && typeof run.organization === 'object' ? run.organization : {};
+  const runId = String(run?.run_id || '');
+  const rootId = String(run?.root_run_id || runId);
+  const hasChain = Boolean(run?.parent_run_id || (Array.isArray(run?.child_run_ids) && run.child_run_ids.length) || Number(run?.attempt_number || 1) > 1);
+  const library = org.library || run?.library_name || '';
+  const project = org.project || run?.project_name || library || '未归类项目';
+  const inferredStem = rootId.replace(/(?:-(?:20\d{10,12}|\d{6}|r\d+))+$/, '').replace(/^[-_]+|[-_]+$/g, '');
+  const fallbackTb = (inferredStem.length >= 2 && !['sim', 'direct', 'run', 'test'].includes(inferredStem.toLowerCase())) ? inferredStem : (runId || '未命名 TB');
+  const testbench = org.testbench || run?.cell_name || fallbackTb;
+  const view = org.view || run?.view_name || '';
+  const batchId = org.batch_id || run?.batch_id || '';
+  const submissionGroupId = org.submission_group_id || run?.submission_group_id || (batchId ? `batch:${batchId}` : (hasChain ? `chain:${rootId}` : runId));
+  const submissionKind = org.submission_kind || (batchId ? 'batch' : (hasChain ? 'recovery_chain' : (submissionGroupId !== runId ? 'multi_run' : 'single')));
+  const submissionLabel = org.submission_label || run?.submission_label || (batchId || (hasChain ? `${testbench} · 重试链` : runId));
+  return {
+    project,
+    library,
+    testbench,
+    view,
+    batchId,
+    caseLabel: org.case_label || '',
+    submissionGroupId,
+    submissionKind,
+    submissionLabel,
+    sourceOrigin: org.source_origin || run?.source_origin || 'direct',
+  };
+}
+
+function formatHistoryTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch {
+    return String(iso);
+  }
+}
+
+function groupDirectRunsHierarchy(runs, filters = {}) {
+  const list = Array.isArray(runs) ? runs : [];
+  const enriched = list.map(run => ({
+    run,
+    org: resolveRunOrganization(run),
+    status: classifyDirectRunState(run),
+    sortAt: run.updated_at || run.created_at || '',
+  }));
+
+  const allProjects = new Map();
+  for (const item of enriched) {
+    const p = item.org.project;
+    if (!allProjects.has(p)) allProjects.set(p, {name: p, count: 0, tbs: new Map()});
+    const pEntry = allProjects.get(p);
+    pEntry.count++;
+    pEntry.tbs.set(item.org.testbench, (pEntry.tbs.get(item.org.testbench) || 0) + 1);
+  }
+
+  const q = String(filters.query || '').trim().toLowerCase();
+  const filtered = enriched.filter(item => {
+    if (filters.project && item.org.project !== filters.project) return false;
+    if (filters.testbench && item.org.testbench !== filters.testbench) return false;
+    if (filters.status && item.status.bucket !== filters.status) return false;
+    if (q) {
+      const hay = [
+        item.run.run_id,
+        item.org.project,
+        item.org.library,
+        item.org.testbench,
+        item.org.submissionLabel,
+        item.org.caseLabel,
+        item.run.host_id,
+        item.run.simulator,
+        item.run.backend,
+        item.status.label,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const projectMap = new Map();
+  const globalSubs = new Set();
+  const counts = {totalRuns: enriched.length, filteredRuns: filtered.length, active: 0, completed: 0, failed: 0, prepared: 0};
+  for (const item of enriched) {
+    counts[item.status.bucket] = (counts[item.status.bucket] || 0) + 1;
+    globalSubs.add(`${item.org.project}::${item.org.testbench}::${item.org.submissionGroupId}`);
+  }
+
+  for (const item of filtered) {
+    const pKey = item.org.project;
+    if (!projectMap.has(pKey)) {
+      projectMap.set(pKey, {
+        project: pKey,
+        library: item.org.library,
+        latestAt: '',
+        runCount: 0,
+        submissionCount: 0,
+        counts: {active: 0, completed: 0, failed: 0, prepared: 0},
+        tbMap: new Map(),
+      });
+    }
+    const pNode = projectMap.get(pKey);
+    pNode.runCount++;
+    pNode.counts[item.status.bucket]++;
+    if (item.sortAt > pNode.latestAt) pNode.latestAt = item.sortAt;
+
+    const tbKey = item.org.testbench;
+    if (!pNode.tbMap.has(tbKey)) {
+      pNode.tbMap.set(tbKey, {
+        testbench: tbKey,
+        library: item.org.library,
+        view: item.org.view,
+        latestAt: '',
+        runCount: 0,
+        counts: {active: 0, completed: 0, failed: 0, prepared: 0},
+        subMap: new Map(),
+      });
+    }
+    const tbNode = pNode.tbMap.get(tbKey);
+    tbNode.runCount++;
+    tbNode.counts[item.status.bucket]++;
+    if (item.sortAt > tbNode.latestAt) tbNode.latestAt = item.sortAt;
+    if (!tbNode.view && item.org.view) tbNode.view = item.org.view;
+
+    const subKey = item.org.submissionGroupId;
+    if (!tbNode.subMap.has(subKey)) {
+      tbNode.subMap.set(subKey, {
+        groupId: subKey,
+        label: item.org.submissionLabel,
+        kind: item.org.submissionKind,
+        batchId: item.org.batchId,
+        latestAt: '',
+        createdAt: item.run.created_at || '',
+        hosts: new Set(),
+        simulators: new Set(),
+        counts: {active: 0, completed: 0, failed: 0, prepared: 0},
+        runs: [],
+      });
+    }
+    const subNode = tbNode.subMap.get(subKey);
+    subNode.runs.push(item);
+    subNode.counts[item.status.bucket]++;
+    if (item.sortAt > subNode.latestAt) subNode.latestAt = item.sortAt;
+    if (item.run.created_at && (!subNode.createdAt || item.run.created_at < subNode.createdAt)) subNode.createdAt = item.run.created_at;
+    if (item.run.host_id) subNode.hosts.add(item.run.host_id);
+    if (item.run.simulator) subNode.simulators.add(item.run.simulator);
+  }
+
+  const projects = [...projectMap.values()].map(pNode => {
+    const tbs = [...pNode.tbMap.values()].map(tbNode => {
+      const submissions = [...tbNode.subMap.values()].map(subNode => {
+        subNode.runs.sort((a, b) => (b.sortAt || '').localeCompare(a.sortAt || '') || String(a.run.run_id).localeCompare(String(b.run.run_id)));
+        const resolvedKind = subNode.runs.length > 1
+          ? (subNode.kind === 'single' ? 'multi_run' : subNode.kind)
+          : subNode.kind;
+        return {
+          ...subNode,
+          kind: resolvedKind,
+          hosts: [...subNode.hosts],
+          simulators: [...subNode.simulators],
+        };
+      }).sort((a, b) => (b.latestAt || '').localeCompare(a.latestAt || ''));
+      pNode.submissionCount += submissions.length;
+      return {...tbNode, submissions};
+    }).sort((a, b) => (b.latestAt || '').localeCompare(a.latestAt || ''));
+    return {...pNode, testbenches: tbs};
+  }).sort((a, b) => (b.latestAt || '').localeCompare(a.latestAt || ''));
+
+  const totalTbs = [...allProjects.values()].reduce((acc, p) => acc + p.tbs.size, 0);
+  return {
+    projects,
+    allProjects: [...allProjects.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    totalProjects: allProjects.size,
+    totalTestbenches: totalTbs,
+    totalSubmissions: globalSubs.size,
+    counts,
+  };
+}
+
+function renderStatusSummaryPills(counts) {
+  const pills = [];
+  if (counts.active) pills.push(`<span class="ov-pill is-active">● ${counts.active} 进行中</span>`);
+  if (counts.completed) pills.push(`<span class="ov-pill is-done">✓ ${counts.completed} 已完成</span>`);
+  if (counts.failed) pills.push(`<span class="ov-pill is-fail">✕ ${counts.failed} 异常</span>`);
+  if (counts.prepared) pills.push(`<span class="ov-pill is-prep">○ ${counts.prepared} 待启动</span>`);
+  return pills.join('');
+}
+
+function liveOverview() {
+  const actions = `<div class="split-actions"><button type="button" class="button secondary" data-action="overview-refresh" ${directState.loading ? 'disabled' : ''}>${directState.loading ? '刷新中…' : '↻ 刷新记录'}</button><a class="button primary" href="#direct" data-action="overview-new-sim">＋ 新建仿真</a></div>`;
+  let html = heading(
+    'SIMULATION HISTORY · 仿真历史归档',
+    '仿真总览与历史记录',
+    '按项目（Library）与 Testbench（TB）统一管理所有历史仿真；同一次提交、同一批次或自动重试链的多个仿真自动归档到一起。',
+    actions,
+  );
+
+  if (directState.loading && !directState.loaded) {
+    return html + `<div class="empty"><h2>正在加载历史仿真记录…</h2><p>正在从本机连接器读取已归档的仿真与提交记录。</p></div>`;
+  }
+  if (directState.error && !directState.runs.length) {
+    return html + `<p class="error-text" role="alert">${escape(directState.error)}</p>`;
+  }
+
+  const runs = directState.runs || [];
+  if (!runs.length) {
+    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>还没有历史仿真记录</h1><p>前往「仿真配置与执行」导入远端 Virtuoso schematic / 网表，或让 AI 辅助配置并启动仿真；每次提交的仿真都会自动按项目与 TB 归档在这里。</p><div class="direct-actions" style="justify-content:center"><a class="button primary" href="#direct" data-action="overview-new-sim">前往仿真配置与执行 →</a></div></div>`;
+  }
+
+  const tree = groupDirectRunsHierarchy(runs, overviewState);
+  const selectedProjEntry = overviewState.project ? tree.allProjects.find(p => p.name === overviewState.project) : null;
+  const tbOptionsMap = new Map();
+  if (selectedProjEntry) {
+    for (const [tb, cnt] of selectedProjEntry.tbs.entries()) tbOptionsMap.set(tb, cnt);
+  } else {
+    for (const p of tree.allProjects) {
+      for (const [tb, cnt] of p.tbs.entries()) tbOptionsMap.set(tb, (tbOptionsMap.get(tb) || 0) + cnt);
+    }
+  }
+  const tbOptions = [...tbOptionsMap.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const hasFilters = Boolean(overviewState.project || overviewState.testbench || overviewState.status || overviewState.query.trim());
+
+  const stats = [
+    ['历史仿真总数', tree.counts.totalRuns, `归档为 ${tree.totalSubmissions} 次提交`, '▦'],
+    ['项目 / Testbench', `${tree.totalProjects} / ${tree.totalTestbenches}`, '按项目与 TB 分层管理', '▤'],
+    ['运行中 / 待启动', `${tree.counts.active} / ${tree.counts.prepared}`, '实时状态可在任务控制刷新', '◷'],
+    ['已完成 / 异常', `${tree.counts.completed} / ${tree.counts.failed}`, '含失败与待对账记录', '✓'],
+  ];
+  html += `<div class="stat-grid">${stats.map(([label, value, note, glyph]) => `<div class="stat-card"><div class="stat-label">${label}<span class="stat-glyph" aria-hidden="true">${glyph}</span></div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`).join('')}</div>`;
+
+  html += `<div class="panel ov-filter-bar">
+    <select id="overview-filter-project" aria-label="按项目筛选">
+      <option value="">全部项目 (${tree.totalProjects})</option>
+      ${tree.allProjects.map(p => `<option value="${escape(p.name)}" ${overviewState.project === p.name ? 'selected' : ''}>${escape(p.name)} (${p.count})</option>`).join('')}
+    </select>
+    <select id="overview-filter-tb" aria-label="按 Testbench 筛选">
+      <option value="">全部 TB (${tbOptions.length})</option>
+      ${tbOptions.map(([tb, cnt]) => `<option value="${escape(tb)}" ${overviewState.testbench === tb ? 'selected' : ''}>${escape(tb)} (${cnt})</option>`).join('')}
+    </select>
+    <select id="overview-filter-status" aria-label="按状态筛选">
+      <option value="" ${!overviewState.status ? 'selected' : ''}>全部状态</option>
+      <option value="active" ${overviewState.status === 'active' ? 'selected' : ''}>运行中 / 排队 (${tree.counts.active})</option>
+      <option value="completed" ${overviewState.status === 'completed' ? 'selected' : ''}>已完成 (${tree.counts.completed})</option>
+      <option value="failed" ${overviewState.status === 'failed' ? 'selected' : ''}>失败 / 异常 (${tree.counts.failed})</option>
+      <option value="prepared" ${overviewState.status === 'prepared' ? 'selected' : ''}>待启动 (${tree.counts.prepared})</option>
+    </select>
+    <input id="overview-filter-query" type="search" value="${escape(overviewState.query)}" placeholder="搜索 Run ID、项目、TB、主机或提交名称…">
+    ${hasFilters ? `<button type="button" class="button secondary small" data-action="overview-clear-filters">清空筛选</button>` : ''}
+  </div>`;
+
+  if (!tree.projects.length) {
+    return html + `<div class="empty"><h2>没有匹配的历史仿真记录</h2><p>请放宽筛选条件或清空关键词后再试。</p><button type="button" class="button secondary" data-action="overview-clear-filters">清空筛选</button></div>`;
+  }
+
+  const formatMem = r => {
+    const bytes = r?.limits?.memory_bytes;
+    return Number.isFinite(bytes) && bytes > 0 ? `${(bytes / 2**30).toFixed(bytes % 2**30 === 0 ? 0 : 1)} GiB` : '—';
+  };
+  const formatCollection = r => {
+    if (r?.collection_phase === 'complete') {
+      const files = r.collection?.file_count ?? 0;
+      return `已收集 · ${files} 文件`;
+    }
+    if (r?.state === 'prepared') return '未上传';
+    if (r?.state === 'staged') return '已上传待启动';
+    return '—';
+  };
+
+  html += `<div class="ov-tree" data-live-history-archive="true">${tree.projects.map(pNode => {
+    const tbHtml = pNode.testbenches.map(tbNode => {
+      const subHtml = tbNode.submissions.map(sub => {
+        if (sub.runs.length === 1) {
+          const item = sub.runs[0];
+          const r = item.run;
+          const cpus = r.limits?.cpu_count ? `${r.limits.cpu_count} 核` : '—';
+          return `<div class="ov-single-row" data-run-id="${escape(r.run_id)}">
+            <div class="ov-single-main">
+              <div class="ov-single-title">
+                <code>${escape(r.run_id)}</code>
+                ${chip(item.status.label, item.status.color)}
+                ${r.scheduler?.job_id ? `<span class="ov-meta-tag">Job ${escape(r.scheduler.job_id)}</span>` : ''}
+                ${r.attempt_number > 1 ? `<span class="ov-meta-tag">第 #${r.attempt_number} 次尝试</span>` : ''}
+              </div>
+              <div class="ov-single-meta">
+                <span>主机 <strong>${escape(r.host_id || '—')}</strong></span>
+                <span>·</span>
+                <span>${escape(String(r.simulator || 'spectre'))} (${escape(String(r.backend || 'ssh_direct').toUpperCase())})</span>
+                <span>·</span>
+                <span>${cpus} / ${formatMem(r)}</span>
+                <span>·</span>
+                <span>${escape(formatCollection(r))}</span>
+                <span>·</span>
+                <span>${escape(formatHistoryTime(r.updated_at || r.created_at))}</span>
+              </div>
+            </div>
+            <button type="button" class="button secondary small" data-action="overview-open-run" data-id="${escape(r.run_id)}">查看 / 控制 →</button>
+          </div>`;
+        }
+        const kindBadge = sub.kind === 'batch'
+          ? `批量提交 · ${sub.runs.length} 次仿真`
+          : sub.kind === 'recovery_chain'
+          ? `重试归档 · ${sub.runs.length} 次尝试`
+          : `同次提交 · ${sub.runs.length} 次仿真`;
+        const openByDefault = sub.runs.length <= 8 ? 'open' : '';
+        const rowsHtml = sub.runs.map(item => {
+          const r = item.run;
+          const cpus = r.limits?.cpu_count ? `${r.limits.cpu_count} 核` : '—';
+          const caseNote = item.org.caseLabel ? `<small class="ov-case-label">${escape(item.org.caseLabel)}</small>` : '';
+          return `<tr>
+            <td><code>${escape(r.run_id)}</code>${caseNote}</td>
+            <td>${chip(item.status.label, item.status.color)}</td>
+            <td>${escape(r.host_id || '—')} <small class="muted">${escape(String(r.backend || '').toUpperCase())}</small></td>
+            <td>${escape(r.simulator || '—')} · ${cpus} / ${formatMem(r)}</td>
+            <td>${escape(formatCollection(r))}</td>
+            <td>${escape(formatHistoryTime(r.updated_at || r.created_at))}</td>
+            <td><button type="button" class="button secondary small" data-action="overview-open-run" data-id="${escape(r.run_id)}">查看 →</button></td>
+          </tr>`;
+        }).join('');
+        return `<details class="ov-sub-card" data-submission-group="${escape(sub.groupId)}" ${openByDefault}>
+          <summary class="ov-sub-head">
+            <div class="ov-sub-title-wrap">
+              <span class="ov-sub-badge">${escape(kindBadge)}</span>
+              <strong>${escape(sub.label)}</strong>
+              <span class="ov-sub-meta">主机 ${escape(sub.hosts.join(', ') || '—')} · ${escape(sub.simulators.join(', ') || '—')} · ${escape(formatHistoryTime(sub.latestAt || sub.createdAt))}</span>
+            </div>
+            <div class="ov-pill-row">${renderStatusSummaryPills(sub.counts)}</div>
+          </summary>
+          <div class="ov-run-table-wrap">
+            <table class="ov-run-table">
+              <thead><tr><th>Run ID / 工况</th><th>状态</th><th>主机 / 后端</th><th>仿真器与资源</th><th>结果归档</th><th>更新时间</th><th>操作</th></tr></thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </details>`;
+      }).join('');
+
+      return `<div class="ov-tb-group" data-tb-name="${escape(tbNode.testbench)}">
+        <div class="ov-tb-head">
+          <div class="ov-tb-title">
+            <span class="ov-tb-icon" aria-hidden="true">🧪</span>
+            <h3>${escape(tbNode.testbench)}</h3>
+            ${tbNode.view ? `<span class="ov-meta-tag">${escape(tbNode.view)}</span>` : ''}
+            <span class="subtle-note">${tbNode.submissions.length} 次提交 · ${tbNode.runCount} 次仿真</span>
+          </div>
+          <div class="ov-pill-row">${renderStatusSummaryPills(tbNode.counts)}</div>
+        </div>
+        <div class="ov-sub-list">${subHtml}</div>
+      </div>`;
+    }).join('');
+
+    return `<details class="panel ov-project-card" data-project-name="${escape(pNode.project)}" open>
+      <summary class="ov-project-head">
+        <div class="ov-project-title">
+          <span class="ov-project-icon" aria-hidden="true">📁</span>
+          <h2>${escape(pNode.project)}</h2>
+          <span class="ov-meta-tag">${pNode.testbenches.length} 个 TB</span>
+          <span class="ov-meta-tag">${pNode.submissionCount} 次提交 · ${pNode.runCount} 次仿真</span>
+        </div>
+        <div class="ov-pill-row">${renderStatusSummaryPills(pNode.counts)}</div>
+      </summary>
+      <div class="ov-project-body">${tbHtml}</div>
+    </details>`;
+  }).join('')}</div>`;
+  return html;
+}
+
 function overview() {
+  if (!isPublicDemo()) return liveOverview();
   const total = state.runs.length;
   const running = state.runs.filter(r => r.execution === 'running' || r.execution === 'queued').length;
   const attention = state.runs.filter(r => r.observation !== 'current' || r.execution === 'failed' || r.specification_result === 'fail').length;
@@ -4458,7 +4886,10 @@ function applyAgentUiPatch(patch) {
       changed.push('batch');
     }
     if (typeof data.direct_tab === 'string') {
-      directState.activeTab = data.direct_tab;
+      const tabMap = {watch: 'recovery', monitor: 'runs'};
+      let mapped = tabMap[data.direct_tab] || data.direct_tab;
+      if (!isPublicDemo() && ['waveforms', 'batch', 'batches'].includes(mapped)) mapped = 'runs';
+      directState.activeTab = mapped;
       changed.push('direct_tab');
     }
     if (typeof data.page === 'string' && location.hash !== `#${data.page}`) {
@@ -4917,9 +5348,12 @@ function render() {
   const page = location.hash.slice(1) || 'quickstart';
   if (!['agents', 'direct'].includes(page) || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? '仿真配置与波形' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? (isPublicDemo() ? '仿真配置与波形' : '仿真配置与执行') : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
+  if (page === 'overview' && !isPublicDemo()) {
+    if (!directState.loaded && !directState.loading) refreshDirect();
+  }
   if (page === 'quickstart' && !isPublicDemo()) {
     if (!wizardState.loaded && !wizardState.loading) refreshWizard();
     if (isStandaloneAgent() && !codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
@@ -5191,13 +5625,23 @@ document.addEventListener('click', async event => {
       if (id) await refreshHostLiveStatus({hostIds: [id]});
       return;
     }
-    if (action === 'host-open-run') {
+    if (action === 'host-open-run' || action === 'overview-open-run') {
       if (id) {
         directState.selectedId = id;
-        directState.activeTab = 'monitor';
+        directState.activeTab = 'runs';
         location.hash = '#direct';
         await refreshDirect();
       }
+      return;
+    }
+    if (action === 'overview-refresh') {
+      await refreshDirect();
+      toast('已刷新历史仿真记录。');
+      return;
+    }
+    if (action === 'overview-clear-filters') {
+      overviewState = {project: '', testbench: '', status: '', query: ''};
+      render();
       return;
     }
     if (action === 'pool-scan') {
@@ -6007,7 +6451,40 @@ document.addEventListener('dblclick', async event => {
   await importLibrarySsh(btn.dataset.path);
 });
 
+document.addEventListener('click', event => {
+  const link = event.target.closest('a[data-open-direct-run]');
+  if (link) {
+    directState.selectedId = link.dataset.openDirectRun || null;
+    directState.activeTab = 'runs';
+    if (location.hash === '#direct') {
+      event.preventDefault();
+      void refreshDirect();
+    }
+    return;
+  }
+  const newSim = event.target.closest('a[data-action="overview-new-sim"]');
+  if (newSim) {
+    directState.activeTab = isPublicDemo() ? 'waveforms' : 'setup';
+  }
+});
+
 document.addEventListener('change', event => {
+  if (event.target.id === 'overview-filter-project') {
+    overviewState.project = event.target.value;
+    overviewState.testbench = '';
+    render();
+    return;
+  }
+  if (event.target.id === 'overview-filter-tb') {
+    overviewState.testbench = event.target.value;
+    render();
+    return;
+  }
+  if (event.target.id === 'overview-filter-status') {
+    overviewState.status = event.target.value;
+    render();
+    return;
+  }
   if (event.target.id === 'lib-mgr-host') {
     libMgrState.hostId = event.target.value;
     const h = (state.hosts || []).find(item => item.host_id === libMgrState.hostId);
@@ -6041,6 +6518,13 @@ document.addEventListener('change', event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'overview-filter-query') {
+    overviewState.query = event.target.value;
+    render();
+    const inp = $('#overview-filter-query');
+    if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+    return;
+  }
   if (event.target.id === 'lib-mgr-path') {
     libMgrState.path = event.target.value;
   }

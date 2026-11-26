@@ -2428,3 +2428,251 @@ dialog .muted {
   width:100%;
   margin-top:4px;
 }
+
+/* Live Simulation History Archive (#overview) */
+.recent-runs .dot.dot-green { background:#3cb371; }
+.recent-runs .dot.dot-blue { background:#3b82f6; }
+.recent-runs .dot.dot-red { background:#ef4444; }
+.recent-runs .dot.dot-amber { background:#f59e0b; }
+.recent-runs .dot.dot-muted { background:#8aa19a; }
+
+.ov-filter-bar {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:10px;
+  padding:12px 16px;
+  margin-bottom:18px;
+}
+.ov-filter-bar select {
+  flex:0 1 190px;
+  min-width:140px;
+  max-width:100%;
+}
+.ov-filter-bar input[type="search"] {
+  flex:1 1 220px;
+  min-width:160px;
+  max-width:100%;
+}
+.ov-tree {
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+.ov-project-card {
+  padding:0;
+  overflow:hidden;
+}
+.ov-project-head {
+  list-style:none;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:14px 18px;
+  background:#f5f9f6;
+  border-bottom:1px solid var(--line);
+  cursor:pointer;
+}
+.ov-project-head::-webkit-details-marker { display:none; }
+.ov-project-card:not([open]) .ov-project-head { border-bottom:0; }
+.ov-project-title {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.ov-project-title h2 {
+  margin:0;
+  font-size:15.5px;
+  font-weight:700;
+  color:var(--ink);
+  word-break:break-word;
+}
+.ov-project-icon { font-size:15px; }
+.ov-project-body {
+  padding:14px 18px;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.ov-tb-group {
+  border:1px solid #e1e9e4;
+  border-radius:9px;
+  background:#fbfdfb;
+  padding:12px 14px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.ov-tb-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.ov-tb-title {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.ov-tb-title h3 {
+  margin:0;
+  font-size:14px;
+  font-weight:650;
+  color:var(--ink);
+  font-family:ui-monospace,monospace;
+  word-break:break-word;
+}
+.ov-tb-icon { font-size:13px; }
+.ov-meta-tag {
+  display:inline-flex;
+  align-items:center;
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid #d5e2db;
+  background:#fff;
+  color:#4d655c;
+  font-size:11px;
+  font-weight:500;
+}
+.ov-pill-row {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+}
+.ov-pill {
+  display:inline-flex;
+  align-items:center;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:600;
+}
+.ov-pill.is-done { background:#e6f4ec; color:#186043; }
+.ov-pill.is-active { background:#e7f0ff; color:#1d4ed8; }
+.ov-pill.is-fail { background:#feecec; color:#b42318; }
+.ov-pill.is-prep { background:#f0f3f1; color:#52665e; }
+.ov-sub-list {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.ov-single-row {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:#fff;
+}
+.ov-single-main {
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  min-width:0;
+  flex:1 1 300px;
+}
+.ov-single-title {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:7px;
+}
+.ov-single-title code {
+  font-size:12.5px;
+  font-weight:600;
+  color:var(--ink);
+}
+.ov-single-meta {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+  font-size:11.5px;
+  color:var(--muted);
+}
+.ov-sub-card {
+  border:1px solid #cfe0d7;
+  border-radius:8px;
+  background:#fff;
+  overflow:hidden;
+}
+.ov-sub-head {
+  list-style:none;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  background:#f3f8f5;
+  cursor:pointer;
+}
+.ov-sub-head::-webkit-details-marker { display:none; }
+.ov-sub-title-wrap {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.ov-sub-title-wrap strong {
+  font-size:13px;
+  color:var(--ink);
+}
+.ov-sub-badge {
+  display:inline-flex;
+  align-items:center;
+  padding:2px 8px;
+  border-radius:6px;
+  background:#1f6f54;
+  color:#fff;
+  font-size:11px;
+  font-weight:600;
+}
+.ov-sub-meta {
+  font-size:11.5px;
+  color:var(--muted);
+}
+.ov-run-table-wrap {
+  overflow-x:auto;
+  border-top:1px solid #e3ece7;
+}
+.ov-run-table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+}
+.ov-run-table th, .ov-run-table td {
+  text-align:left;
+  padding:8px 10px;
+  border-bottom:1px solid #eef3f0;
+  white-space:nowrap;
+}
+.ov-run-table tbody tr:last-child td { border-bottom:0; }
+.ov-run-table th {
+  font-size:11px;
+  color:var(--muted);
+  font-weight:600;
+  background:#fafcfb;
+}
+.ov-case-label {
+  display:block;
+  font-size:10.5px;
+  color:var(--muted);
+  margin-top:2px;
+}
+@media(max-width:680px) {
+  .ov-filter-bar select, .ov-filter-bar input[type="search"] { flex:1 1 100%; }
+  .ov-project-body { padding:10px 12px; }
+}

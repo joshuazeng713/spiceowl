@@ -106,10 +106,10 @@ _OWNER = [
             'preserve_rnl': {'type': 'boolean'},
             'cds_lib': {'type': 'string', 'maxLength': 2048},
         }, ('mode', 'remote_path')), 'read'),
-    _definition('spiceowl_ui_configure', 'Update any option on the active SpiceOwl webpage immediately (target server, simulator, backend, CPUs, memory, wall time, output format, run name, netlist text or appended statements, include dirs, remote env, LSF/Slurm scheduler, overnight recovery policy, PVT/MC batch draft, or active page/tab). Only updates UI drafts and view options; never launches a simulation; runs immediately without human approval.',
+    _definition('spiceowl_ui_configure', 'Update any option on the active SpiceOwl webpage immediately (target server, simulator, backend, CPUs, memory, wall time, output format, run name, netlist text or appended statements, include dirs, remote env, LSF/Slurm scheduler, overnight recovery policy, or active page/tab: setup, runs, recovery). Only updates UI drafts and view options; never launches a simulation; runs immediately without human approval.',
         _object({
             'page': {'type': 'string', 'enum': ['quickstart', 'hosts', 'direct', 'overview', 'agents']},
-            'direct_tab': {'type': 'string', 'enum': ['setup', 'runs', 'monitor', 'waveforms', 'batch']},
+            'direct_tab': {'type': 'string', 'enum': ['setup', 'runs', 'recovery', 'watch', 'monitor', 'waveforms', 'batch']},
             'host_id': _ID,
             'target_mode': {'type': 'string', 'enum': ['host', 'pool']},
             'simulator': {'type': 'string', 'enum': ['spectre', 'ngspice']},

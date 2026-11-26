@@ -46,12 +46,17 @@ vm.runInContext(`(async () => {\n${body}\nglobalThis.__exports = {
   setSimSource: fn => fn(simSourceState),
   setLibMgr: fn => fn(libMgrState),
   setDirectDraft: fn => fn(directDraft),
+  setDirectState: fn => fn(directState),
+  setOverviewState: fn => fn(overviewState),
   setCodex: fn => fn(codexPanelState),
   renderMySimulationsStrip,
   renderHostLiveCard,
   hosts,
   quickstartPage,
+  directPage,
   directAgentSetupPanel,
+  overview,
+  groupDirectRunsHierarchy,
   renderCodexActivity,
   renderCleanDirectTimeline,
   codexApprovalCard,
@@ -333,5 +338,130 @@ assert(renderedLibHtml.includes('id="lib-mgr-preserve-rnl"'), 'RNL geometry pres
 assert(renderedLibHtml.includes('id="lib-mgr-include-maestro"'), 'Maestro import toggle checkbox must render');
 assert(renderedLibHtml.includes('从 Schematic 导出并导入'), 'Export schematic CTA must render');
 assert.match(css, /\.lib-mgr-check input\[type="checkbox"\][\s\S]*width:\s*auto/, 'Checkbox width must not stretch');
+
+// 7. Page 3 (#direct) removes useless Tabs 2 & 3 (waveforms & PVT/MC batch) in live mode
+ex.setDirectState(st => {
+  st.activeTab = 'waveforms'; // stale tab must coerce cleanly back to setup
+  st.runs = [];
+  st.recoveryReports = [];
+});
+const liveDirectHtml = ex.directPage();
+assert(liveDirectHtml.includes('1. Agent 辅助配置'), 'Live Page 3 keeps Agent setup tab');
+assert(liveDirectHtml.includes('2. 任务列表与控制'), 'Live Page 3 renumbers runs tab to 2');
+assert(liveDirectHtml.includes('3. 夜间值守与恢复'), 'Live Page 3 renumbers recovery tab to 3');
+assert(!liveDirectHtml.includes('波形与周期切片'), 'Live Page 3 must remove useless waveforms tab');
+assert(!liveDirectHtml.includes('PVT / MC 批量'), 'Live Page 3 must remove useless PVT/MC batch tab');
+assert(!liveDirectHtml.includes('data-tab="waveforms"'), 'Live Page 3 must not expose waveforms tab button');
+assert(!liveDirectHtml.includes('data-tab="batches"'), 'Live Page 3 must not expose batches tab button');
+
+// 8. Page 4 (#overview) shows real Project -> TB -> Submission-Group history archive in live mode (zero demo buttons)
+ex.setDirectState(st => {
+  st.loaded = true;
+  st.loading = false;
+  st.runs = [];
+});
+const emptyOvHtml = ex.overview();
+assert(!emptyOvHtml.includes('载入离线演示数据'), 'Live overview must never show synthetic demo loader');
+assert(!emptyOvHtml.includes('加载演示数据'), 'Live overview topbar must not show synthetic demo button');
+assert(emptyOvHtml.includes('还没有历史仿真记录'), 'Live overview empty state explains real history archive');
+
+const sampleRuns = [
+  {
+    run_id: 'amp-pvt-01-tt',
+    host_id: 'sim-node-a',
+    backend: 'ssh_direct',
+    simulator: 'spectre',
+    state: 'simulator_complete_pending_measurements',
+    collection_phase: 'complete',
+    collection: {file_count: 5},
+    limits: {cpu_count: 4, memory_bytes: 8 * 2**30},
+    created_at: '2026-11-26T10:00:00Z',
+    updated_at: '2026-11-26T10:05:00Z',
+    organization: {
+      project: 'RESEARCH4',
+      library: 'RESEARCH4',
+      testbench: 'tb_const_gain_amplifier',
+      view: 'schematic',
+      submission_group_id: 'turn:t1',
+      submission_label: '3-Corner Scan',
+      submission_kind: 'multi_run',
+      case_label: 'tt / 1.2V / 27C',
+    },
+  },
+  {
+    run_id: 'amp-pvt-01-ss',
+    host_id: 'sim-node-b',
+    backend: 'ssh_direct',
+    simulator: 'spectre',
+    state: 'running_observed',
+    limits: {cpu_count: 4, memory_bytes: 8 * 2**30},
+    created_at: '2026-11-26T10:00:01Z',
+    updated_at: '2026-11-26T10:06:00Z',
+    organization: {
+      project: 'RESEARCH4',
+      library: 'RESEARCH4',
+      testbench: 'tb_const_gain_amplifier',
+      view: 'schematic',
+      submission_group_id: 'turn:t1',
+      submission_label: '3-Corner Scan',
+      submission_kind: 'multi_run',
+      case_label: 'ss / 1.08V / 125C',
+    },
+  },
+  {
+    run_id: 'sar-single-01',
+    host_id: 'sim-node-a',
+    backend: 'lsf',
+    simulator: 'spectre',
+    state: 'prepared',
+    limits: {cpu_count: 2, memory_bytes: 4 * 2**30},
+    created_at: '2026-11-25T09:00:00Z',
+    updated_at: '2026-11-25T09:00:00Z',
+    organization: {
+      project: 'ADC_TOP',
+      testbench: 'tb_sar_logic',
+      submission_group_id: 'sar-single-01',
+      submission_label: 'sar-single-01',
+      submission_kind: 'single',
+    },
+  },
+];
+const grouped = ex.groupDirectRunsHierarchy(sampleRuns, {});
+assert.equal(grouped.totalProjects, 2, 'Expected 2 projects');
+assert.equal(grouped.totalTestbenches, 2, 'Expected 2 testbenches');
+assert.equal(grouped.totalSubmissions, 2, 'Two runs in turn:t1 must co-archive into 1 submission (+ 1 single = 2)');
+const resProj = grouped.projects.find(p => p.project === 'RESEARCH4');
+assert.equal(resProj.testbenches[0].submissions.length, 1);
+assert.equal(resProj.testbenches[0].submissions[0].runs.length, 2);
+
+ex.setDirectState(st => { st.runs = sampleRuns; st.loaded = true; });
+const liveOvHtml = ex.overview();
+assert(liveOvHtml.includes('data-live-history-archive="true"'), 'Live overview renders hierarchical archive');
+assert(liveOvHtml.includes('data-project-name="RESEARCH4"'), 'Project section renders');
+assert(liveOvHtml.includes('data-tb-name="tb_const_gain_amplifier"'), 'TB section renders');
+assert(liveOvHtml.includes('同次提交 · 2 次仿真'), 'Multi-run submission badge co-archives runs');
+assert(liveOvHtml.includes('data-action="overview-open-run"'), 'History rows link directly to run control');
+
+// Filter narrows by project cleanly
+ex.setOverviewState(s => { s.project = 'ADC_TOP'; });
+const filteredOvHtml = ex.overview();
+assert(filteredOvHtml.includes('tb_sar_logic'));
+assert(!filteredOvHtml.includes('data-tb-name="tb_const_gain_amplifier"'));
+ex.setOverviewState(s => { s.project = ''; s.testbench = ''; s.status = ''; s.query = ''; });
+
+// 9. buildDirectPreparePayload automatically forwards Project / Library / TB metadata
+ex.setSimSource(s => {
+  s.origin = 'ssh';
+  s.projectName = 'RESEARCH4';
+  s.libraryName = 'RESEARCH4';
+  s.cellName = 'tb_const_gain_amplifier';
+  s.viewId = 'schematic';
+});
+const metaPayload = ex.buildDirectPreparePayload();
+assert.equal(metaPayload.project_name, 'RESEARCH4');
+assert.equal(metaPayload.library_name, 'RESEARCH4');
+assert.equal(metaPayload.cell_name, 'tb_const_gain_amplifier');
+assert.equal(metaPayload.view_name, 'schematic');
+assert.equal(metaPayload.source_origin, 'ssh');
 
 console.log('ui-library-manager.mjs passed');

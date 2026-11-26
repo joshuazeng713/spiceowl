@@ -2444,6 +2444,22 @@ dialog .muted {
   padding:12px 16px;
   margin-bottom:18px;
 }
+.ov-detail-panel {
+  margin-bottom:18px;
+  border-color:#96ccb3;
+  background:#f8fcf9;
+}
+.ov-detail-head {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.ov-detail-head h2 {
+  margin:0;
+  font-size:15px;
+}
 .ov-filter-bar select {
   flex:0 1 190px;
   min-width:140px;

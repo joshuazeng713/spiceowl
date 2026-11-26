@@ -53,6 +53,7 @@ let overviewState = {
   testbench: '',
   status: '',
   query: '',
+  selectedRunId: '',
 };
 let batchDraft = {
   batch_id: '', title: '', kind: 'pvt', corners: 'tt, ss, ff',
@@ -1447,6 +1448,7 @@ async function quickLaunchDirectSimulation() {
     const prep = await api('/api/direct/prepare', {method: 'POST', body: buildDirectPreparePayload()});
     const runId = prep.run.run_id;
     directState.selectedId = runId;
+    overviewState.selectedRunId = runId;
     directDraft.run_key = '';
     directState.quickLaunchNote = `✓ 已冻结 ${runId} → ② 正在上传网表到 ${prep.run.host_id} (Stage)…`;
     render();
@@ -1666,7 +1668,7 @@ function directAgentSetupPanel(hostsList) {
     : '';
 
   const launchBanner = directState.quickLaunchNote
-    ? `<div class="sim-launch-status"><strong>${escape(directState.quickLaunchNote)}</strong><div class="direct-actions"><button type="button" class="button primary small" data-action="direct-tab" data-tab="runs">查看任务列表与控制 →</button><a class="button secondary small" href="#overview">去仿真总览看归档</a><a class="button secondary small" href="#hosts">回服务器池看紫色资源条</a></div></div>`
+    ? `<div class="sim-launch-status"><strong>${escape(directState.quickLaunchNote)}</strong><div class="direct-actions"><a class="button primary small" href="#overview" data-open-direct-run="${escape(directState.selectedId || '')}">去仿真总览查看与控制 →</a><a class="button secondary small" href="#hosts">回服务器池看紫色资源条</a></div></div>`
     : directState.quickLaunchError
     ? `<div class="sim-launch-status err"><strong>启动未完成：</strong><span>${escape(directState.quickLaunchError)}</span></div>`
     : '';
@@ -2280,7 +2282,7 @@ function renderLibraryManagerDialog() {
 
 function directPage() {
   const pub = isPublicDemo();
-  const validTabs = pub ? ['waveforms', 'batches', 'runs', 'recovery'] : ['setup', 'runs', 'recovery'];
+  const validTabs = pub ? ['waveforms', 'batches', 'runs', 'recovery'] : ['setup', 'recovery'];
   const defaultTab = pub ? 'waveforms' : 'setup';
   const tab = validTabs.includes(directState.activeTab) ? directState.activeTab : defaultTab;
   let html = heading(
@@ -2288,7 +2290,7 @@ function directPage() {
     pub ? '一站式查看波形、管理 PVT/MC 批量与控制仿真任务' : 'Agent 辅助仿真配置与执行工作台',
     pub
       ? '当前为浏览器内置交互沙箱：大波形缩放、500 周期毛刺钻取、27-Corner PVT、40 样本 MC、单次任务四步流与 OOM 恢复报告全部可直接点击体验。'
-      : '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，统一管理任务执行与夜间值守。',
+      : '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，并管理夜间值守与自动恢复；所有历史任务与控制统一归档在「仿真总览」。',
   );
 
   const tabs = pub ? [
@@ -2298,8 +2300,7 @@ function directPage() {
     ['recovery', '🛡 4. 异常自动恢复报告', String(directState.recoveryReports.length || 0)],
   ] : [
     ['setup', '✧ 1. Agent 辅助配置', ''],
-    ['runs', '▷ 2. 任务列表与控制', String(directState.runs.length || 0)],
-    ['recovery', '🛡 3. 夜间值守与恢复', String(directState.recoveryReports.length || 0)],
+    ['recovery', '🛡 2. 夜间值守与恢复', String(directState.recoveryReports.length || 0)],
   ];
   html += `<div class="direct-tabs" role="tablist" aria-label="工作台子模块">${tabs.map(([key, label, badge]) => `<button type="button" role="tab" aria-selected="${tab === key ? 'true' : 'false'}" class="direct-tab ${tab === key ? 'active' : ''}" data-action="direct-tab" data-tab="${key}"><span>${label}</span>${badge !== '' ? `<span class="direct-tab-badge">${escape(badge)}</span>` : ''}</button>`).join('')}</div>`;
 
@@ -3048,8 +3049,14 @@ async function handleDirectClick(event) {
   if (action === 'refresh') { await refreshDirect(); return; }
   if (action === 'select') {
     directState.selectedId = id;
-    if (directState.activeTab !== 'runs') directState.activeTab = 'runs';
-    await refreshDirect();
+    if (isPublicDemo()) {
+      if (directState.activeTab !== 'runs') directState.activeTab = 'runs';
+      await refreshDirect();
+    } else {
+      overviewState.selectedRunId = id;
+      location.hash = '#overview';
+      await refreshDirect();
+    }
     return;
   }
   if (action === 'rec-select') {
@@ -3475,7 +3482,7 @@ function renderSidebarRecentRuns() {
       const org = resolveRunOrganization(run);
       const st = classifyDirectRunState(run);
       const label = org.testbench && org.testbench !== run.run_id ? `${org.testbench} · ${run.run_id}` : run.run_id;
-      return `<a href="#direct" data-open-direct-run="${escape(run.run_id)}" title="${escape(org.project + ' / ' + label)}"><i class="dot dot-${escape(st.dot)}"></i><span class="run-title">${escape(label)}</span></a>`;
+      return `<a href="#overview" data-open-direct-run="${escape(run.run_id)}" title="${escape(org.project + ' / ' + label)}"><i class="dot dot-${escape(st.dot)}"></i><span class="run-title">${escape(label)}</span></a>`;
     }).join('');
     return;
   }
@@ -3851,6 +3858,65 @@ function renderStatusSummaryPills(counts) {
   return pills.join('');
 }
 
+function renderOverviewRunDetailPanel(run) {
+  if (!run) return '';
+  const org = resolveRunOrganization(run);
+  const st = classifyDirectRunState(run);
+  const watchEntry = directState.monitor?.watches?.find(w => w && w.run_id === run.run_id) || null;
+  const watchArmed = watchEntry?.watch_state === 'armed';
+  const terminal = ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed', 'input_hash_failure'].includes(run.state);
+  const canStage = ['prepared', 'stage_incomplete'].includes(run.state) && !directState.busy;
+  const canLaunch = run.state === 'staged' && !run.dispatch_claimed && !directState.busy;
+  const canStatus = run.state !== 'prepared' && !directState.busy;
+  const canWatch = run.dispatch_claimed && !terminal && !watchArmed && !directState.busy;
+  const canUnwatch = watchArmed && !directState.busy;
+  const canCancel = run.dispatch_claimed && !terminal && !directState.busy;
+  const canCollect = terminal && run.collection_phase !== 'complete' && !directState.busy;
+  const canRecover = terminal && run.state !== 'simulator_complete_pending_measurements' && !directState.busy;
+  const recPolicy = run.recovery_policy || {};
+  const report = directState.detail?.run_id === run.run_id ? directState.report : null;
+  const cpus = run.limits?.cpu_count ? `${run.limits.cpu_count} 核` : '—';
+  const memBytes = run.limits?.memory_bytes;
+  const memText = Number.isFinite(memBytes) && memBytes > 0 ? `${(memBytes / 2**30).toFixed(memBytes % 2**30 === 0 ? 0 : 1)} GiB` : '—';
+  return `<section class="panel direct-panel ov-detail-panel" data-overview-run-detail="${escape(run.run_id)}">
+    <div class="section-title">
+      <div class="ov-detail-head">
+        <h2>任务详情与控制 · <code>${escape(run.run_id)}</code></h2>
+        ${chip(st.label, st.color)}
+        <span class="ov-meta-tag">${escape(org.project)} / ${escape(org.testbench)}${org.view ? ` (${escape(org.view)})` : ''}</span>
+      </div>
+      <button type="button" class="button secondary small" data-action="overview-close-run">收起详情</button>
+    </div>
+    <p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试 · 主机 <strong>${escape(run.host_id)}</strong> · 后端 <strong>${escape(String(run.backend || '').toUpperCase())}</strong> · 仿真器 <strong>${escape(run.simulator)}</strong> · 资源 <strong>${cpus} / ${memText}</strong>${run.scheduler?.job_id ? ` · Job ID <code>${escape(run.scheduler.job_id)}</code>` : ''}<br>网表冻结摘要 <code>${escape((run.manifest_sha256 || '').slice(0, 16))}…</code> · 创建于 ${escape(formatHistoryTime(run.created_at))} · 最近观察 ${escape(run.observed_at ? formatHistoryTime(run.observed_at) : '尚未联网')}</p>
+    ${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「③ 查询状态」与远端对账。</p>' : ''}
+    ${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}
+    ${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}
+    <div class="direct-actions">
+      <button type="button" class="button secondary small" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>① 上传输入 (Stage)</button>
+      <button type="button" class="button primary small" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>② 启动仿真 (Launch)</button>
+      <button type="button" class="button secondary small" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>③ 查询状态 (Status)</button>
+      <button type="button" class="button primary small" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>④ 收集报告与结果 (Collect)</button>
+    </div>
+    <details class="host-form-details">
+      <summary>进阶控制：后台盯守 (Watch) / 取消作业 / 有界自动恢复</summary>
+      <div class="direct-check-row">
+        <label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label>
+        <label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label>
+      </div>
+      <div class="direct-actions">
+        <button type="button" class="button secondary small" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button>
+        <button type="button" class="button secondary small" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button>
+        <button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button>
+        <button type="button" class="button secondary small" data-action="direct-toggle-policy" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>${recPolicy.enabled ? '关闭有界恢复' : '开启有界恢复'}</button>
+        <button type="button" class="button primary small" data-action="direct-recover" data-id="${escape(run.run_id)}" ${canRecover ? '' : 'disabled'}>执行有界恢复 (Recover)</button>
+      </div>
+      ${watchEntry ? `<p class="subtle-note">后台盯守：<strong>${escape(title(watchEntry.watch_state))}</strong> · 通信：<strong>${escape(title(watchEntry.observation?.state))}</strong> · 下次轮询：${escape(watchEntry.observation?.next_check_at || '无')}</p>` : ''}
+    </details>
+    ${run.collection ? `<p class="subtle-note">已收集 ${run.collection.file_count} 个文件（${Math.round((run.collection.total_bytes || 0) / 1024)} KiB）${run.collection.collection_complete ? ' · 完整校验通过' : ` · ${(run.collection.skipped_files || []).length} 个超大原始文件已跳过并保留日志`}</p>` : ''}
+    ${directReportSection(report)}
+  </section>`;
+}
+
 function liveOverview() {
   const actions = `<div class="split-actions"><button type="button" class="button secondary" data-action="overview-refresh" ${directState.loading ? 'disabled' : ''}>${directState.loading ? '刷新中…' : '↻ 刷新记录'}</button><a class="button primary" href="#direct" data-action="overview-new-sim">＋ 新建仿真</a></div>`;
   let html = heading(
@@ -3892,6 +3958,13 @@ function liveOverview() {
     ['已完成 / 异常', `${tree.counts.completed} / ${tree.counts.failed}`, '含失败与待对账记录', '✓'],
   ];
   html += `<div class="stat-grid">${stats.map(([label, value, note, glyph]) => `<div class="stat-card"><div class="stat-label">${label}<span class="stat-glyph" aria-hidden="true">${glyph}</span></div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`).join('')}</div>`;
+
+  const selectedRun = overviewState.selectedRunId
+    ? ((directState.detail?.run_id === overviewState.selectedRunId ? directState.detail : null) || runs.find(r => r.run_id === overviewState.selectedRunId) || null)
+    : null;
+  if (selectedRun) {
+    html += renderOverviewRunDetailPanel(selectedRun);
+  }
 
   html += `<div class="panel ov-filter-bar">
     <select id="overview-filter-project" aria-label="按项目筛选">
@@ -4888,7 +4961,12 @@ function applyAgentUiPatch(patch) {
     if (typeof data.direct_tab === 'string') {
       const tabMap = {watch: 'recovery', monitor: 'runs'};
       let mapped = tabMap[data.direct_tab] || data.direct_tab;
-      if (!isPublicDemo() && ['waveforms', 'batch', 'batches'].includes(mapped)) mapped = 'runs';
+      if (!isPublicDemo()) {
+        if (['runs', 'waveforms', 'batch', 'batches'].includes(mapped)) {
+          if (!data.page) data.page = 'overview';
+          mapped = 'setup';
+        }
+      }
       directState.activeTab = mapped;
       changed.push('direct_tab');
     }
@@ -5628,10 +5706,15 @@ document.addEventListener('click', async event => {
     if (action === 'host-open-run' || action === 'overview-open-run') {
       if (id) {
         directState.selectedId = id;
-        directState.activeTab = 'runs';
-        location.hash = '#direct';
+        overviewState.selectedRunId = id;
+        if (location.hash !== '#overview') location.hash = '#overview';
         await refreshDirect();
       }
+      return;
+    }
+    if (action === 'overview-close-run') {
+      overviewState.selectedRunId = '';
+      render();
       return;
     }
     if (action === 'overview-refresh') {
@@ -5640,7 +5723,7 @@ document.addEventListener('click', async event => {
       return;
     }
     if (action === 'overview-clear-filters') {
-      overviewState = {project: '', testbench: '', status: '', query: ''};
+      overviewState = {project: '', testbench: '', status: '', query: '', selectedRunId: overviewState.selectedRunId};
       render();
       return;
     }
@@ -6454,9 +6537,12 @@ document.addEventListener('dblclick', async event => {
 document.addEventListener('click', event => {
   const link = event.target.closest('a[data-open-direct-run]');
   if (link) {
-    directState.selectedId = link.dataset.openDirectRun || null;
-    directState.activeTab = 'runs';
-    if (location.hash === '#direct') {
+    const rid = link.dataset.openDirectRun || '';
+    if (rid) {
+      directState.selectedId = rid;
+      overviewState.selectedRunId = rid;
+    }
+    if (location.hash === '#overview') {
       event.preventDefault();
       void refreshDirect();
     }

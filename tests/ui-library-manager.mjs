@@ -339,20 +339,21 @@ assert(renderedLibHtml.includes('id="lib-mgr-include-maestro"'), 'Maestro import
 assert(renderedLibHtml.includes('从 Schematic 导出并导入'), 'Export schematic CTA must render');
 assert.match(css, /\.lib-mgr-check input\[type="checkbox"\][\s\S]*width:\s*auto/, 'Checkbox width must not stretch');
 
-// 7. Page 3 (#direct) removes useless Tabs 2 & 3 (waveforms & PVT/MC batch) in live mode
+// 7. Page 3 (#direct) keeps ONLY tabs 1 (Agent setup) and 5 (Night watch & recovery -> renumbered 2) in live mode
 ex.setDirectState(st => {
-  st.activeTab = 'waveforms'; // stale tab must coerce cleanly back to setup
+  st.activeTab = 'runs'; // removed tab must coerce cleanly back to setup
   st.runs = [];
   st.recoveryReports = [];
 });
 const liveDirectHtml = ex.directPage();
 assert(liveDirectHtml.includes('1. Agent 辅助配置'), 'Live Page 3 keeps Agent setup tab');
-assert(liveDirectHtml.includes('2. 任务列表与控制'), 'Live Page 3 renumbers runs tab to 2');
-assert(liveDirectHtml.includes('3. 夜间值守与恢复'), 'Live Page 3 renumbers recovery tab to 3');
+assert(liveDirectHtml.includes('2. 夜间值守与恢复'), 'Live Page 3 keeps Night watch & recovery tab renumbered to 2');
 assert(!liveDirectHtml.includes('波形与周期切片'), 'Live Page 3 must remove useless waveforms tab');
 assert(!liveDirectHtml.includes('PVT / MC 批量'), 'Live Page 3 must remove useless PVT/MC batch tab');
+assert(!liveDirectHtml.includes('任务列表与控制'), 'Live Page 3 must remove redundant runs tab');
 assert(!liveDirectHtml.includes('data-tab="waveforms"'), 'Live Page 3 must not expose waveforms tab button');
 assert(!liveDirectHtml.includes('data-tab="batches"'), 'Live Page 3 must not expose batches tab button');
+assert(!liveDirectHtml.includes('data-tab="runs"'), 'Live Page 3 must not expose runs tab button');
 
 // 8. Page 4 (#overview) shows real Project -> TB -> Submission-Group history archive in live mode (zero demo buttons)
 ex.setDirectState(st => {
@@ -441,6 +442,13 @@ assert(liveOvHtml.includes('data-project-name="RESEARCH4"'), 'Project section re
 assert(liveOvHtml.includes('data-tb-name="tb_const_gain_amplifier"'), 'TB section renders');
 assert(liveOvHtml.includes('同次提交 · 2 次仿真'), 'Multi-run submission badge co-archives runs');
 assert(liveOvHtml.includes('data-action="overview-open-run"'), 'History rows link directly to run control');
+
+// Selecting a run opens inline detail & control panel directly inside #overview
+ex.setOverviewState(s => { s.selectedRunId = 'amp-pvt-01-tt'; });
+const detailOvHtml = ex.overview();
+assert(detailOvHtml.includes('data-overview-run-detail="amp-pvt-01-tt"'), 'Selected run renders inline detail panel in overview');
+assert(detailOvHtml.includes('data-action="direct-status"'), 'Inline detail panel exposes full lifecycle controls');
+ex.setOverviewState(s => { s.selectedRunId = ''; });
 
 // Filter narrows by project cleanly
 ex.setOverviewState(s => { s.project = 'ADC_TOP'; });

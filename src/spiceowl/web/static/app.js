@@ -420,7 +420,7 @@ async function refreshWizard() {
   } finally {
     wizardState.loaded = true;
     wizardState.loading = false;
-    if (location.hash === '#quickstart') render();
+    if (!location.hash || location.hash === '#quickstart') render();
   }
 }
 
@@ -492,7 +492,15 @@ function quickstartPage() {
         </div>
       </div>`;
   } else {
-    const aliasChips = aliases.map(a => {
+    // Merge discovered SSH aliases with any already-registered hosts so verified servers never disappear
+    const seenAliases = new Set(aliases.map(a => a.alias));
+    const mergedAliases = [
+      ...aliases,
+      ...hosts
+        .filter(h => h.ssh_target && !seenAliases.has(h.ssh_target))
+        .map(h => ({alias: h.ssh_target, hostname: h.expected_host || h.ssh_target, user: h.expected_user || ''})),
+    ];
+    const aliasChips = mergedAliases.map(a => {
       const matched = hosts.find(h => h.ssh_target === a.alias);
       const isOk = Boolean(matched?.last_probe?.identity?.verified);
       return `<button type="button" class="home-alias-btn ${isOk ? 'verified' : ''}" data-action="home-quick-ssh" data-alias="${escape(a.alias)}" ${wizardState.busy ? 'disabled' : ''}><span>${isOk ? '✓ ' : ''}${escape(a.alias)}</span>${a.hostname ? `<small>${escape(a.user ? a.user + '@' : '')}${escape(a.hostname)}</small>` : ''}</button>`;
@@ -506,11 +514,13 @@ function quickstartPage() {
       : wizardState.lastProbe?.error
       ? `<div class="wf-mode-banner preview">${chip('未通过', 'red')}<span>${escape(wizardState.lastProbe.error.message || '请核对 SSH 别名与免密配置。')}</span></div>`
       : '';
-    serverInner = aliases.length
+    serverInner = wizardState.loading && !wizardState.loaded && !mergedAliases.length
+      ? `<div class="home-server-row"><div class="home-server-copy"><h3>正在识别本机 SSH 服务器…</h3><p>正在读取你的 <code>~/.ssh/config</code> 与已保存的服务器列表。</p></div></div>`
+      : mergedAliases.length
       ? `
       <div class="home-server-row">
         <div class="home-server-copy">
-          <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : `已发现 ${aliases.length} 个 SSH 服务器，点一下直接连通`}</h3>
+          <h3>${verifiedHosts.length ? `已就绪 ${verifiedHosts.length} 台 EDA 服务器` : `已发现 ${mergedAliases.length} 个 SSH 服务器，点一下直接连通`}</h3>
           <p>${verifiedHosts.length ? '点击任意服务器可立即验证或切换；需要加新服务器或跳板机，点右侧配置向导。' : '点击下方任意服务器即可自动识别主机与仿真器并完成连通（无需填写复杂表单）。'}</p>
         </div>
         <div class="direct-actions">
@@ -1899,6 +1909,14 @@ async function api(path, options = {}) {
   });
   const data = await response.json();
   if (!response.ok) {
+    if (isConnectorLive() && response.status === 403 && /Pair this web tab/i.test(data.error?.message || '')) {
+      disconnectConnector();
+      render();
+      const staleErr = new Error('本机连接器刚刚重启，请点右上角「连接本机」重新授权 1 秒续连。');
+      staleErr.code = 'connector_session_expired';
+      staleErr.definitive = true;
+      throw staleErr;
+    }
     const error = new Error(data.error?.message || 'The local request failed.');
     error.code = data.error?.code || 'request_failed';
     error.definitive = response.status < 500;
@@ -2479,7 +2497,7 @@ async function refreshCodexStatus() {
     codexPanelState.error = null;
     openCodexEvents();
   } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
-  finally { codexPanelState.loading = false; if (location.hash === '#agents') render(); }
+  finally { codexPanelState.loading = false; if (!location.hash || location.hash === '#quickstart' || location.hash === '#agents') render(); }
 }
 
 function codexApprovalCard(approval) {

@@ -528,3 +528,55 @@ def ssh_client_options(base_options: tuple[str, ...], *, executable: str | None 
     if not use_windows:
         return base_options
     return tuple(opt for opt in base_options if opt != "SessionType=default")
+
+
+def resolve_codex_executable(*, windows: bool | None = None, macos: bool | None = None) -> str | None:
+    """Resolve the local Codex CLI executable even under minimal GUI/LaunchAgent PATHs."""
+    override = os.environ.get("SPICEOWL_CODEX_EXECUTABLE")
+    if override and Path(override).is_file():
+        return override
+    found = shutil.which("codex")
+    if found:
+        return found
+    use_windows = IS_WINDOWS if windows is None else windows
+    use_macos = IS_MACOS if macos is None else macos
+    home = Path.home()
+    candidates: list[Path] = []
+    if use_windows:
+        appdata = os.environ.get("APPDATA")
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if appdata:
+            candidates.extend([Path(appdata) / "npm" / "codex.cmd", Path(appdata) / "npm" / "codex.exe"])
+        if local_appdata:
+            candidates.extend([Path(local_appdata) / "Programs" / "codex" / "codex.exe", Path(local_appdata) / "Volta" / "bin" / "codex.exe"])
+        candidates.append(home / ".local" / "bin" / "codex.exe")
+    else:
+        if use_macos:
+            candidates.extend([
+                Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+                home / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "codex-cli" / "CodexCLI.app" / "Contents" / "MacOS" / "codex",
+                Path("/opt/homebrew/bin/codex"),
+            ])
+        candidates.extend([
+            Path("/usr/local/bin/codex"),
+            home / ".local" / "bin" / "codex",
+            home / ".npm-global" / "bin" / "codex",
+            home / ".volta" / "bin" / "codex",
+            home / ".bun" / "bin" / "codex",
+            home / ".asdf" / "shims" / "codex",
+            home / ".mise" / "shims" / "codex",
+        ])
+        nvm_versions = home / ".nvm" / "versions" / "node"
+        if nvm_versions.is_dir():
+            try:
+                for node_dir in sorted(nvm_versions.iterdir(), reverse=True)[:12]:
+                    candidates.append(node_dir / "bin" / "codex")
+            except OSError:
+                pass
+    for path in candidates:
+        try:
+            if path.is_file() and (use_windows or os.access(path, os.X_OK)):
+                return str(path)
+        except OSError:
+            continue
+    return None

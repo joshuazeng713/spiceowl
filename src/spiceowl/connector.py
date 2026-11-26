@@ -26,8 +26,9 @@ import urllib.error
 from urllib.parse import urlsplit
 import urllib.request
 
-from spiceowl._platform import IS_MACOS, IS_WINDOWS, default_state_dir, popen_isolation_kwargs
+from spiceowl._platform import IS_MACOS, IS_WINDOWS, default_state_dir, popen_isolation_kwargs, resolve_codex_executable, resolve_ssh_executable
 from spiceowl.domain.common import DomainError
+import signal
 
 
 DEFAULT_CONNECTOR_PORT = 8765
@@ -67,8 +68,9 @@ def connector_readiness_summary() -> dict:
     """Inspect local OpenSSH aliases and optional Codex CLI presence without network I/O."""
     from spiceowl.onboarding.ssh_discovery import discover_ssh_hosts
 
-    ssh_bin = shutil.which("ssh")
-    codex_bin = shutil.which("codex")
+    raw_ssh = resolve_ssh_executable()
+    ssh_bin = raw_ssh if (Path(raw_ssh).is_file() or shutil.which(raw_ssh)) else None
+    codex_bin = resolve_codex_executable()
     aliases = []
     try:
         cfg = Path.home() / ".ssh" / "config"
@@ -85,7 +87,88 @@ def connector_readiness_summary() -> dict:
         "ssh_available": bool(ssh_bin),
         "ssh_alias_count": len(aliases),
         "codex_available": bool(codex_bin),
+        "codex_executable": codex_bin,
     }
+
+
+def _connector_pid_file(state_root: Path, port: int) -> Path:
+    return state_root / (f"connector-{int(port)}.pid" if int(port) != DEFAULT_CONNECTOR_PORT else "connector.pid")
+
+
+def _terminate_pid(pid: int) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return False
+    if IS_WINDOWS:
+        res = subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+        return res.returncode == 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
+def stop_connector_background(
+    *,
+    port: int = DEFAULT_CONNECTOR_PORT,
+    data_dir: str | Path | None = None,
+) -> dict:
+    """Cleanly stop any previously running SpiceOwl headless Connector on this port."""
+    state_root = Path(data_dir).expanduser().resolve() if data_dir is not None else default_state_dir("spiceowl")
+    pid_file = _connector_pid_file(state_root, port)
+    stopped_pids: list[int] = []
+    candidate_pids: list[int] = []
+    if pid_file.is_file():
+        try:
+            recorded = int(pid_file.read_text(encoding="utf-8").strip())
+            if recorded > 0:
+                candidate_pids.append(recorded)
+        except (OSError, ValueError):
+            pass
+    if not candidate_pids and not IS_WINDOWS and connector_health(port, timeout=0.6)["running"]:
+        # Fallback for older SpiceOwl Connectors started before connector.pid existed:
+        # strictly match our own headless serve command on this exact port.
+        try:
+            ps_out = subprocess.run(
+                ["ps", "-axo", "pid=,command="],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            port_token = f"--port {int(port)}"
+            for line in ps_out.stdout.splitlines():
+                parts = line.strip().split(None, 1)
+                if len(parts) != 2 or not parts[0].isdigit():
+                    continue
+                cmdline = parts[1]
+                if "spiceowl" in cmdline and " serve " in f" {cmdline} " and "--headless" in cmdline and port_token in cmdline:
+                    candidate_pids.append(int(parts[0]))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    for pid in dict.fromkeys(candidate_pids):
+        if _terminate_pid(pid):
+            stopped_pids.append(pid)
+    if stopped_pids:
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            if not connector_health(port, timeout=0.35)["running"]:
+                break
+            time.sleep(0.15)
+        try:
+            pid_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return {"stopped": bool(stopped_pids), "pids": stopped_pids, "port": int(port)}
+
+
 def _python_for_background() -> str:
     exe = Path(sys.executable)
     if IS_WINDOWS:
@@ -100,15 +183,23 @@ def start_connector_background(
     port: int = DEFAULT_CONNECTOR_PORT,
     data_dir: str | Path | None = None,
     enable_direct_exec: bool = True,
+    restart: bool = False,
 ) -> dict:
     """Ensure the headless SpiceOwl Connector is running on 127.0.0.1:<port>."""
+    restarted = False
     st = connector_health(port)
     if st["running"]:
-        return {"started": False, "already_running": True, "ready": True, "port": int(port), "url": f"http://127.0.0.1:{int(port)}"}
+        if not restart:
+            return {"started": False, "already_running": True, "ready": True, "port": int(port), "url": f"http://127.0.0.1:{int(port)}"}
+        stop_res = stop_connector_background(port=port, data_dir=data_dir)
+        restarted = stop_res["stopped"]
+        if connector_health(port, timeout=0.5)["running"]:
+            return {"started": False, "already_running": True, "restarted": False, "ready": True, "port": int(port), "url": f"http://127.0.0.1:{int(port)}"}
 
-    state_root = Path(data_dir) if data_dir is not None else default_state_dir("spiceowl")
+    state_root = Path(data_dir).expanduser().resolve() if data_dir is not None else default_state_dir("spiceowl")
     state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     log_path = state_root / "connector.log"
+    pid_file = _connector_pid_file(state_root, port)
 
     cmd = [
         _python_for_background(),
@@ -146,8 +237,12 @@ def start_connector_background(
             env=env,
             **kwargs,
         )
+    try:
+        pid_file.write_text(f"{proc.pid}\n", encoding="utf-8")
+    except OSError:
+        pass
     ready = False
-    deadline = time.monotonic() + 3.0
+    deadline = time.monotonic() + 4.0
     while time.monotonic() < deadline:
         if connector_health(port, timeout=0.5)["running"]:
             ready = True
@@ -158,6 +253,7 @@ def start_connector_background(
     return {
         "started": True,
         "already_running": False,
+        "restarted": restarted,
         "ready": ready,
         "pid": proc.pid,
         "port": int(port),
@@ -206,8 +302,21 @@ def _install_macos(
 
     python_bin = str(Path(sys.executable))
     src_root = _needs_source_pythonpath()
+    macos_path = ":".join([
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        str(home_dir / ".local" / "bin"),
+        "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ])
     launcher = macos_dir / "spiceowl-connector"
-    script_lines = ["#!/bin/sh"]
+    script_lines = [
+        "#!/bin/sh",
+        f'export PATH="{macos_path}${{PATH:+:$PATH}}"',
+    ]
     if src_root is not None:
         script_lines.append(f'export PYTHONPATH="{src_root}${{PYTHONPATH:+:$PYTHONPATH}}"')
     script_lines.extend([
@@ -273,8 +382,10 @@ def _install_macos(
             "StandardOutPath": str(data_dir / "connector.log"),
             "StandardErrorPath": str(data_dir / "connector.log"),
         }
+        agent_env = {"PATH": macos_path}
         if src_root is not None:
-            agent_plist["EnvironmentVariables"] = {"PYTHONPATH": str(src_root)}
+            agent_env["PYTHONPATH"] = str(src_root)
+        agent_plist["EnvironmentVariables"] = agent_env
         with launch_agent_path.open("wb") as fh:
             plistlib.dump(agent_plist, fh)
 

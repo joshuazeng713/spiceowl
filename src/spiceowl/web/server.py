@@ -192,6 +192,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             cors_origin = self._cors_origin()
             if cors_origin is not None:
                 self.send_header("Access-Control-Allow-Origin", cors_origin)
+                self.send_header("Access-Control-Allow-Private-Network", "true")
                 self.send_header("Vary", "Origin")
             self.send_header("Connection", "close")
             self.end_headers()
@@ -272,6 +273,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             cors_origin = self._cors_origin()
             if cors_origin is not None:
                 headers_map['Access-Control-Allow-Origin'] = cors_origin
+                headers_map['Access-Control-Allow-Private-Network'] = 'true'
                 headers_map['Vary'] = 'Origin'
             for key, value in headers_map.items():
                 self.send_header(key, value)
@@ -329,7 +331,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type, X-SpiceOwl-Token")
                 self.send_header("Access-Control-Max-Age", "600")
-                self.send_header("Vary", "Origin")
+                self.send_header("Vary", "Origin, Access-Control-Request-Private-Network")
                 self.send_header("Content-Length", "0")
                 self.send_header("Connection", "close")
                 self.end_headers()

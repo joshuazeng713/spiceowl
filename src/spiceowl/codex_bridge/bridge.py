@@ -18,7 +18,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
-from .._platform import fsync_dir, lock_file, open_lock_nofollow, unlock_file
+from .._platform import fsync_dir, lock_file, open_lock_nofollow, resolve_codex_executable, unlock_file
 from ..domain.common import DomainError, utcnow
 from .transport import BridgeError, StdioTransport, encode
 
@@ -439,7 +439,7 @@ class CodexBridge:
             with self.lock:
                 self._active(connected=False)
                 _check(self.rpc is None or self.rpc.closed, 'Codex is already connected.', 'codex_already_connected')
-                executable = str(self.executable) if self.executable is not None else shutil.which('codex')
+                executable = str(self.executable) if self.executable is not None else resolve_codex_executable()
                 _check(bool(executable), 'Codex executable was not found on PATH.', 'codex_not_installed')
                 argv = [executable]
                 if profile.get('profile'):

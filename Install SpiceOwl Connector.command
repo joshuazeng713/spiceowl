@@ -138,7 +138,7 @@ if ! "$PERM_PY" -c 'import spiceowl' >/dev/null 2>&1; then
 fi
 
 echo "[3/4] 注册 spiceowl:// 协议并启动后台无界面连接器…"
-if ! "$PERM_PY" -m spiceowl connector install; then
+if ! "$PERM_PY" -m spiceowl connector install --restart; then
   echo
   echo "❌ [安装失败] 请查看上方错误信息。"
   if [ -z "${SPICEOWL_NO_PAUSE:-}" ]; then read -r -p "按回车关闭。"; fi
@@ -154,9 +154,9 @@ if "$PERM_PY" -m spiceowl connector status >/dev/null 2>&1; then
   echo "   • spiceowl:// 唤醒协议与开机静默常驻已自动配置"
   echo "   • 本次下载的压缩包和解压目录现在可以安全删除"
   echo "============================================================"
-  echo "正在为您打开 SpiceOwl 正式网页工作台…"
+  echo "正在为您打开 SpiceOwl 正式网页工作台并自动拉起授权…"
   if [ -z "${SPICEOWL_NO_BROWSER:-}" ]; then
-    open "https://spiceowl-dev.github.io/spiceowl/" 2>/dev/null || true
+    open "https://spiceowl-dev.github.io/spiceowl/?connect=1#quickstart" 2>/dev/null || true
   fi
 else
   echo

@@ -20,7 +20,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from spiceowl._platform import IS_WINDOWS, resolve_ssh_executable
+from spiceowl._platform import IS_WINDOWS, resolve_codex_executable, resolve_ssh_executable
 from spiceowl.agent_eval import compare_baselines
 from spiceowl.batch import DirectBatchManager
 from spiceowl.direct import DirectExecutionManager
@@ -234,7 +234,7 @@ def diagnose_local_environment(
 
     raw_ssh = resolve_ssh_executable()
     ssh_exe = raw_ssh if (Path(raw_ssh).is_file() or shutil.which(raw_ssh)) else None
-    codex_exe = shutil.which("codex")
+    codex_exe = resolve_codex_executable()
     has_numpy = importlib.util.find_spec("numpy") is not None
     ssh_aliases = parse_ssh_config_aliases(ssh_config_path)
 

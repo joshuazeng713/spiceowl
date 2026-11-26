@@ -47,10 +47,13 @@ class TestLocalConnectorAndPairing(unittest.TestCase):
             app_dir = Path(mac["app_bundle"])
             launcher_text = (app_dir / "Contents" / "MacOS" / "spiceowl-connector").read_text(encoding="utf-8")
             self.assertIn("spiceowl://*)", launcher_text)
+            self.assertIn("export PATH=", launcher_text)
             plist = plistlib.loads((app_dir / "Contents" / "Info.plist").read_bytes())
             self.assertEqual(plist["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["spiceowl"])
             self.assertTrue(plist["LSBackgroundOnly"])
             self.assertTrue(Path(mac["autostart_path"]).is_file())
+            agent_plist = plistlib.loads(Path(mac["autostart_path"]).read_bytes())
+            self.assertIn("PATH", agent_plist.get("EnvironmentVariables", {}))
             un_mac = uninstall_connector(home_dir=home, platform_override="macos")
             self.assertEqual(len(un_mac["removed"]), 2)
             self.assertFalse(app_dir.exists())
@@ -91,10 +94,11 @@ class TestLocalConnectorAndPairing(unittest.TestCase):
                     conn.close()
                     return resp.status, resp_headers, raw_body
 
-                # 1. GET /health succeeds for official github.io origin and returns CORS header
+                # 1. GET /health succeeds for official github.io origin and returns CORS + PNA headers
                 st, hdrs, raw = raw_req("GET", "/health", {"Origin": OFFICIAL_ORIGIN})
                 self.assertEqual(st, 200)
                 self.assertEqual(hdrs.get("access-control-allow-origin"), OFFICIAL_ORIGIN)
+                self.assertEqual(hdrs.get("access-control-allow-private-network"), "true")
                 health = json.loads(raw.decode("utf-8"))
                 self.assertTrue(health["ok"])
                 self.assertEqual(health["product"], "spiceowl")
@@ -105,10 +109,11 @@ class TestLocalConnectorAndPairing(unittest.TestCase):
                 self.assertEqual(raw_req("GET", "/api/state", {"Origin": EVIL_ORIGIN})[0], 403)
                 self.assertEqual(raw_req("GET", f"/connect?origin={EVIL_ORIGIN}")[0], 403)
 
-                # 3. OPTIONS preflight succeeds for official origin
+                # 3. OPTIONS preflight succeeds for official origin with Private Network Access header
                 st, hdrs, _ = raw_req("OPTIONS", "/api/state", {"Origin": OFFICIAL_ORIGIN})
                 self.assertEqual(st, 204)
                 self.assertEqual(hdrs.get("access-control-allow-origin"), OFFICIAL_ORIGIN)
+                self.assertEqual(hdrs.get("access-control-allow-private-network"), "true")
                 self.assertIn("X-SpiceOwl-Token", hdrs.get("access-control-allow-headers", ""))
 
                 # 4. Unpaired official origin CANNOT read /api/state without the paired token!

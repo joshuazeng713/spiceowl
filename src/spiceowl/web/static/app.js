@@ -108,6 +108,7 @@ async function probeConnectorHealth(baseUrl = connectorState.baseUrl, timeoutMs 
     const res = await fetch(`${baseUrl}/health`, {
       method: 'GET',
       mode: 'cors',
+      credentials: 'omit',
       cache: 'no-store',
       ...(controller ? {signal: controller.signal} : {}),
     });
@@ -146,6 +147,7 @@ async function restoreConnectorSession() {
     const res = await fetch(`${saved.baseUrl}/api/state`, {
       method: 'GET',
       mode: 'cors',
+      credentials: 'omit',
       headers: {'X-SpiceOwl-Token': saved.token},
     });
     if (!res.ok) {
@@ -194,7 +196,7 @@ function renderConnectorDialog() {
     box.innerHTML = `<div class="direct-rec-integrity"><strong>✓ 已检测到本机 SpiceOwl Connector 在线！</strong><span>·</span><code>${escape(connectorState.baseUrl)}</code></div><p class="subtle-note">点击下方按钮完成一次性网页授权（确认后弹窗自动关闭，您始终留在当前网页工作台）。</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="connector-close">稍后再连</button><button type="button" class="button primary" data-action="connector-authorize">确认授权连接</button></div>`;
     return;
   }
-  box.innerHTML = `<p class="muted"><strong>继续此功能需要安装一次本机 SpiceOwl Connector（零环境配置 · 免装 Python · 免管理员权限）。</strong></p><p class="subtle-note">下载解压后双击一次即可自动装好独立运行环境、注册 <code>spiceowl://</code> 协议并在后台静默启动（安装完可直接删除压缩包和解压文件夹）。</p><div class="public-feature-grid"><article><h3>Windows（双击即完成）</h3><p>解压后双击 <code>Install SpiceOwl Connector.bat</code>，自动准备独立 Python 3.12 环境、注册 <code>HKCU</code> 协议并无黑框后台常驻。</p></article><article><h3>macOS（双击即完成）</h3><p>解压后双击 <code>Install SpiceOwl Connector.command</code>，自动准备独立 Python 3.12 环境、生成 <code>SpiceOwl Connector.app</code> 并后台常驻。</p></article></div><div class="dialog-actions"><a class="button secondary" href="${demoRepository}/archive/refs/heads/${escape(demoSource().branch)}.zip" target="_blank" rel="noopener noreferrer">下载全自动安装包 (.zip)</a><button type="button" class="button primary" data-action="connector-retry">我已安装，重新检测</button></div>`;
+  box.innerHTML = `<p class="muted"><strong>继续此功能需要安装一次本机 SpiceOwl Connector（零环境配置 · 免装 Python · 免管理员权限）。</strong></p><p class="subtle-note">下载解压后双击一次即可自动装好独立运行环境、注册 <code>spiceowl://</code> 协议并在后台静默启动（安装完可直接删除压缩包和解压文件夹）。</p><div class="public-feature-grid"><article><h3>Windows（双击即完成）</h3><p>解压后双击 <code>Install SpiceOwl Connector.bat</code>，自动准备独立 Python 3.12 环境、注册 <code>HKCU</code> 协议并无黑框后台常驻。</p></article><article><h3>macOS（双击即完成）</h3><p>解压后双击 <code>Install SpiceOwl Connector.command</code>，自动准备独立 Python 3.12 环境、生成 <code>SpiceOwl Connector.app</code> 并后台常驻。</p></article></div><p class="subtle-note">若刚刚已安装成功但仍提示未检测到，请确认浏览器未拒绝「访问本地网络」权限，或点右侧「直接打开授权窗」完成授权。</p><div class="dialog-actions"><a class="button secondary" href="${demoRepository}/archive/refs/heads/${escape(demoSource().branch)}.zip" target="_blank" rel="noopener noreferrer">下载全自动安装包 (.zip)</a><button type="button" class="button secondary" data-action="connector-authorize">已运行？直接授权</button><button type="button" class="button primary" data-action="connector-retry">我已安装，重新检测</button></div>`;
 }
 
 async function startConnectorFlow({openModal = true} = {}) {
@@ -268,9 +270,13 @@ window.addEventListener('message', async event => {
       if (isStandaloneAgent()) {
         await refreshCodexStatus();
         if (intent === 'codex' && !codexPanelState.status?.connected) {
-          await api('/api/codex/connect', {method: 'POST', body: {}});
-          await refreshCodexStatus();
-          toast('🟢 本机连接器与 Codex 已全部连好！');
+          try {
+            await api('/api/codex/connect', {method: 'POST', body: {}});
+            await refreshCodexStatus();
+            toast('🟢 本机连接器与 Codex 已全部连好！');
+          } catch (codexErr) {
+            toast('🟢 本机连接器已连好；Codex 连接未完成：' + codexErr.message);
+          }
           render();
           return;
         }
@@ -1818,7 +1824,7 @@ async function api(path, options = {}) {
   }
   const response = await fetch(targetUrl, {
     method,
-    ...(isConnectorLive() ? {mode: 'cors'} : {}),
+    ...(isConnectorLive() ? {mode: 'cors', credentials: 'omit'} : {}),
     headers,
     ...(method !== 'GET' ? {body: JSON.stringify(options.body || {})} : {}),
   });
@@ -1837,6 +1843,15 @@ async function refresh() {
   if (!connectorSessionChecked) {
     connectorSessionChecked = true;
     await restoreConnectorSession();
+    try {
+      const params = new URLSearchParams(location.search || '');
+      if (isHostedPages() && !isConnectorLive() && params.get('connect') === '1') {
+        params.delete('connect');
+        const nextUrl = location.pathname + (params.toString() ? `?${params.toString()}` : '') + (location.hash || '#quickstart');
+        history.replaceState(null, '', nextUrl);
+        setTimeout(() => { void startConnectorFlow({openModal: true}); }, 50);
+      }
+    } catch { /* ignore */ }
   }
   publicDemoChrome();
   state = await api('/api/state');

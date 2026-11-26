@@ -172,7 +172,7 @@ def build(output=None, *, commit="local", repository_url=REPOSITORY, build_date=
     if index.count("<html") != 1 or "data-public-demo=" in index:
         raise ValueError("The local index must have one ordinary HTML root.")
     index = index.replace("<html", '<html data-public-demo="true"', 1)
-    policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src http://127.0.0.1:8765; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src spiceowl:"
     index = index.replace('<meta charset="utf-8">', '<meta charset="utf-8">\n  <meta http-equiv="Content-Security-Policy" content="' + policy + '">', 1)
     for name in ("app.js", "app.css", "owl.svg"):
         index = index.replace('"/' + name + '"', '"./' + name + '"')

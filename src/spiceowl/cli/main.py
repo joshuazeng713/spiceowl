@@ -40,9 +40,13 @@ def parser():
     c_inst.add_argument("--port", type=int, default=8765)
     c_inst.add_argument("--no-autostart", action="store_true", help="Register spiceowl:// on-demand wake only without login autostart.")
     c_inst.add_argument("--no-start-now", action="store_true", help="Do not start the background connector immediately after installing.")
+    c_inst.add_argument("--restart", action="store_true", help="Restart any existing headless Connector so newly installed updates take effect immediately.")
     conn_sub.add_parser("uninstall", help="Remove user-level spiceowl:// registration and autostart.")
     c_start = conn_sub.add_parser("start", help="Ensure the headless local Connector is running in the background.")
     c_start.add_argument("--port", type=int, default=8765)
+    c_start.add_argument("--restart", action="store_true", help="Restart any existing headless Connector on this port.")
+    c_stop = conn_sub.add_parser("stop", help="Stop the background headless local Connector on this port.")
+    c_stop.add_argument("--port", type=int, default=8765)
     c_stat = conn_sub.add_parser("status", help="Check whether the local Connector is reachable on 127.0.0.1:<port>/health.")
     c_stat.add_argument("--port", type=int, default=8765)
     c_uri = conn_sub.add_parser("handle-uri", help="Handle an OS-dispatched spiceowl:// URI.")
@@ -751,19 +755,23 @@ def main(argv=None):
                 handle_connector_uri,
                 install_connector,
                 start_connector_background,
+                stop_connector_background,
                 uninstall_connector,
             )
             if args.conn_action == "install":
                 res = install_connector(port=args.port, data_dir=args.data_dir, autostart=not args.no_autostart)
                 if not args.no_start_now:
-                    res["background_start"] = start_connector_background(port=args.port, data_dir=args.data_dir)
+                    res["background_start"] = start_connector_background(port=args.port, data_dir=args.data_dir, restart=bool(args.restart))
                 output(res)
                 return 0
             if args.conn_action == "uninstall":
                 output(uninstall_connector())
                 return 0
             if args.conn_action == "start":
-                output(start_connector_background(port=args.port, data_dir=args.data_dir))
+                output(start_connector_background(port=args.port, data_dir=args.data_dir, restart=bool(args.restart)))
+                return 0
+            if args.conn_action == "stop":
+                output(stop_connector_background(port=args.port, data_dir=args.data_dir))
                 return 0
             if args.conn_action == "status":
                 res = connector_health(port=args.port)

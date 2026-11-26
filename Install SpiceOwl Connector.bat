@@ -140,7 +140,7 @@ if errorlevel 1 (
 set "PERM_PY=%VENV_DIR%\Scripts\python.exe"
 
 echo [3/4] 注册 spiceowl:// 协议并启动后台无界面连接器…
-"%PERM_PY%" -m spiceowl connector install
+"%PERM_PY%" -m spiceowl connector install --restart
 if errorlevel 1 (
   echo.
   echo ❌ [安装失败] 请查看上方错误信息。
@@ -158,7 +158,7 @@ if not errorlevel 1 (
   echo    • spiceowl:// 唤醒协议与无黑框开机静默自启已自动配置
   echo    • 本次下载的压缩包和解压目录现在可以安全删除
   echo ============================================================
-  start "" "https://spiceowl-dev.github.io/spiceowl/"
+  start "" "https://spiceowl-dev.github.io/spiceowl/?connect=1#quickstart"
 ) else (
   echo ⚠️  协议已注册，但后台服务尚未就绪，请查看日志：%LOCALAPPDATA%\spiceowl\connector.log
 )

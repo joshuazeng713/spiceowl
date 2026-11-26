@@ -43,11 +43,13 @@ vm.runInContext(`(async () => {\n${body}\nglobalThis.__exports = {
   setState: s => { state = s; },
   setHostLive: fn => fn(hostLiveState),
   setSimSource: fn => fn(simSourceState),
+  setLibMgr: fn => fn(libMgrState),
   setDirectDraft: fn => fn(directDraft),
   renderMySimulationsStrip,
   renderHostLiveCard,
   hosts,
   directAgentSetupPanel,
+  renderLibraryManagerDialog,
   buildDirectPreparePayload,
   applyCircuitGitEntry,
   isCircuitGitManagedEntry,
@@ -126,5 +128,44 @@ ex.setDirectDraft(d => { d.host_id = 'sim-node-a'; });
 const prepPayload = ex.buildDirectPreparePayload();
 assert.deepEqual({...prepPayload.support_files}, {'sub.scs': 'subckt sub a\nends sub\n'});
 assert.equal(prepPayload.source_commit, 'b'.repeat(40));
+
+// 6. Library Manager SSH dialog renders Virtuoso schematic card & Maestro checkbox cleanly
+let renderedLibHtml = '';
+sandbox.document.querySelector = sel => sel === '#library-manager-content'
+  ? {set innerHTML(v) { renderedLibHtml = v; }}
+  : {addEventListener: () => {}, innerHTML: '', textContent: '', hidden: false};
+ex.setLibMgr(m => {
+  m.tab = 'ssh';
+  m.hostId = 'sim-node-a';
+  m.cwd = '/work/adc_lib/tb_amp/schematic';
+  m.entries = [];
+  m.includeMaestro = true;
+  m.selectedMaestroView = 'maestro';
+  m.virtuosoContext = {
+    is_schematic_view: true,
+    lib_name: 'adc_lib',
+    cell_name: 'tb_amp',
+    view_name: 'schematic',
+    schematic_dir: '/work/adc_lib/tb_amp/schematic',
+    cds_lib: '/work/cds.lib',
+    maestro_views: [{
+      name: 'maestro',
+      kind: 'maestro',
+      path: '/work/adc_lib/tb_amp/maestro',
+      summary: {
+        analyses: [{type: 'tran', stop: '20n'}],
+        model_files_count: 3,
+        variables_count: 5,
+        corners: [{name: 'CTT', enabled: true}],
+        outputs_count: 4,
+      },
+    }],
+  };
+});
+ex.renderLibraryManagerDialog();
+assert(renderedLibHtml.includes('data-virtuoso-schematic-card="true"'), 'Virtuoso schematic card must render inside schematic view dir');
+assert(renderedLibHtml.includes('id="lib-mgr-include-maestro"'), 'Maestro import toggle checkbox must render');
+assert(renderedLibHtml.includes('从 Schematic 导出并导入'), 'Export schematic CTA must render');
+assert.match(css, /\.lib-mgr-check input\[type="checkbox"\][\s\S]*width:\s*auto/, 'Checkbox width must not stretch');
 
 console.log('ui-library-manager.mjs passed');

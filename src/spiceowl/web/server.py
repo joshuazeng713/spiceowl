@@ -643,6 +643,33 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     include_dependencies=include_deps,
                     ssh_hostname=ssh_hostname,
                 ))
+            if path == "/api/library/ssh-export-schematic" and self.command == "POST":
+                from pathlib import Path as _Path
+                from spiceowl.onboarding.ssh_import import export_remote_schematic
+                body = self.body()
+                allowed_fields = {"host_id", "ssh_target", "path", "include_maestro", "maestro_view", "maestro_test", "cds_lib"}
+                if set(body) - allowed_fields or "path" not in body:
+                    raise DomainError("Schematic export requires path and either host_id or ssh_target.")
+                if not body.get("host_id") and not body.get("ssh_target"):
+                    raise DomainError("Provide either host_id or ssh_target.")
+                ssh_hostname = None
+                if body.get("host_id"):
+                    host = controller.hosts.inspect(require_id(body["host_id"], "host ID"))
+                    ssh_target = host["ssh_target"]
+                    ssh_hostname = host.get("ssh_hostname")
+                else:
+                    ssh_target = body["ssh_target"]
+                ssh_cfg = (_Path(ssh_dir) / "config") if ssh_dir is not None else None
+                return self.reply(export_remote_schematic(
+                    ssh_target,
+                    ssh_cfg,
+                    body["path"],
+                    include_maestro=body.get("include_maestro", True),
+                    maestro_view=body.get("maestro_view"),
+                    maestro_test=body.get("maestro_test"),
+                    cds_lib=body.get("cds_lib"),
+                    ssh_hostname=ssh_hostname,
+                ))
             if path == "/api/library/circuitgit-entry":
                 if self.command == "GET":
                     entry = circuitgit_entry_box.get("entry")

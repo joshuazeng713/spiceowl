@@ -105,6 +105,9 @@ let simSourceState = {
   skipped: [],
   sourceCommit: '',
   returnUrl: '',
+  fromSchematic: false,
+  maestroApplied: false,
+  maestroConfig: null,
   serverEntryChecked: false,
   urlHandoffChecked: false,
 };
@@ -117,11 +120,15 @@ let libMgrState = {
   parent: null,
   entries: [],
   cdsLibraries: [],
+  virtuosoContext: null,
+  includeMaestro: true,
+  selectedMaestroView: '',
   truncated: false,
   selectedPath: '',
   filter: '',
   includeDeps: true,
   busy: false,
+  busyMessage: '',
   error: '',
   localBundle: null,
   localSelectedEntry: '',
@@ -298,6 +305,9 @@ function applyCircuitGitEntry(entry, {silent = false} = {}) {
   simSourceState.skipped = [];
   simSourceState.sourceCommit = String(entry.source_commit || entry.sourceCommit || '');
   simSourceState.returnUrl = String(entry.return_url || entry.returnUrl || '');
+  simSourceState.maestroConfig = (entry.maestro_config && typeof entry.maestro_config === 'object') ? entry.maestro_config : null;
+  simSourceState.maestroApplied = Boolean(simSourceState.maestroConfig);
+  simSourceState.fromSchematic = simSourceState.viewId === 'schematic';
   if (typeof entry.netlist_text === 'string' && entry.netlist_text.trim()) {
     directDraft.netlist_text = entry.netlist_text;
     const det = entry.simulator
@@ -1357,7 +1367,14 @@ function buildSimAgentContextSummary() {
     return `${h.host_id}(CPU ${cpu}${mem ? ', ' + mem : ''})`;
   });
   const licLines = (hostLiveState.licenses?.features || []).slice(0, 5).map(f => `${f.label}:${f.in_use}/${f.issued}(余${f.available})`);
-  return `当前已连接服务器：${hostLines.join('；') || '暂无'}。${licLines.length ? 'SPICE License：' + licLines.join('，') + '。' : ''}`;
+  let maestroNote = '';
+  if (simSourceState.maestroConfig) {
+    const mc = simSourceState.maestroConfig;
+    const anStr = (mc.analyses || []).map(a => a.stop ? `${a.type}(stop=${a.stop})` : a.type).join(', ');
+    const enCorners = (mc.corners || []).filter(c => c.enabled).map(c => c.name).join('/');
+    maestroNote = `当前电路来自 Virtuoso ${simSourceState.libraryName || ''}/${simSourceState.cellName || simSourceState.fileName}，已检测 Maestro 配置（分析：${anStr || '未指定'}；变量 ${Object.keys(mc.variables || {}).length} 个${enCorners ? `；启用工艺角 ${enCorners}` : ''}）。`;
+  }
+  return `当前已连接服务器：${hostLines.join('；') || '暂无'}。${licLines.length ? 'SPICE License：' + licLines.join('，') + '。' : ''}${maestroNote}`;
 }
 
 function directAgentSetupPanel(hostsList) {
@@ -1463,8 +1480,15 @@ function directAgentSetupPanel(hostsList) {
     if (simSourceState.origin === 'ssh') {
       srcBadge = `SSH · ${simSourceState.sshTarget || simSourceState.sshHostId}`;
       srcBadgeCls = 'green';
-      srcTitle = simSourceState.fileName || simSourceState.projectName || '远端网表';
-      srcSub = [simSourceState.remotePath || simSourceState.entryPath, supportEntries.length ? `含 ${supportEntries.length} 个相对 include 依赖` : ''].filter(Boolean).join(' · ');
+      srcTitle = simSourceState.fromSchematic && simSourceState.cellName
+        ? `${simSourceState.libraryName ? simSourceState.libraryName + ' / ' : ''}${simSourceState.cellName} (${simSourceState.viewId || 'schematic'})`
+        : (simSourceState.fileName || simSourceState.projectName || '远端网表');
+      srcSub = [
+        simSourceState.fromSchematic
+          ? (simSourceState.maestroApplied ? '已通过 Virtuoso schematic 导出并合并 Maestro 仿真配置' : '已通过 Virtuoso schematic 导出纯电路网表')
+          : (simSourceState.remotePath || simSourceState.entryPath),
+        supportEntries.length ? `含 ${supportEntries.length} 个相对 include 依赖` : '',
+      ].filter(Boolean).join(' · ');
     } else if (simSourceState.origin === 'local') {
       srcBadge = '本地项目';
       srcBadgeCls = 'blue';
@@ -1499,14 +1523,32 @@ function directAgentSetupPanel(hostsList) {
       </div>`;
   }
 
-  const supportFilesHtml = supportEntries.length ? `
+  const maestroSummaryHtml = simSourceState.maestroConfig ? (() => {
+    const mc = simSourceState.maestroConfig;
+    const analyses = (mc.analyses || []).map(a => a.stop ? `${a.type} (stop=${a.stop}${a.errpreset ? ', ' + a.errpreset : ''})` : a.type);
+    const vars = Object.entries(mc.variables || {});
+    const enCorners = (mc.corners || []).filter(c => c.enabled);
+    const models = mc.model_files || [];
+    return `
+      <details class="sim-support-bar" style="margin-top:8px">
+        <summary>⚙️ ${simSourceState.maestroApplied ? '已导入' : '已检测到'} Maestro 仿真配置（${escape(mc.view_name || 'maestro')}）· ${analyses.length} 项分析 · ${vars.length} 个变量 · ${models.length} 个模型库${enCorners.length ? ` · ${enCorners.length} 个启用工艺角` : ''}</summary>
+        <div class="sim-maestro-grid">
+          ${analyses.length ? `<div><strong>分析：</strong><code>${escape(analyses.join(' ; '))}</code></div>` : ''}
+          ${vars.length ? `<div><strong>变量：</strong><code>${escape(vars.map(([k, v]) => `${k}=${v}`).join('  '))}</code></div>` : ''}
+          ${enCorners.length ? `<div><strong>启用工艺角：</strong>${enCorners.map(c => `<span class="chip">${escape(c.name)}${c.temperature ? ` (${escape(c.temperature)}°C)` : ''}</span>`).join(' ')}</div>` : ''}
+          ${models.length ? `<div><strong>模型库：</strong>${models.slice(0, 6).map(m => `<code>${escape((m.path || '').split('/').pop())}${m.section ? ':' + escape(m.section) : ''}</code>`).join(' ')}</div>` : ''}
+        </div>
+      </details>`;
+  })() : '';
+
+  const supportFilesHtml = (supportEntries.length ? `
     <details class="sim-support-bar">
       <summary>📎 已附带 ${supportEntries.length} 个相对 include 依赖文件（启动仿真时将自动与 input.scs 一并上传）</summary>
       <div class="sim-support-list">
         ${supportEntries.map(([rel, txt]) => `<span><code>${escape(rel)}</code> <small>${escape(formatImportByteSize(new TextEncoder().encode(txt).byteLength))}</small></span>`).join('')}
       </div>
       ${!circuitGitManaged ? `<div style="margin-top:8px"><button type="button" class="button secondary small" data-action="direct-clear-support">清除已附带依赖</button></div>` : ''}
-    </details>` : '';
+    </details>` : '') + maestroSummaryHtml;
 
   const configCard = `
     <section class="sim-config-card">
@@ -1600,6 +1642,7 @@ async function browseLibrarySsh(targetPath) {
     return;
   }
   libMgrState.busy = true;
+  libMgrState.busyMessage = '正在读取远端目录与 Virtuoso 视图…';
   libMgrState.error = '';
   libMgrState.selectedPath = '';
   renderLibraryManagerDialog();
@@ -1612,11 +1655,102 @@ async function browseLibrarySsh(targetPath) {
     libMgrState.parent = res.parent || null;
     libMgrState.entries = Array.isArray(res.entries) ? res.entries : [];
     libMgrState.cdsLibraries = Array.isArray(res.cds_libraries) ? res.cds_libraries : [];
+    libMgrState.virtuosoContext = (res.virtuoso_context && typeof res.virtuoso_context === 'object') ? res.virtuoso_context : null;
+    const mviews = libMgrState.virtuosoContext?.maestro_views || [];
+    if (mviews.length) {
+      if (!mviews.some(m => m.name === libMgrState.selectedMaestroView)) {
+        libMgrState.selectedMaestroView = mviews[0].name;
+      }
+    } else {
+      libMgrState.selectedMaestroView = '';
+    }
     libMgrState.truncated = Boolean(res.truncated);
   } catch (error) {
     libMgrState.error = error.message || '远端目录读取失败。';
   } finally {
     libMgrState.busy = false;
+    libMgrState.busyMessage = '';
+    renderLibraryManagerDialog();
+  }
+}
+
+async function exportLibrarySchematic(targetPath, {includeMaestro = null, maestroView = null} = {}) {
+  if (isPublicDemo() || libMgrState.busy) return;
+  const target = String(targetPath || libMgrState.virtuosoContext?.schematic_dir || libMgrState.cwd || '').trim();
+  if (!target) {
+    libMgrState.error = '请先进入或选中一个 Virtuoso schematic 视图目录。';
+    renderLibraryManagerDialog();
+    return;
+  }
+  const useMaestro = includeMaestro !== null ? Boolean(includeMaestro) : Boolean(libMgrState.includeMaestro);
+  const chosenView = maestroView !== null ? maestroView : (libMgrState.selectedMaestroView || '');
+  libMgrState.busy = true;
+  libMgrState.busyMessage = useMaestro
+    ? '正在远端调用 Cadence si 从 schematic 导出网表并解析 Maestro 配置（约 5–15 秒）…'
+    : '正在远端调用 Cadence si 从 schematic 导出纯原理图 Spectre 网表（约 5–15 秒）…';
+  libMgrState.error = '';
+  renderLibraryManagerDialog();
+  try {
+    const body = {
+      ...(libMgrState.hostId ? {host_id: libMgrState.hostId} : {ssh_target: libMgrState.sshTarget}),
+      path: target,
+      include_maestro: useMaestro,
+      ...(chosenView ? {maestro_view: chosenView} : {}),
+      ...(libMgrState.virtuosoContext?.cds_lib ? {cds_lib: libMgrState.virtuosoContext.cds_lib} : {}),
+    };
+    const res = await api('/api/library/ssh-export-schematic', {method: 'POST', body});
+    const fileName = res.file_name || `${res.cell_name || 'schematic'}.scs`;
+    simSourceState.origin = 'ssh';
+    simSourceState.fromSchematic = true;
+    simSourceState.projectName = res.lib_name || res.cell_name || 'Virtuoso';
+    simSourceState.libraryId = res.lib_name || '';
+    simSourceState.libraryName = res.lib_name || '';
+    simSourceState.cellId = res.cell_name || '';
+    simSourceState.cellName = res.cell_name || '';
+    simSourceState.viewId = res.view_name || 'schematic';
+    simSourceState.fileName = fileName;
+    simSourceState.entryPath = fileName;
+    simSourceState.sshTarget = res.ssh_target || libMgrState.sshTarget;
+    simSourceState.sshHostId = libMgrState.hostId || '';
+    simSourceState.remotePath = res.remote_path || target;
+    simSourceState.remoteDir = res.remote_dir || '';
+    simSourceState.supportFiles = (res.support_files && typeof res.support_files === 'object') ? {...res.support_files} : {};
+    simSourceState.skipped = [];
+    simSourceState.sourceCommit = '';
+    simSourceState.maestroApplied = Boolean(res.maestro_applied);
+    simSourceState.maestroConfig = res.maestro_config || null;
+
+    directDraft.netlist_text = res.text || '';
+    directDraft.simulator = res.maestro_config?.simulator === 'ngspice' ? 'ngspice' : 'spectre';
+    directDraft.output_format = directDraft.simulator === 'spectre' ? 'psfbin' : 'psfascii';
+    if (libMgrState.hostId && (state.hosts || []).some(h => h.host_id === libMgrState.hostId)) {
+      directDraft.target_mode = 'host';
+      directDraft.host_id = libMgrState.hostId;
+    }
+    // Pre-seed PVT batch corners & temps from imported Maestro setup if present
+    if (res.maestro_applied && res.maestro_config?.corners?.length) {
+      const enabledCorners = res.maestro_config.corners.filter(c => c.enabled);
+      if (enabledCorners.length) {
+        batchDraft.corners = enabledCorners.map(c => c.name).join(', ');
+        const temps = enabledCorners.map(c => c.temperature).find(Boolean);
+        if (temps) batchDraft.temps = String(temps).trim().split(/\s+/).join(', ');
+      }
+    }
+    const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(8, 14);
+    directDraft.run_key = `${makeSafeRunKeyPrefix(res.cell_name || fileName)}-${stamp}`;
+    directState.quickLaunchNote = null;
+    directState.quickLaunchError = null;
+    $('#library-manager-dialog')?.close();
+    render();
+    toast(
+      `已从远端 Virtuoso schematic（${res.lib_name}/${res.cell_name}）导出网表` +
+      (res.maestro_applied ? `并导入 ${res.maestro_config?.view_name || 'maestro'} 仿真配置！` : '（纯原理图网表）！')
+    );
+  } catch (error) {
+    libMgrState.error = error.message || '远端 Virtuoso schematic 网表导出失败。';
+  } finally {
+    libMgrState.busy = false;
+    libMgrState.busyMessage = '';
     renderLibraryManagerDialog();
   }
 }
@@ -1643,6 +1777,9 @@ async function importLibrarySsh(filePath) {
     const fileName = res.file_name || target.split('/').pop() || 'input.scs';
     const det = detectSimulatorFromNetlist(res.text, fileName);
     simSourceState.origin = 'ssh';
+    simSourceState.fromSchematic = false;
+    simSourceState.maestroApplied = false;
+    simSourceState.maestroConfig = null;
     simSourceState.projectName = dirName || fileName.replace(/\.[^.]+$/, '') || fileName;
     simSourceState.fileName = fileName;
     simSourceState.entryPath = fileName;
@@ -1772,32 +1909,85 @@ function renderLibraryManagerDialog() {
             ${libMgrState.cdsLibraries.map(lib => `<button type="button" class="lib-mgr-cds-pill" data-action="lib-mgr-cd" data-path="${escape(lib.path)}" title="${escape(lib.path)}">${escape(lib.name)}</button>`).join('')}
           </div>
         </div>` : '';
+      const vctx = libMgrState.virtuosoContext;
+      let virtuosoCardHtml = '';
+      if (vctx) {
+        const mviews = vctx.maestro_views || [];
+        const activeMv = mviews.find(m => m.name === libMgrState.selectedMaestroView) || mviews[0] || null;
+        const ms = activeMv?.summary || null;
+        const anLabels = (ms?.analyses || []).map(a => a.stop ? `${a.type}(${a.stop})` : a.type);
+        const enCorners = (ms?.corners || []).filter(c => c.enabled).map(c => c.name);
+        const maestroBlockHtml = activeMv ? `
+          <div class="lib-mgr-maestro-box">
+            <div class="lib-mgr-maestro-head">
+              <label class="lib-mgr-check">
+                <input id="lib-mgr-include-maestro" type="checkbox" ${libMgrState.includeMaestro ? 'checked' : ''} ${libMgrState.busy ? 'disabled' : ''}>
+                <span>同时导入 <code>${escape(activeMv.name)}</code> 自带的仿真配置（分析 / 模型库 / 变量 / 选项 / 工艺角）</span>
+              </label>
+              ${mviews.length > 1 ? `
+                <select id="lib-mgr-maestro-view" aria-label="选择 Maestro/ADE 视图" ${libMgrState.busy ? 'disabled' : ''}>
+                  ${mviews.map(m => `<option value="${escape(m.name)}" ${m.name === activeMv.name ? 'selected' : ''}>${escape(m.name)} (${escape(m.kind)})</option>`).join('')}
+                </select>` : ''}
+            </div>
+            <div class="lib-mgr-maestro-pills">
+              ${anLabels.length ? `<span class="chip blue">分析: ${escape(anLabels.join(', '))}</span>` : ''}
+              ${ms?.model_files_count ? `<span class="chip">模型库 ×${ms.model_files_count}</span>` : ''}
+              ${ms?.variables_count ? `<span class="chip">变量 ×${ms.variables_count}</span>` : ''}
+              ${enCorners.length ? `<span class="chip green">启用工艺角: ${escape(enCorners.join('/'))}</span>` : ''}
+              ${ms?.outputs_count ? `<span class="chip">输出 ×${ms.outputs_count}</span>` : ''}
+            </div>
+          </div>` : `<p class="subtle-note" style="margin:6px 0 0">未在同单元目录下检测到 <code>maestro</code> / <code>adexl</code> / <code>spectre_state</code> 视图，将导出纯原理图 Spectre 网表。</p>`;
+
+        virtuosoCardHtml = `
+          <div class="lib-mgr-virtuoso-card" data-virtuoso-schematic-card="true">
+            <div class="lib-mgr-virtuoso-head">
+              <div>
+                <strong>📐 检测到 Virtuoso 原理图：${escape(vctx.lib_name)} / ${escape(vctx.cell_name)} <span class="chip green">${escape(vctx.view_name)}</span></strong>
+                <small class="subtle-note" style="display:block;margin-top:2px">直接调用远端 Cadence <code>si -batch -command nl</code> 在隔离临时目录只读导出完整层次 Spectre 网表，不改动原设计。</small>
+              </div>
+              <button type="button" class="button primary small" data-action="lib-mgr-export-schematic" data-path="${escape(vctx.schematic_dir)}" ${libMgrState.busy ? 'disabled' : ''}>${libMgrState.busy ? '导出中…' : '⚡ 从 Schematic 导出并导入'}</button>
+            </div>
+            ${maestroBlockHtml}
+          </div>`;
+      }
+
       const listHtml = libMgrState.busy && !filtered.length
-        ? '<p class="lib-mgr-empty">正在通过 SSH 读取远端目录与电路库…</p>'
+        ? `<p class="lib-mgr-empty">${escape(libMgrState.busyMessage || '正在通过 SSH 读取远端目录与电路库…')}</p>`
         : !libMgrState.cwd && !filtered.length
-        ? '<p class="lib-mgr-empty">选择上方服务器并点击「浏览目录」，即可浏览项目目录、<code>cds.lib</code> 与网表文件（.scs / .sp / .spice / .cir / .va / .rnl）。</p>'
+        ? '<p class="lib-mgr-empty">选择上方服务器并点击「浏览目录」，即可浏览项目目录、<code>cds.lib</code>、Virtuoso <code>schematic</code> 与网表文件（.scs / .sp / .cir / .va / .rnl）。</p>'
         : !filtered.length
-        ? `<p class="lib-mgr-empty">${q ? `没有匹配「${escape(libMgrState.filter)}」的目录或网表。` : `目录 ${escape(libMgrState.cwd)} 下暂无子目录或支持的网表文件。`}</p>`
+        ? `<p class="lib-mgr-empty">${q ? `没有匹配「${escape(libMgrState.filter)}」的目录或网表。` : (vctx ? '当前为 Virtuoso 原理图视图目录（包含 OpenAccess sch.oa），直接点击上方「⚡ 从 Schematic 导出并导入」即可生成并载入 Spectre 网表。' : `目录 ${escape(libMgrState.cwd)} 下暂无子目录或支持的网表文件。`)}</p>`
         : filtered.map(entry => {
             const isDir = entry.kind === 'dir';
             const sel = !isDir && libMgrState.selectedPath === entry.path;
+            const isSchCell = entry.virtuoso_kind === 'cell' || entry.virtuoso_kind === 'schematic_view';
+            const isMaestroDir = entry.virtuoso_kind === 'maestro_view';
+            const icon = isSchCell ? '📐' : isMaestroDir ? '⚙️' : (isDir ? '📁' : '📄');
+            const extraBadges = [
+              entry.virtuoso_kind === 'cell' ? '<span class="lib-mgr-tag sch">schematic</span>' : '',
+              entry.virtuoso_kind === 'schematic_view' ? '<span class="lib-mgr-tag sch">OA schematic</span>' : '',
+              ...(entry.maestro_views || []).map(mv => `<span class="lib-mgr-tag maestro">+ ${escape(mv)}</span>`),
+              isMaestroDir ? '<span class="lib-mgr-tag maestro">仿真配置</span>' : '',
+            ].filter(Boolean).join('');
             return `
               <div class="lib-mgr-row ${isDir ? 'is-dir' : 'is-file'} ${sel ? 'is-selected' : ''}">
                 <button type="button" class="lib-mgr-row-main" data-action="${isDir ? 'lib-mgr-cd' : 'lib-mgr-select'}" data-path="${escape(entry.path)}">
-                  <span class="lib-mgr-icon">${isDir ? '📁' : '📄'}</span>
+                  <span class="lib-mgr-icon">${icon}</span>
                   <span class="lib-mgr-name">${escape(isDir ? entry.name + '/' : entry.name)}</span>
-                  <span class="lib-mgr-meta">${isDir ? '目录' : escape(formatImportByteSize(entry.size))}</span>
+                  ${extraBadges}
+                  <span class="lib-mgr-meta">${isDir ? (isSchCell ? '原理图' : isMaestroDir ? 'ADE/Maestro' : '目录') : escape(formatImportByteSize(entry.size))}</span>
                 </button>
+                ${isSchCell ? `<button type="button" class="button primary small" data-action="lib-mgr-export-schematic" data-path="${escape(entry.schematic_path || entry.path)}" ${libMgrState.busy ? 'disabled' : ''}>导出网表</button>` : ''}
                 ${!isDir ? `<button type="button" class="button secondary small" data-action="lib-mgr-import-one" data-path="${escape(entry.path)}" ${libMgrState.busy ? 'disabled' : ''}>导入</button>` : ''}
               </div>`;
           }).join('');
       bodyHtml = `
-        <p class="subtle-note" style="margin:0 0 10px">安全只读浏览已连接服务器上的电路项目（与 CircuitGit 复用同一套 <code>ic.onboarding.ssh-browse.v1</code> 接口，绝不读取密钥或敏感文件）。</p>
+        <p class="subtle-note" style="margin:0 0 10px">安全只读浏览已连接服务器上的电路项目、<code>cds.lib</code> 与 Virtuoso <code>schematic</code>（与 CircuitGit 复用同一套接口，绝不读取密钥或修改原设计）。</p>
         <div class="lib-mgr-toolbar">
           <select id="lib-mgr-host" aria-label="选择 SSH 服务器">
             ${hostsList.map(h => `<option value="${escape(h.host_id)}" ${h.host_id === libMgrState.hostId ? 'selected' : ''}>${escape(h.host_id)} (${escape(h.label)})</option>`).join('')}
           </select>
-          <button type="button" class="button primary small" data-action="lib-mgr-browse" ${libMgrState.busy ? 'disabled' : ''}>${libMgrState.busy ? '读取中…' : '浏览目录'}</button>
+          <button type="button" class="button primary small" data-action="lib-mgr-browse" ${libMgrState.busy ? 'disabled' : ''}>${libMgrState.busy ? '处理中…' : '浏览目录'}</button>
           <button type="button" class="button secondary small" data-action="lib-mgr-cd" data-path="~" ${libMgrState.busy ? 'disabled' : ''}>~ 主目录</button>
         </div>
         <div class="lib-mgr-pathbar">
@@ -1806,13 +1996,15 @@ function renderLibraryManagerDialog() {
           <button type="button" class="button secondary small" data-action="lib-mgr-browse" ${libMgrState.busy ? 'disabled' : ''}>前往</button>
           <input id="lib-mgr-filter" type="search" value="${escape(libMgrState.filter)}" placeholder="过滤名称…" aria-label="过滤当前目录">
         </div>
+        ${libMgrState.busy && libMgrState.busyMessage ? `<p class="subtle-note" role="status" style="margin:0 0 8px;color:var(--green);font-weight:600">⏳ ${escape(libMgrState.busyMessage)}</p>` : ''}
         ${libMgrState.error ? `<p class="error-text" role="alert">${escape(libMgrState.error)}</p>` : ''}
+        ${virtuosoCardHtml}
         ${cdsHtml}
         <div class="lib-mgr-list" role="listbox" aria-label="远端目录与网表文件">${listHtml}</div>
         ${libMgrState.truncated ? '<p class="subtle-note" style="margin:6px 0 0">当前目录超过 200 项，仅展示前 200 项；可直接输入更具体路径。</p>' : ''}
         <div class="lib-mgr-footer">
-          <label class="lib-mgr-check"><input id="lib-mgr-deps" type="checkbox" ${libMgrState.includeDeps ? 'checked' : ''}> 同时拉取同目录相对 include 依赖（自动跳过外部 PDK 库）</label>
-          <button type="button" class="button primary small" data-action="lib-mgr-import-selected" ${libMgrState.busy || !libMgrState.selectedPath ? 'disabled' : ''}>${libMgrState.busy ? '拉取中…' : '导入选中网表'}</button>
+          <label class="lib-mgr-check"><input id="lib-mgr-deps" type="checkbox" ${libMgrState.includeDeps ? 'checked' : ''}><span>同时拉取同目录相对 include 依赖（自动跳过外部 PDK 库）</span></label>
+          <button type="button" class="button primary small" data-action="lib-mgr-import-selected" ${libMgrState.busy || !libMgrState.selectedPath ? 'disabled' : ''}>${libMgrState.busy ? '处理中…' : '导入选中网表'}</button>
         </div>`;
     }
   } else {
@@ -5137,6 +5329,10 @@ document.addEventListener('click', async event => {
     if (libMgrState.selectedPath) await importLibrarySsh(libMgrState.selectedPath);
     return;
   }
+  if (action === 'export-schematic') {
+    await exportLibrarySchematic(btn.dataset.path || libMgrState.virtuosoContext?.schematic_dir || '');
+    return;
+  }
   if (action === 'local-commit') {
     commitLibraryLocalBundle();
     return;
@@ -5169,6 +5365,13 @@ document.addEventListener('change', event => {
   }
   if (event.target.id === 'lib-mgr-deps') {
     libMgrState.includeDeps = Boolean(event.target.checked);
+  }
+  if (event.target.id === 'lib-mgr-include-maestro') {
+    libMgrState.includeMaestro = Boolean(event.target.checked);
+  }
+  if (event.target.id === 'lib-mgr-maestro-view') {
+    libMgrState.selectedMaestroView = event.target.value;
+    renderLibraryManagerDialog();
   }
   if (event.target.id === 'lib-mgr-local-entry') {
     libMgrState.localSelectedEntry = event.target.value;

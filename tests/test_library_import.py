@@ -19,7 +19,9 @@ from spiceowl.onboarding.ssh_import import (
     BROWSE_SCHEMA,
     CIRCUITGIT_ENTRY_SCHEMA,
     IMPORT_SCHEMA,
+    SCHEMATIC_EXPORT_SCHEMA,
     browse_remote_netlists,
+    export_remote_schematic,
     fetch_remote_netlist,
     is_circuit_filename,
     is_sensitive_name,
@@ -112,6 +114,175 @@ class TestSshBrowseAndImportExecution(unittest.TestCase):
             self.assertIn("include \"blocks/stage1.scs\"", res["text"])
             self.assertEqual(list(res["support_files"].keys()), ["blocks/stage1.scs"])
             self.assertIn("subckt stage1", res["support_files"]["blocks/stage1.scs"])
+
+    def test_browse_and_export_virtuoso_schematic_with_and_without_maestro(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lib_dir = root / "my_adc_lib"
+            cell_dir = lib_dir / "tb_amp"
+            sch_dir = cell_dir / "schematic"
+            maestro_dir = cell_dir / "maestro"
+            bin_dir = root / "fakebin"
+            sch_dir.mkdir(parents=True)
+            maestro_dir.mkdir(parents=True)
+            bin_dir.mkdir()
+
+            (root / "cds.lib").write_text(f"DEFINE my_adc_lib {lib_dir}\n", encoding="utf-8")
+            (sch_dir / "sch.oa").write_bytes(b"OA_BINARY_STUB")
+            (maestro_dir / "maestro.sdb").write_text(
+                """<?xml version="1.0"?>
+<setupdb version="6">maestro
+  <active>Active Setup
+    <corners>
+      <corner enabled="1">CTT
+        <vars><var>temperature<value>-40 27 125</value></var></vars>
+        <models><model enabled="1">m.scs<modelfile>/opt/pdk/models.scs</modelfile><modelsection>"tt"</modelsection></model></models>
+      </corner>
+      <corner enabled="1">CSS
+        <vars><var>temperature<value>-40 27 125</value></var></vars>
+      </corner>
+    </corners>
+    <tests>
+      <test enabled="1">tb_amp_test
+        <tooloptions>
+          <option>sim<value>spectre</value></option>
+          <option>cell<value>tb_amp</value></option>
+        </tooloptions>
+        <vars>
+          <var>vdd<value>1.2</value></var>
+          <var>vin<value>1m 5m 10m</value></var>
+        </vars>
+      </test>
+    </tests>
+  </active>
+</setupdb>
+""",
+                encoding="utf-8",
+            )
+            (maestro_dir / "active.state").write_text(
+                """<?xml version="1.0"?>
+<statedb version="5">active
+  <Test Name="tb_amp_test">
+    <component Name="analyses" Type="skillTable">asiEnvSaveTable
+      <analyses Name="analysis">
+        <analysis Name="tran">
+          <partition Name="fields">
+            <field Name="enable" Type="list">(t)</field>
+            <field Name="stop" Type="string">"50n"</field>
+            <field Name="errpreset" Type="string">"conservative"</field>
+          </partition>
+        </analysis>
+        <analysis Name="dc">
+          <partition Name="fields">
+            <field Name="enable" Type="list">(t)</field>
+            <field Name="saveOppoint" Type="symbol">t</field>
+          </partition>
+        </analysis>
+      </analyses>
+    </component>
+    <component Name="modelSetup" Type="skillTable">modelSetup
+      <field Name="modelFiles" Type="list">(("/opt/pdk/models.scs" "tt_mos"))</field>
+    </component>
+    <component Name="simulatorOptions" Type="skillTable">asiEnvSaveTable
+      <partition Name="opts">
+        <field Name="temp" Type="string">"27"</field>
+        <field Name="reltol" Type="string">"1e-4"</field>
+      </partition>
+    </component>
+    <component Name="outputs" Type="skillTable">outputs
+      <partition Name="outputsCommon">
+        <field Name="outputList" Type="skillList">
+          <field Name="outputList_0" Type="defstruct">sevOutputStruct
+            <field Name="signal" Type="string">"/VOUT"</field>
+            <field Name="type" Type="symbol">net</field>
+            <field Name="save" Type="symbol">t</field>
+          </field>
+          <field Name="outputList_1" Type="defstruct">sevOutputStruct
+            <field Name="signal" Type="string">"/I0/M1/D"</field>
+            <field Name="type" Type="symbol">terminal</field>
+            <field Name="save" Type="symbol">t</field>
+          </field>
+        </field>
+      </partition>
+    </component>
+  </Test>
+</statedb>
+""",
+                encoding="utf-8",
+            )
+
+            # Fake headless Cadence `si` executable on PATH
+            fake_si = bin_dir / "si"
+            fake_si.write_text(
+                "#!/bin/sh\n"
+                "cat > netlistHeader <<'H'\n"
+                "// Generated for: spectre\n"
+                "simulator lang=spectre\n"
+                "global 0\n"
+                "H\n"
+                "cat > netlist <<'N'\n"
+                "R0 (IN VOUT) resistor r=1k\n"
+                "C0 (VOUT 0) capacitor c=1p\n"
+                "N\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_si.chmod(0o755)
+
+            def runner_with_fake_si(argv, *, input=b"", capture_output=True, timeout=25):
+                env = dict(os.environ)
+                env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+                return subprocess.run(
+                    ["/bin/sh", "-s"],
+                    input=input,
+                    capture_output=capture_output,
+                    timeout=timeout,
+                    env=env,
+                )
+
+            # 1. Browse library directory: sees tb_amp cell with schematic + maestro tags
+            b_lib = browse_remote_netlists("sim-node-a", None, str(lib_dir), runner=runner_with_fake_si)
+            cell_entry = next(e for e in b_lib["entries"] if e["name"] == "tb_amp")
+            self.assertEqual(cell_entry["virtuoso_kind"], "cell")
+            self.assertTrue(cell_entry["has_schematic"])
+            self.assertEqual(cell_entry["maestro_views"], ["maestro"])
+
+            # 2. Browse schematic directory directly: detects virtuoso_context + maestro summary
+            b_sch = browse_remote_netlists("sim-node-a", None, str(sch_dir), runner=runner_with_fake_si)
+            vctx = b_sch["virtuoso_context"]
+            self.assertIsNotNone(vctx)
+            self.assertTrue(vctx["is_schematic_view"])
+            self.assertEqual(vctx["lib_name"], "my_adc_lib")
+            self.assertEqual(vctx["cell_name"], "tb_amp")
+            self.assertEqual(len(vctx["maestro_views"]), 1)
+            msum = vctx["maestro_views"][0]["summary"]
+            self.assertEqual(msum["variables"]["vdd"], "1.2")
+            self.assertEqual(msum["variables"]["vin"], "1m")
+            self.assertEqual(len(msum["analyses"]), 2)
+
+            # 3. Export WITH Maestro merged
+            exp_with = export_remote_schematic(
+                "sim-node-a", None, str(sch_dir), include_maestro=True, runner=runner_with_fake_si
+            )
+            self.assertEqual(exp_with["schema"], SCHEMATIC_EXPORT_SCHEMA)
+            self.assertEqual(exp_with["file_name"], "tb_amp.scs")
+            self.assertTrue(exp_with["maestro_applied"])
+            self.assertIn('include "/opt/pdk/models.scs" section=tt_mos', exp_with["text"])
+            self.assertIn("parameters vdd=1.2 vin=1m", exp_with["text"])
+            self.assertIn("tran tran stop=50n errpreset=conservative", exp_with["text"])
+            self.assertIn("dcOp dc ", exp_with["text"])
+            self.assertIn("save VOUT I0.M1:D", exp_with["text"])
+
+            # 4. Export WITHOUT Maestro (pure schematic netlist)
+            exp_pure = export_remote_schematic(
+                "sim-node-a", None, str(sch_dir), include_maestro=False, runner=runner_with_fake_si
+            )
+            self.assertFalse(exp_pure["maestro_applied"])
+            self.assertIn("R0 (IN VOUT) resistor r=1k", exp_pure["text"])
+            self.assertNotIn("tran tran stop=50n", exp_pure["text"])
+            self.assertEqual(len(exp_pure["detected_maestro"]), 1)
 
 
 class TestCircuitGitEntryContractAndHttp(unittest.TestCase):

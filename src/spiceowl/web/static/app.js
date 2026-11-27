@@ -715,10 +715,12 @@ function publicDemoChrome() {
     connBtn.innerHTML = `<i class="conn-dot" aria-hidden="true"></i><span>${liveConn ? '本机已连接' : '连接本机'}</span>`;
   }
   if (!hosted) return;
-  $('#workspace-scope').textContent = liveConn ? 'Local Connector · Live' : 'Web Workbench';
-  $('.local-tag').textContent = liveConn ? 'LIVE' : 'WEB';
+  const wsLabel = $('.workspace-label');
+  if (wsLabel) wsLabel.classList.toggle('is-offline', !liveConn);
+  $('#workspace-scope').textContent = liveConn ? 'Local Connector · Live' : 'Local Connector · 未连接';
+  $('.local-tag').textContent = liveConn ? 'LIVE' : 'OFFLINE';
   $('.breadcrumb').textContent = 'SpiceOwl';
-  $('.page-footer span').textContent = liveConn ? 'Connected to local SpiceOwl Connector · Explicit SSH checks' : 'SpiceOwl Web · Browser preview until Connector paired';
+  $('.page-footer span').textContent = liveConn ? 'Connected to local SpiceOwl Connector · Explicit SSH checks' : 'SpiceOwl Web · Connect local Connector for live SSH & Codex';
   const metadata = window.SpiceOwlDemo?.metadata || {};
   const commit = /^[a-f0-9]{7,40}$/i.test(metadata.commit || '') ? metadata.commit.slice(0, 8) : 'unversioned';
   const date = typeof metadata.build_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(metadata.build_date) ? metadata.build_date.slice(0, 10) : 'date unavailable';
@@ -727,7 +729,7 @@ function publicDemoChrome() {
   if ($('#demo-storage-notice')) {
     $('#demo-storage-notice').textContent = (state.demo_storage || window.SpiceOwlDemo?.storage_mode) === 'memory'
       ? '仅存于内存 (memory; resets on refresh)'
-      : '连上本机连接器后自动切为真实工作区';
+      : '连接本机后自动启用真实 SSH 与 Codex Agent';
   }
   const connMuted = $('#connection-dialog .muted');
   if (connMuted && preview) connMuted.textContent = '在浏览器内安全演练不同 AI 故障场景。不会连接任何外部 API，也无需填写密钥。';
@@ -1052,6 +1054,11 @@ function syncDirectLivePoll() {
 }
 
 async function refreshDirect() {
+  if (isPublicDemo()) {
+    directState.loaded = true;
+    if ($('#direct-count')) $('#direct-count').textContent = '0';
+    return;
+  }
   if (directState.loading) {
     directState.pendingRefresh = true;
     return;
@@ -1164,6 +1171,24 @@ function recoveryOutcomeChip(outcome) {
 }
 
 function directRecoveryReportsPanel() {
+  const pub = isPublicDemo();
+  if (pub) {
+    return `
+      <section class="panel direct-panel direct-rec-panel" data-public-demo-info="direct-recovery">
+        <div class="section-title">
+          <h2>夜间值守与自动恢复</h2>
+          ${chip('未连接本机', '')}
+        </div>
+        <div class="empty" style="margin:8px 0 4px">
+          <h2>连接本机连接器以开启夜间值守与自动恢复</h2>
+          <p>连上本机后，排队超时、License 阻塞或 OOM 异常会自动记录并推送给你的 Codex Agent，在睡前授权边界内自动换机、扩内存并留痕归档，严禁修改原始网表与科学条件。</p>
+          <div class="direct-actions" style="justify-content:center">
+            <button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button>
+            <a class="button secondary" href="#quickstart">返回首页与连接 →</a>
+          </div>
+        </div>
+      </section>`;
+  }
   const rows = directState.recoveryReports || [];
   const detail = directState.recoveryDetail?.report || null;
   const markdown = directState.recoveryDetail?.markdown || '';
@@ -1813,6 +1838,89 @@ function buildSimAgentContextSummary() {
 }
 
 function directAgentSetupPanel(hostsList) {
+  const pub = isPublicDemo();
+  if (pub) {
+    const standbyAgentCard = `
+      <section class="sim-agent-card" data-sim-agent-mode="standby" data-public-demo-info="direct">
+        <div class="sim-card-head">
+          <h2>✧ Agent 仿真配置助手 <span class="chip">未连接本机</span></h2>
+          <div class="direct-actions">
+            <button type="button" class="button primary small" data-action="connector-open">连接本机</button>
+          </div>
+        </div>
+        <div class="sim-perm-slot">
+          <div class="sim-perm-bar is-preview" role="group" aria-label="权限模式预览（连接本机后可切换）">
+            <button type="button" class="sim-perm-btn" disabled>🔒 安全托管</button>
+            <button type="button" class="sim-perm-btn" disabled>⚡ 满血受控</button>
+            <button type="button" class="sim-perm-btn" disabled>🚀 满血全权</button>
+          </div>
+        </div>
+        <div class="sim-standby-empty">
+          <strong>连接本机连接器后即可使用 Agent 辅助仿真</strong>
+          <p>无需手填 API Key。连上本机连接器并授权 Codex 后，即可直接用自然语言查找远端电路库、修改参数、提交 Spectre/ngspice 仿真，并在完成后自动生成交互式 HTML 网页报告。</p>
+          <div class="direct-actions" style="justify-content:center">
+            <button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button>
+            <a class="button secondary" href="#quickstart">首页引导 →</a>
+          </div>
+        </div>
+        <div class="codex-composer sim-ai-composer">
+          <textarea rows="2" disabled placeholder="连接本机连接器后即可向 AI 提问或描述仿真需求…"></textarea>
+          <div>
+            <span class="subtle-note">连接本机后自动附带当前电路、Maestro 与实时服务器余量</span>
+            <div class="sim-ai-composer-actions">
+              <button class="button primary small" type="button" disabled>发送</button>
+            </div>
+          </div>
+        </div>
+      </section>`;
+
+    const standbyConfigCard = `
+      <section class="sim-config-card">
+        <div class="sim-card-head">
+          <h2>▷ 仿真配置与一键启动</h2>
+          <span class="subtle-note">未连接本机连接器</span>
+        </div>
+        <div class="sim-source-bar" data-standalone-library-entry="true">
+          <div class="sim-source-meta">
+            <div class="sim-source-title">
+              <strong>📚 选择电路项目或导入网表</strong>
+              <span class="chip">待连接</span>
+            </div>
+            <small>连接本机后可浏览 SSH 服务器上的 Virtuoso schematic / cds.lib 与网表，或导入本地项目文件夹。</small>
+          </div>
+          <div class="direct-actions" style="flex:none">
+            <button type="button" class="button secondary small" data-action="connector-open">连接本机后打开</button>
+          </div>
+        </div>
+        <div class="direct-grid">
+          <label class="direct-wide">目标服务器
+            <select disabled>
+              <option value="">请先连接本机连接器</option>
+            </select>
+          </label>
+          <label>仿真器
+            <select disabled>
+              <option value="spectre" selected>Cadence Spectre</option>
+              <option value="ngspice">ngspice</option>
+            </select>
+          </label>
+          <label>任务名称
+            <input value="${escape(directDraft.run_key)}" disabled placeholder="sim-first-01">
+          </label>
+        </div>
+        <div class="direct-file-row" style="margin-top:10px">
+          <label>网表内容（input.scs · 连接后可从 Library Manager 导入或由左侧 Agent 填入）</label>
+        </div>
+        <textarea class="direct-netlist" disabled placeholder="连接本机连接器后，可从远端 Virtuoso schematic / 电路库导入网表，或让左侧 Agent 自动读取并配置仿真…"></textarea>
+        <div class="direct-actions" style="margin-top:12px">
+          <button type="button" class="button primary" data-action="connector-open">🔌 连接本机以启动仿真</button>
+          <a class="button secondary" href="#local">安装本机连接器</a>
+        </div>
+      </section>`;
+
+    return `<div class="sim-setup-grid">${standbyAgentCard}${standbyConfigCard}</div>`;
+  }
+
   const bestHostId = pickMostIdleHostId();
   const bestLive = bestHostId ? hostLiveState.byId.get(bestHostId) : null;
   const bestRes = bestLive?.ok ? bestLive.resources : hostsList.find(h => h.host_id === bestHostId)?.last_resources?.resources;
@@ -2544,29 +2652,21 @@ function renderLibraryManagerDialog() {
 
 function directPage() {
   const pub = isPublicDemo();
-  const validTabs = pub ? ['waveforms', 'batches', 'runs', 'recovery'] : ['setup', 'recovery'];
-  const defaultTab = pub ? 'waveforms' : 'setup';
-  const tab = validTabs.includes(directState.activeTab) ? directState.activeTab : defaultTab;
+  const validTabs = ['setup', 'recovery'];
+  const tab = validTabs.includes(directState.activeTab) ? directState.activeTab : 'setup';
   let html = heading(
-    pub ? 'SIMULATION WORKBENCH · 仿真配置与波形工作台' : 'SIMULATION WORKBENCH · 仿真配置与执行工作台',
-    pub ? '一站式查看波形、管理 PVT/MC 批量与控制仿真任务' : 'Agent 辅助仿真配置与执行工作台',
-    pub
-      ? '当前为浏览器内置交互沙箱：大波形缩放、500 周期毛刺钻取、27-Corner PVT、40 样本 MC、单次任务四步流与 OOM 恢复报告全部可直接点击体验。'
-      : '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，并管理夜间值守与自动恢复；所有历史任务与控制统一归档在「仿真总览」。',
+    'SIMULATION WORKBENCH · AGENT 辅助仿真',
+    'Agent 辅助仿真工作台',
+    '让 Agent 结合实时服务器资源与 SPICE License 帮你配置并启动仿真，并管理夜间值守与自动恢复；所有历史任务与报告统一归档在「仿真总览」。',
   );
 
-  const tabs = pub ? [
-    ['waveforms', '📈 1. 大波形与周期切片', directState.wfIndex?.datasets?.length ? `${directState.wfIndex.datasets.length}` : ''],
-    ['batches', '▦ 2. PVT / MC 批量实验', String(directState.batches.length || 0)],
-    ['runs', '▷ 3. 单次仿真与控制', String(directState.runs.length || 0)],
-    ['recovery', '🛡 4. 异常自动恢复报告', String(directState.recoveryReports.length || 0)],
-  ] : [
-    ['setup', '✧ 1. Agent 辅助配置', ''],
-    ['recovery', '🛡 2. 夜间值守与恢复', String(directState.recoveryReports.length || 0)],
+  const tabs = [
+    ['setup', '✧ 1. Agent 辅助仿真', ''],
+    ['recovery', '🛡 2. 夜间值守与恢复', pub ? '' : String(directState.recoveryReports.length || 0)],
   ];
   html += `<div class="direct-tabs" role="tablist" aria-label="工作台子模块">${tabs.map(([key, label, badge]) => `<button type="button" role="tab" aria-selected="${tab === key ? 'true' : 'false'}" class="direct-tab ${tab === key ? 'active' : ''}" data-action="direct-tab" data-tab="${key}"><span>${label}</span>${badge !== '' ? `<span class="direct-tab-badge">${escape(badge)}</span>` : ''}</button>`).join('')}</div>`;
 
-  if (directState.error) html += `<p class="error-text" role="alert">${escape(directState.error)}</p>`;
+  if (directState.error && !pub) html += `<p class="error-text" role="alert">${escape(directState.error)}</p>`;
 
   const hostsList = state.hosts || [];
   if (!directDraft.host_id && hostsList.length) directDraft.host_id = pickMostIdleHostId() || hostsList[0].host_id;
@@ -3678,12 +3778,66 @@ spiceowl connector install</pre></details><p class="subtle-note">安装完成后
 }
 
 function publicHostPage() {
-  return heading('服务器池资源 · SERVER POOL & SIMULATIONS', '连接本机连接器后，实时查看所有已连接服务器的资源与运行中仿真', '当前为浏览器预览模式，不会读取本机 SSH；连上本机连接器并在首页接好服务器后，本页会自动展示每台服务器的 CPU、内存、磁盘占用与实时在跑的 Spectre / ngspice / Virtuoso 任务。') + `<section class="panel public-info" data-public-demo-info="hosts"><div class="panel-body"><span class="chip">需本机连接器 · SSH CONNECTOR</span><h2>第二页总览：资源占用 + 运行中仿真（示例示意）</h2><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>示例计算节点（只读示意）</th><th>CPU 占用 / 核数</th><th>内存已用 / 总计</th><th>当前运行中仿真</th><th>状态</th></tr></thead><tbody><tr><td><code>sim-node-a</code></td><td>18.4% · 64 核</td><td>32 / 128 GiB（可用 96 GiB）</td><td>0 个仿真 · 空闲可提交</td><td>${chip('空闲推荐', 'green')}</td></tr><tr><td><code>sim-node-b</code></td><td>76.2% · 96 核</td><td>48 / 128 GiB（可用 80 GiB）</td><td>3 个 spectre（共占 42.5 核）· 4 个 virtuoso</td><td>${chip('运行中', 'blue')}</td></tr><tr><td><code>sim-node-c</code></td><td>94.1% · 64 核</td><td>116 / 128 GiB（可用 12 GiB）</td><td>5 个 spectre（共占 58.0 核）</td><td>${chip('高负载', 'red')}</td></tr></tbody></table></div><p class="subtle-note">所有 SSH 密钥与服务器配置始终只留在本机，不读取网表路径或命令参数。点击下方按钮连接本机连接器后即可查看你的真实服务器池。</p><div class="public-info-links"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器查看真实服务器</button><a class="button secondary" href="#quickstart">返回首页与连接</a></div></div></section>`;
+  return heading(
+    'SERVER POOL & LIVE SIMULATIONS',
+    '服务器池资源与运行中仿真',
+    '实时展示已连接服务器的 CPU、内存、磁盘占用与 SPICE License 余量。',
+    `<div class="host-page-actions"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button><a class="button secondary" href="#quickstart">返回首页与连接</a></div>`,
+  ) + `
+    <div class="pool-kpi-grid">
+      <div class="pool-kpi-card">
+        <span>已连接服务器</span>
+        <strong>—</strong>
+        <small>需先连接本机连接器</small>
+      </div>
+      <div class="pool-kpi-card">
+        <span>集群总核数 / 平均 CPU</span>
+        <strong>—</strong>
+        <small>连接后实时并发采样</small>
+      </div>
+      <div class="pool-kpi-card">
+        <span>集群可用 / 总内存</span>
+        <strong>—</strong>
+        <small>连接后实时并发采样</small>
+      </div>
+      <div class="pool-kpi-card">
+        <span>当前运行中仿真</span>
+        <strong>—</strong>
+        <small>统计 Spectre / ngspice 等</small>
+      </div>
+    </div>
+    <div class="empty" data-public-demo-info="hosts">
+      <h2>尚未连接本机连接器</h2>
+      <p>连接本机 SpiceOwl Connector 并在「首页与连接」接入 SSH 服务器后，这里会自动展示实时 CPU、内存、SPICE License 与运行中仿真。所有 SSH 密钥与配置始终留在本机。</p>
+      <div class="direct-actions" style="justify-content:center">
+        <button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button>
+        <a class="button secondary" href="#quickstart">返回首页与连接 →</a>
+      </div>
+    </div>`;
 }
 
 function publicAgentPage() {
-  const firstRun = state.runs[0];
-  return heading('AI 助手与安全护栏评测 · AGENT & EVAL', '既能直接跑 10 项 AI 安全评测，也能一键连接本机 Codex Agent', '下方 10 项安全闭环评测可直接在浏览器内运行；点击「连接本机连接器」后即可在本网页直接接入您的本机 Codex Agent 并接收夜间值守异常。') + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body"><span class="chip green">可直接在浏览器运行 · INTERACTIVE BENCHMARK</span><h2>1. 一键在线运行 10 项 Agent 安全闭环评测</h2><p>验证 SpiceOwl 的确定性 Next-Action 编排器如何在 10 类高风险场景（缺项拒猜、断线防重发、有效测量但指标未达标、降采样拦截量测、MC 失败种子防丢弃等）下实现 <strong>100% 通过且 0 安全违规</strong>。</p><div class="direct-actions"><button type="button" class="button primary" data-action="public-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '正在运行 10 项评测…' : codexPanelState.evalReport ? '重新运行 10 项安全评测' : '🚀 立即在线运行 10 项 Agent 安全评测'}</button></div><div id="public-eval-output" style="margin-top:10px">${renderAgentEvalHtml(codexPanelState.evalReport)}</div><hr class="tut-divider"><h2>2. 接入您自己的 Agent 进行夜间值守</h2><div class="public-feature-grid"><article><h3>网页直连本机 Codex</h3><p>连上本机连接器后直接在本网页接入 Codex，排队超时或 OOM 发生时自动推送给您的 Agent 排查资源并按睡前策略重提。</p></article><article><h3>嵌入 CircuitGit（Embedded）</h3><p>复用 CircuitGit 当前的 Codex 会话，不额外创建第二个连接，保持统一上下文。</p></article><article><h3>只读诊断体验</h3><p>无需配置任何 API 密钥，现在就可以在「仿真总览」任意场景里点击「✧ Diagnose snapshot」体验只读证据诊断。</p></article></div><div class="public-info-links"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器接入 Codex</button><a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">打开 CircuitGit</a>${firstRun ? `<a class="button secondary" href="#run/${escape(firstRun.run_id)}">体验场景诊断</a>` : '<a class="button secondary" href="#overview">前往仿真总览</a>'}</div></div></section>`;
+  return heading(
+    'STANDALONE CODEX AGENT',
+    'Agent 辅助仿真已集成 AI 对话',
+    '请直接前往「Agent 辅助仿真」与右侧网表、服务器资源联动协作；连接本机连接器后即可零 API Key 接入本机 Codex。',
+  ) + `<section class="panel public-info" data-public-demo-info="agents"><div class="panel-body">
+    <span class="chip">需本机连接器 · LOCAL CONNECTOR</span>
+    <h2>连接本机连接器以启用 Codex Agent</h2>
+    <p>连上本机后，可在「Agent 辅助仿真」中直接用自然语言查找远端电路库、启动仿真并自动生成交互式 HTML 仿真报告；若与 CircuitGit 协同使用，也会自动复用同一会话。</p>
+    <div class="public-info-links">
+      <button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button>
+      <a class="button secondary" href="#direct">前往 Agent 辅助仿真 →</a>
+      <a class="button secondary" href="${circuitGitEntry}" target="_blank" rel="noopener noreferrer">打开 CircuitGit ↗</a>
+    </div>
+    <details class="host-form-details" style="margin-top:16px">
+      <summary>进阶：离线运行 10 项 Agent 安全闭环评测</summary>
+      <div style="margin-top:10px">
+        <button type="button" class="button secondary small" data-action="public-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '正在运行 10 项评测…' : codexPanelState.evalReport ? '重新运行 10 项安全评测' : '🚀 运行 10 项 Agent 安全评测'}</button>
+        <div id="public-eval-output" style="margin-top:10px">${renderAgentEvalHtml(codexPanelState.evalReport)}</div>
+      </div>
+    </details>
+  </div></section>`;
 }
 
 function toast(message) {
@@ -3736,21 +3890,21 @@ let connectorSessionChecked = false;
 function renderSidebarRecentRuns() {
   const el = $('#recent-runs');
   if (!el) return;
-  if (!isPublicDemo()) {
-    const recent = (directState.runs || []).slice(0, 6);
-    if (!recent.length) {
-      el.innerHTML = '';
-      return;
-    }
-    el.innerHTML = recent.map(run => {
-      const org = resolveRunOrganization(run);
-      const st = classifyDirectRunState(run);
-      const label = org.testbench && org.testbench !== run.run_id ? `${org.testbench} · ${run.run_id}` : run.run_id;
-      return `<a href="#overview" data-open-direct-run="${escape(run.run_id)}" title="${escape(org.project + ' / ' + label)}"><i class="dot dot-${escape(st.dot)}"></i><span class="run-title">${escape(label)}</span></a>`;
-    }).join('');
+  if (isPublicDemo()) {
+    el.innerHTML = '';
     return;
   }
-  el.innerHTML = (state.runs || []).slice(0, 5).map(run => `<a href="#run/${escape(run.run_id)}"><i class="dot"></i><span class="run-title">${escape(run.label)}</span></a>`).join('');
+  const recent = (directState.runs || []).slice(0, 6);
+  if (!recent.length) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = recent.map(run => {
+    const org = resolveRunOrganization(run);
+    const st = classifyDirectRunState(run);
+    const label = org.testbench && org.testbench !== run.run_id ? `${org.testbench} · ${run.run_id}` : run.run_id;
+    return `<a href="#overview" data-open-direct-run="${escape(run.run_id)}" title="${escape(org.project + ' / ' + label)}"><i class="dot dot-${escape(st.dot)}"></i><span class="run-title">${escape(label)}</span></a>`;
+  }).join('');
 }
 
 async function refresh() {
@@ -3772,12 +3926,12 @@ async function refresh() {
   state = await api('/api/state');
   publicDemoChrome();
   csrf = state.csrf_token;
-  $('#version').textContent = state.version;
-  $('#connection-count').textContent = state.connections.length;
-  $('#host-count').textContent = state.hosts.length;
-  if ($('#direct-count')) $('#direct-count').textContent = directState.loaded ? directState.runs.length : (isPublicDemo() ? '2' : '0');
-  $('#native-count').textContent = isStandaloneAgent() ? codexPanelState.threads.length : state.questions.length;
-  if (!isPublicDemo()) $('.prototype-badge').textContent = isStandaloneAgent() ? 'Standalone · Codex Agent' : 'CircuitGit channel · Engine';
+  if ($('#version')) $('#version').textContent = state.version;
+  if ($('#connection-count')) $('#connection-count').textContent = state.connections.length;
+  if ($('#host-count')) $('#host-count').textContent = isPublicDemo() ? '0' : state.hosts.length;
+  if ($('#direct-count')) $('#direct-count').textContent = isPublicDemo() ? '0' : (directState.loaded ? directState.runs.length : '0');
+  if ($('#native-count')) $('#native-count').textContent = isStandaloneAgent() ? codexPanelState.threads.length : state.questions.length;
+  if (!isPublicDemo() && $('.prototype-badge')) $('.prototype-badge').textContent = isStandaloneAgent() ? 'Standalone · Codex Agent' : 'CircuitGit channel · Engine';
   renderSidebarRecentRuns();
 }
 
@@ -4440,7 +4594,7 @@ function renderOverviewRunDetailPanel(run) {
   let aiHandoffHint = '';
   if (!hasAiReportMarkdown && !hasAiReportHtml && canGenerateAiReport) {
     if (run.completion_handoff?.pushed === true) {
-      aiHandoffHint = `<p class="ov-prepared-hint ov-ai-handoff-hint">✨ 已自动推送给 AI 正在撰写仿真报告（稍候自动显示，也可去「仿真配置与执行」对话查看）</p>`;
+      aiHandoffHint = `<p class="ov-prepared-hint ov-ai-handoff-hint">✨ 已自动推送给 AI 正在撰写仿真报告（稍候自动显示，也可去「Agent 辅助仿真」对话查看）</p>`;
     } else if (run.completion_handoff?.status === 'agent_disconnected') {
       aiHandoffHint = `<p class="subtle-note ov-ai-handoff-note">提示：连接本机 Codex 后点「✨ 让 AI 生成仿真报告」即可一键生成。</p>`;
     } else if (aiRep?.summary) {
@@ -4529,7 +4683,7 @@ function liveOverview() {
 
   const runs = directState.runs || [];
   if (!runs.length) {
-    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>还没有历史仿真记录</h1><p>前往「仿真配置与执行」导入远端 Virtuoso schematic / 网表，或让 AI 辅助配置并启动仿真；每次提交的仿真都会自动按项目与 TB 归档在这里。</p><div class="direct-actions" style="justify-content:center"><a class="button primary" href="#direct" data-action="overview-new-sim">前往仿真配置与执行 →</a></div></div>`;
+    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>还没有历史仿真记录</h1><p>前往「Agent 辅助仿真」导入远端 Virtuoso schematic / 网表，或让 AI 辅助配置并启动仿真；每次提交的仿真都会自动按项目与 TB 归档在这里。</p><div class="direct-actions" style="justify-content:center"><a class="button primary" href="#direct" data-action="overview-new-sim">前往 Agent 辅助仿真 →</a></div></div>`;
   }
 
   const tree = groupDirectRunsHierarchy(runs, overviewState);
@@ -4710,30 +4864,21 @@ function liveOverview() {
 
 function overview() {
   if (!isPublicDemo()) return liveOverview();
-  const total = state.runs.length;
-  const running = state.runs.filter(r => r.execution === 'running' || r.execution === 'queued').length;
-  const attention = state.runs.filter(r => r.observation !== 'current' || r.execution === 'failed' || r.specification_result === 'fail').length;
-  const done = state.runs.filter(r => r.execution === 'completed').length;
+  const actions = `<div class="split-actions"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button><a class="button secondary" href="#direct">＋ 新建仿真</a></div>`;
   const stats = [
-    ['仿真总数 · Total', total, '已归档的实验记录', '▦'],
-    ['最近观测活跃 · Active', running, '请结合观测新鲜度判断', '◷'],
-    ['需重点关注 · Attention', attention, '含崩溃 / 断连 / 指标超标', '◇'],
-    ['执行已完成 · Completed', done, '是否达标单独评估', '✓'],
+    ['历史仿真总数', '0', '按提交与批次自动归档', '▦'],
+    ['项目 / Testbench', '0 / 0', '按项目与 TB 分层管理', '▤'],
+    ['运行中 / 待启动', '0 / 0', '每 4 秒自动刷新状态', '◷'],
+    ['已完成 / 异常', '0 / 0', '支持单次 / TB / 项目网页报告', '✓'],
   ];
-  const overviewAction = isPublicDemo()
-    ? `<div class="split-actions"><a class="button primary" href="#quickstart">✦ 新手 5 步教程</a><a class="button secondary" href="#direct">▷ 体验大波形与 PVT</a></div>`
-    : `<div class="split-actions"><a class="button secondary" href="#quickstart">✦ 新手向导</a><button class="button primary" data-action="seed"><span aria-hidden="true">＋</span> 加载演示数据</button></div>`;
-  let html = heading('仿真总览 · WORKSPACE OVERVIEW', '一眼看清每次仿真的真实状态', '将「是否跑完」「观测是否过期」「测量是否有效」「指标是否达标」四维分开呈现，点击任意卡片即可回放与诊断。', overviewAction);
-  if (!total) {
-    return html + `<div class="empty"><img src="./owl.svg" alt=""><h1>从这里开始你的第一次仿真巡检</h1><p>无需账号、API 密钥或远程服务器，点击下方按钮立即载入 4 个典型演示场景，或打开 5 步网页新手教程。</p><div class="direct-actions" style="justify-content:center"><button class="button primary" data-action="seed">载入离线演示数据 <span aria-hidden="true">→</span></button><a class="button secondary" href="#quickstart">打开 5 步网页教程</a></div></div>`;
-  }
+  let html = heading(
+    'SIMULATION HISTORY · 仿真历史归档',
+    '仿真总览与历史记录',
+    '按项目（Library）与 Testbench（TB）统一管理所有历史仿真；同一次提交、同一批次或自动重试链的多个仿真自动归档到一起。',
+    actions,
+  );
   html += `<div class="stat-grid">${stats.map(([label, value, note, glyph]) => `<div class="stat-card"><div class="stat-label">${label}<span class="stat-glyph" aria-hidden="true">${glyph}</span></div><div class="stat-value">${value}</div><div class="stat-note">${note}</div></div>`).join('')}</div>`;
-  html += `<div class="watch-banner"><img src="./owl.svg" alt=""><div><h3>第一次使用 SpiceOwl？推荐按这 3 步快速体验</h3><p>① 点击下方任意仿真卡片体验单步回放与 AI 诊断；② 去「仿真 · 波形 · 批量」玩 500 周期毛刺钻取和 27-Corner PVT；③ 去「AI 助手与评测」一键跑 10 项安全测试。</p></div><a class="button primary small" href="#quickstart">开始 5 步教程 →</a></div>`;
-  html += `<div class="section-title"><h2>仿真运行列表 <span class="muted">/ ${total}</span></h2><span class="section-note">点击任意卡片进入详情回放与只读诊断</span></div><div class="run-grid">`;
-  html += state.runs.map(run => {
-    const pct = Number.isFinite(run.progress) ? Math.round(run.progress * 100) : null;
-    return `<a class="run-card" href="#run/${escape(run.run_id)}"><div class="card-top"><span class="chip">SYNTHETIC / TRANSIENT</span>${runStatus(run)}</div><h3>${escape(run.label)}</h3><div class="run-meta">${escape(run.attempt_id)}</div><div class="progress-row"><span>场景进度</span><span>${pct === null ? 'Unknown' : pct + '%'}</span></div><progress class="progress" max="100" value="${pct ?? 0}" aria-label="Scenario progress"></progress><div class="run-card-footer"><span>${run.events.length} 条证据事件 · 测量：${escape(title(run.measurement_validity))}</span><strong>查看详情与诊断 <span class="arrow" aria-hidden="true">↗</span></strong></div></a>`;
-  }).join('') + '</div>';
+  html += `<div class="empty" data-public-demo-info="overview"><img src="./owl.svg" alt=""><h1>连接本机连接器以查看历史仿真与网页报告</h1><p>连上本机后，所有提交的仿真都会按项目（Library）与 Testbench（TB）自动归档在这里，支持自动更新状态与可下载的交互式 HTML 仿真报告。</p><div class="direct-actions" style="justify-content:center"><button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button><a class="button secondary" href="#direct">前往 Agent 辅助仿真 →</a></div></div>`;
   return html;
 }
 
@@ -6012,7 +6157,12 @@ function renderCleanDirectTimeline(items) {
     if (item.type === 'user') {
       const cleanUser = stripSimAgentContextEnvelope(item.text || '');
       const uBadge = item.status === 'unconfirmed' ? ' · 发送中' : item.status === 'failed' ? ' · 未发送' : '';
-      chunks.push(`<article class="sim-ai-msg is-user"><strong class="sim-ai-role">你${uBadge}</strong><div class="sim-ai-md"><p>${escape(cleanUser)}</p></div></article>`);
+      const autoMatch = /^\[(SpiceOwl\s+(?:仿真完成自动汇报|综合仿真报告请求|夜间值守异常交接)[^\]]*)\]/.exec(cleanUser.trim());
+      if (autoMatch) {
+        chunks.push(`<details class="sim-ai-handoff-pill"><summary><span>🦉 ${escape(autoMatch[1])}${uBadge}</span><small>展开系统指令</small></summary><pre>${escape(cleanUser)}</pre></details>`);
+      } else {
+        chunks.push(`<article class="sim-ai-msg is-user"><strong class="sim-ai-role">你${uBadge}</strong><div class="sim-ai-md"><p>${escape(cleanUser)}</p></div></article>`);
+      }
       lastAssistantHadFooter = false;
     } else {
       const text = item.text || '';
@@ -6124,7 +6274,7 @@ function renderCodexActivity() {
         : `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>`)
     : '';
   if ($('#codex-notices')) {
-    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pendingBanner}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pendingBanner}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">已折叠更早的历史记录，仅展示近期对话。</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">历史会话（只读）· 请切换回当前会话或点「新对话」继续。</p>' : ''}`;
   }
   const evalOut = $('#codex-eval-output');
   if (evalOut) {
@@ -6225,7 +6375,7 @@ function render() {
   const page = location.hash.slice(1) || 'quickstart';
   if (!['agents', 'direct', 'overview'].includes(page) || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
-  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? (isPublicDemo() ? '仿真配置与波形' : '仿真配置与执行') : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
+  $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? 'Agent 辅助仿真' : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (page === 'overview' && !isPublicDemo()) {

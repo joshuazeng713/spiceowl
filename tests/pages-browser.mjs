@@ -159,7 +159,7 @@ async function ready(page, origin) {
 }
 
 async function remotePages(page, report, label) {
-  for (const section of ['hosts', 'agents', 'local']) {
+  for (const section of ['hosts', 'direct', 'overview', 'local']) {
     if (section === 'local') await page.locator('a[href="#local"]').first().click();
     else await page.locator(`[data-nav="${section}"]`).click();
     const note = page.locator(`[data-public-demo-info="${section}"]`);
@@ -171,9 +171,15 @@ async function remotePages(page, report, label) {
   }
 }
 
-async function interactiveTutorialAndWorkbench(page, report, label) {
-  // 0. Minimalist First Page (#quickstart): topbar connector pill, 2 Agent cards, 1 SSH card, 3 core shortcuts
+async function interactiveUnifiedWorkspace(page, report, label) {
+  // 0. Streamlined 4-item sidebar matches live connected workspace
+  assert.equal(await page.locator('aside.sidebar nav[aria-label="Main navigation"] a[data-nav]').count(), 4,
+    'Sidebar must expose only the 4 streamlined workspace pages');
+  assert.equal(await page.locator('[data-nav="agents"], [data-nav="connections"], [data-nav="live"]').count(), 0,
+    'Removed legacy sidebar links must stay absent');
   await page.locator('#connector-trigger').waitFor({state: 'visible'});
+
+  // 1. Page 1 (#quickstart): 2 Agent cards, 1 SSH card, Next Step card
   await page.locator('[data-nav="quickstart"]').click();
   await page.locator('.home-shell').waitFor();
   assert.equal(await page.locator('.home-agent-card').count(), 2, 'Expected 2 clean Agent connect cards');
@@ -182,79 +188,47 @@ async function interactiveTutorialAndWorkbench(page, report, label) {
   await page.locator('.home-next-card').waitFor({state: 'visible'});
   await noOverflow(page, report, `${label}-quickstart`);
   if (label === 'desktop') await snapshot(page, report, `${label}-home`);
-  // Click Next Step button directly into #hosts (Page 2: server pool resources), then open #direct waveforms
+
+  // 2. Page 2 (#hosts): same 4-KPI + standby card layout as connected server pool
   await page.locator('[data-action="home-next-hosts"]').click();
   await page.locator('[data-public-demo-info="hosts"]').waitFor();
+  assert.equal(await page.locator('.pool-kpi-card').count(), 4, 'Expected unified 4 KPI cards on #hosts');
+  await noOverflow(page, report, `${label}-hosts`);
+  if (label === 'desktop') await snapshot(page, report, `${label}-hosts`);
+
+  // 3. Page 3 (#direct): unified 2-tab Agent-assisted simulation layout (setup + recovery)
   await page.locator('[data-nav="direct"]').click();
-
-  // 2. #direct Tab 1: 500-cycle PSF Binary waveforms, Dual Cursors A/B, Lossless Analog Metrics, Multi-Corner Overlay & Cycle Slicer #317
   await page.locator('.direct-tabs').waitFor();
-  await page.locator('svg[data-wf-zoom-svg="1"]').waitFor({timeout: 15000});
-  await page.locator('svg[data-wf-trend-svg="1"]').waitFor({timeout: 15000});
-  assert.match(await page.locator('.wf-cycle-summary').innerText(), /#317/);
-  // Test Dual Cursors A/B mode & readout bar
-  await page.locator('[data-action="direct-wf-mode"][data-mode="cursor"]').click();
-  await page.locator('.wf-cursor-bar').waitFor();
-  const wfSvg = page.locator('svg[data-wf-zoom-svg="1"]');
-  await wfSvg.scrollIntoViewIfNeeded();
-  const box = await wfSvg.boundingBox();
-  if (box && box.width > 40) {
-    await wfSvg.click({position: {x: Math.round(box.width * 0.35), y: Math.round(box.height * 0.5)}});
-    await wfSvg.click({position: {x: Math.round(box.width * 0.65), y: Math.round(box.height * 0.5)}});
-    await page.locator('.wf-cur-pill.cur-delta').first().waitFor();
-  }
-  // Test 1-click Lossless Analog Metrics Card
-  await page.locator('[data-action="direct-wf-measure"]').click();
-  await page.locator('.wf-metrics-card').waitFor({timeout: 15000});
-  // Test 1-click Multi-Corner Overlay (tt / ss / ff)
-  await page.locator('[data-action="direct-wf-compare-corners"]').click();
-  await page.waitForFunction(() => (document.querySelector('#main')?.innerText || '').includes('SS · 1.08V'));
-  await noOverflow(page, report, `${label}-direct-waveforms`);
-  if (label === 'desktop') await snapshot(page, report, `${label}-direct-waveforms`);
+  assert.equal(await page.locator('.direct-tab').count(), 2, 'Expected unified 2 tabs on #direct');
+  await page.locator('.sim-setup-grid').waitFor();
+  await page.locator('.sim-agent-card').waitFor();
+  await page.locator('.sim-config-card').waitFor();
+  await noOverflow(page, report, `${label}-direct-setup`);
+  if (label === 'desktop') await snapshot(page, report, `${label}-direct-setup`);
 
-  // 3. #direct Tab 2: 27-Corner PVT & 40-Sample Monte Carlo batches
-  await page.locator('.direct-tab[data-tab="batches"]').click();
-  await page.locator('.batch-cell').first().waitFor({timeout: 15000});
-  assert.equal(await page.locator('.batch-cell').count(), 27);
-  await noOverflow(page, report, `${label}-direct-pvt`);
-  if (label === 'desktop') await snapshot(page, report, `${label}-direct-pvt`);
-  await page.locator('[data-action="direct-batch-demo"][data-kind="monte_carlo"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('.batch-cell').length === 40);
-  await noOverflow(page, report, `${label}-direct-mc`);
-
-  // 4. #direct Tab 3: Interactive single run lifecycle (Stage -> Launch -> Status -> Collect)
-  await page.locator('.direct-tab[data-tab="runs"]').click();
-  await page.locator('[data-action="direct-select"][data-id="demo-sandbox-rc"]').first().click();
-  await page.locator('[data-action="direct-stage"]:not([disabled])').click();
-  await page.locator('[data-action="direct-launch"]:not([disabled])').waitFor();
-  await page.locator('[data-action="direct-launch"]').click();
-  await page.locator('[data-action="direct-status"]:not([disabled])').click();
-  await page.locator('[data-action="direct-collect"]:not([disabled])').waitFor();
-  await page.locator('[data-action="direct-collect"]').click();
-  await page.locator('.direct-report-grid').waitFor();
-  await noOverflow(page, report, `${label}-direct-runs`);
-
-  // 5. #direct Tab 4: Overnight Watch & Agent Handoff timeline + Recovery audit reports
   await page.locator('.direct-tab[data-tab="recovery"]').click();
-  await page.locator('.direct-rec-integrity').first().waitFor();
-  await page.locator('#watch-sim-scenario').selectOption('confirmed_oom');
-  await page.locator('[data-action="direct-watch-simulate"]').click();
-  await page.waitForFunction(() => (document.querySelector('#main')?.innerText || '').includes('eda-bigmem-01'));
+  await page.locator('[data-public-demo-info="direct-recovery"]').waitFor();
   await noOverflow(page, report, `${label}-direct-recovery`);
 
-  // 6. #agents: 10-case online safety benchmark
-  await page.locator('[data-nav="agents"]').click();
-  await page.locator('[data-action="public-run-eval"]').click();
-  await page.waitForFunction(() => (document.querySelector('#public-eval-output')?.innerText || '').includes('100%'));
-  await noOverflow(page, report, `${label}-agents-eval`);
-  report.checks.push(`${label}: 5-step tutorial, 4-tab workbench (waveforms/PVT/MC/runs/recovery) and 10-case Agent eval`);
+  // 4. Page 4 (#overview): same 4-KPI + standby archive layout as connected overview
+  await page.locator('[data-nav="overview"]').click();
+  await page.locator('[data-public-demo-info="overview"]').waitFor();
+  assert.equal(await page.locator('.stat-card').count(), 4, 'Expected unified 4 KPI cards on #overview');
+  await noOverflow(page, report, `${label}-overview-unified`);
+  if (label === 'desktop') await snapshot(page, report, `${label}-overview-unified`);
+
+  report.checks.push(`${label}: unified 4-page workspace matches connected shell with zero overflow`);
 }
 
 async function exercise(page, origin, report, label) {
   const initial = await ready(page, origin);
-  await snapshot(page, report, `${label}-overview`);
-  report.checks.push(`${label}: overview under project subpath`);
-  await page.locator('[data-nav="connections"]').click();
+  await snapshot(page, report, `${label}-initial`);
+  report.checks.push(`${label}: initial home under project subpath`);
+  await remotePages(page, report, label);
+  await interactiveUnifiedWorkspace(page, report, label);
+
+  // Direct internal routes (#connections and #run/<id>) still preserve offline synthetic replay safety
+  await page.goto(origin + PREFIX + '#connections', {waitUntil: 'networkidle'});
   await page.locator('[data-action="add-connection"]').first().click();
   await page.locator('#connection-dialog').waitFor({state: 'visible'});
   const connectionLabel = `Synthetic ${label} test agent`;
@@ -267,15 +241,13 @@ async function exercise(page, origin, report, label) {
   await card.locator('[data-action="probe"]').click();
   await page.waitForFunction(async expected => (await window.SpiceOwlDemo.request('/api/state')).connections.length === expected,
     initial.connections.length + 1);
-  await snapshot(page, report, `${label}-connections`);
   const connected = await demoState(page);
   const connection = connected.connections.find(item => item.label === connectionLabel);
   assert.ok(connection);
-  report.checks.push(`${label}: connection creation and simulated metadata probe`);
+  report.checks.push(`${label}: synthetic connection creation and simulated metadata probe`);
 
-  await page.locator('[data-nav="overview"]').click();
   const first = initial.runs.find(run => run.run_id.includes('disconnect')) || initial.runs[0];
-  await page.locator(`.run-card[href="#run/${first.run_id}"]`).click();
+  await page.goto(origin + PREFIX + `#run/${first.run_id}`, {waitUntil: 'networkidle'});
   await page.locator('[data-action="advance"]').click();
   await page.waitForFunction(async ({id, count}) => (await window.SpiceOwlDemo.request('/api/state')).runs.find(r => r.run_id === id).events.length > count,
     {id: first.run_id, count: first.events.length});
@@ -288,7 +260,6 @@ async function exercise(page, origin, report, label) {
   assert.ok((await page.locator('#diagnosis-result .response-text').innerText()).length > 10);
   const diagnosed = await demoState(page);
   assert.ok(diagnosed.sessions.length > initial.sessions.length);
-  await snapshot(page, report, `${label}-diagnosis`);
   report.checks.push(`${label}: scenario advancement, preserved identity and scripted diagnosis`);
 
   await page.reload({waitUntil: 'networkidle'});
@@ -298,21 +269,16 @@ async function exercise(page, origin, report, label) {
   assert.equal(reloaded.runs.find(run => run.run_id === first.run_id).events.length, advanced.events.length, 'Refresh lost replay progress');
   assert.equal(reloaded.sessions.length, diagnosed.sessions.length, 'Refresh lost scripted session');
   report.checks.push(`${label}: same-tab refresh retains sessionStorage demo changes`);
-  await remotePages(page, report, label);
-  await interactiveTutorialAndWorkbench(page, report, label);
-  await page.locator('[data-action="demo-reset"]').first().click();
-  await page.waitForFunction(async expected => {
-    const state = await window.SpiceOwlDemo.request('/api/state');
-    return state.connections.length === expected.connections && state.sessions.length === expected.sessions;
-  }, {connections: initial.connections.length, sessions: initial.sessions.length});
+
+  await page.evaluate(() => window.SpiceOwlDemo.request('/api/demo/reset', {method: 'POST', body: {}}));
   const reset = await demoState(page);
+  assert.equal(reset.connections.length, initial.connections.length);
+  assert.equal(reset.sessions.length, initial.sessions.length);
   assert.equal(reset.runs.length, initial.runs.length);
   for (const run of initial.runs) assert.equal(reset.runs.find(r => r.run_id === run.run_id).events.length, run.events.length);
-  report.checks.push(`${label}: remote-only explanation pages and reset`);
 
   for (const run of reset.runs) {
-    await page.locator('[data-nav="overview"]').click();
-    await page.locator(`.run-card[href="#run/${run.run_id}"]`).click();
+    await page.goto(origin + PREFIX + `#run/${run.run_id}`, {waitUntil: 'networkidle'});
     let current = (await demoState(page)).runs.find(r => r.run_id === run.run_id);
     for (let step = 0; !current.finished && step < 12; step++) {
       const count = current.events.length;
@@ -338,9 +304,8 @@ async function storageFallback(page, origin, report) {
   const initial = await ready(page, origin);
   assert.match(await page.locator('#demo-storage-notice').innerText(), /reset.*refresh|memory/i,
     'Unavailable storage must show an explicit refresh-reset notice');
-  await page.locator('[data-nav="overview"]').click();
   const first = initial.runs[0];
-  await page.locator(`.run-card[href="#run/${first.run_id}"]`).click();
+  await page.goto(origin + PREFIX + `#run/${first.run_id}`, {waitUntil: 'networkidle'});
   await page.locator('[data-action="advance"]').click();
   await page.waitForFunction(async ({id, count}) => (await window.SpiceOwlDemo.request('/api/state')).runs.find(r => r.run_id === id).events.length > count,
     {id: first.run_id, count: first.events.length});

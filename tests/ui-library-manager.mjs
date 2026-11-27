@@ -360,7 +360,7 @@ ex.setDirectState(st => {
   st.recoveryReports = [];
 });
 const liveDirectHtml = ex.directPage();
-assert(liveDirectHtml.includes('1. Agent 辅助配置'), 'Live Page 3 keeps Agent setup tab');
+assert(liveDirectHtml.includes('1. Agent 辅助仿真'), 'Live Page 3 keeps Agent setup tab');
 assert(liveDirectHtml.includes('2. 夜间值守与恢复'), 'Live Page 3 keeps Night watch & recovery tab renumbered to 2');
 assert(!liveDirectHtml.includes('波形与周期切片'), 'Live Page 3 must remove useless waveforms tab');
 assert(!liveDirectHtml.includes('PVT / MC 批量'), 'Live Page 3 must remove useless PVT/MC batch tab');
@@ -368,6 +368,11 @@ assert(!liveDirectHtml.includes('任务列表与控制'), 'Live Page 3 must remo
 assert(!liveDirectHtml.includes('data-tab="waveforms"'), 'Live Page 3 must not expose waveforms tab button');
 assert(!liveDirectHtml.includes('data-tab="batches"'), 'Live Page 3 must not expose batches tab button');
 assert(!liveDirectHtml.includes('data-tab="runs"'), 'Live Page 3 must not expose runs tab button');
+const indexHtml = fs.readFileSync(new URL('../src/spiceowl/web/static/index.html', import.meta.url), 'utf8');
+assert(indexHtml.includes('Agent 辅助仿真'), 'Sidebar must label #direct as Agent 辅助仿真');
+assert(!indexHtml.includes('data-nav="agents"'), 'Sidebar must remove redundant AI 助手 nav item');
+assert(!indexHtml.includes('data-nav="connections"'), 'Sidebar must remove redundant 故障沙箱 nav item');
+assert(!indexHtml.includes('data-nav="live"'), 'Sidebar must remove redundant CircuitGit 网关 nav item');
 
 // 8. Page 4 (#overview) shows real Project -> TB -> Submission-Group history archive in live mode (zero demo buttons)
 ex.setDirectState(st => {

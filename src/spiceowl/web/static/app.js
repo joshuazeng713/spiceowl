@@ -58,10 +58,38 @@ let overviewState = {
   query: '',
   selectedRunId: '',
 };
+const REPORT_MODE_STORAGE_KEY = 'spiceowl.report.mode';
+function loadSavedReportMode() {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(REPORT_MODE_STORAGE_KEY);
+      if (saved === 'fast' || saved === 'deep') return saved;
+    }
+  } catch { /* ignore */ }
+  return 'fast';
+}
+function setReportMode(mode) {
+  const next = mode === 'deep' ? 'deep' : 'fast';
+  reportModalState.mode = next;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(REPORT_MODE_STORAGE_KEY, next);
+    }
+  } catch { /* ignore */ }
+  return next;
+}
+function formatReportModeBadge(mode) {
+  if (mode === 'fast') return '⚡ 快速报告';
+  if (mode === 'deep') return '🎨 深度创作';
+  if (mode === 'instant') return '📈 波形初稿';
+  return '';
+}
 let reportModalState = {
   open: false,
   loading: false,
   generating: false,
+  instantBusy: false,
+  mode: loadSavedReportMode(),
   scope: 'run',
   runId: '',
   project: '',
@@ -4370,11 +4398,16 @@ function renderReportViewerModalHtml() {
   const hasHtml = Boolean(rep?.html && String(rep.html).trim());
   const hasMarkdown = Boolean(rep?.markdown && String(rep.markdown).trim());
   const hasDownloadable = hasHtml || hasMarkdown;
-  const emptyCtaLabel = st.scope === 'project'
-    ? '✨ 让 AI 总结本项目全部仿真'
-    : st.scope === 'testbench'
-    ? '✨ 让 AI 总结本 TB 全部仿真'
-    : '✨ 立即让 AI 生成图文仿真报告';
+  const selectedMode = st.mode === 'deep' ? 'deep' : 'fast';
+  const modeBadge = formatReportModeBadge(rep?.mode);
+  const modeClass = ['fast', 'deep', 'instant'].includes(rep?.mode) ? ` mode-${rep.mode}` : '';
+  const promptPlaceholder = selectedMode === 'deep'
+    ? '自由创作模式：可描述定制排版、深度分析指标或特殊图表要求…'
+    : '快速模式（约 1 分钟）：可选补充想重点展示的波形或结论方向，留空直接生成…';
+  const submitLabel = selectedMode === 'deep' ? '🎨 自由创作/更新' : '⚡ 快速生成/更新';
+  const emptyCtaLabel = selectedMode === 'deep'
+    ? '🎨 让 AI 自由创作报告'
+    : '⚡ 让 AI 快速生成报告（约 1 分钟）';
 
   let bodyHtml = '';
   if (st.loading) {
@@ -4392,9 +4425,11 @@ function renderReportViewerModalHtml() {
     bodyHtml = `<div class="report-empty-state">
       <h3>还没有已归档的${escape(scopeLabel)}</h3>
       <p>${escape(emptyDesc)}</p>
-      <div class="direct-actions" style="justify-content:center">
-        <button type="button" class="button primary" data-action="report-generate" ${st.generating ? 'disabled' : ''}>${st.generating ? '正在推送给 AI…' : emptyCtaLabel}</button>
+      <div class="direct-actions report-empty-actions">
+        <button type="button" class="button primary" data-action="report-generate" ${st.generating || st.instantBusy ? 'disabled' : ''}>${st.generating ? '正在推送给 AI…' : emptyCtaLabel}</button>
+        <button type="button" class="button secondary" data-action="report-instant-draft" ${st.instantBusy || st.generating ? 'disabled' : ''}>${st.instantBusy ? '正在生成波形初稿…' : '📈 立即秒出波形初稿（无需等待 AI）'}</button>
       </div>
+      <p class="report-empty-mode-note">快速模式由 SpiceOwl 自动抓取波形并套用框架，AI 只写精炼总结（约 1 分钟）；自由创作模式由 AI 完全自主定制排版与深度分析。</p>
     </div>`;
   }
 
@@ -4404,20 +4439,30 @@ function renderReportViewerModalHtml() {
         <div class="report-modal-title">
           <span class="report-scope-badge">${escape(scopeLabel)}</span>
           <div class="report-modal-headings">
-            <h2>${escape(modalTitle)}</h2>
+            <div class="report-modal-title-row">
+              <h2>${escape(modalTitle)}</h2>
+              ${modeBadge ? `<span class="report-mode-chip${modeClass}">${escape(modeBadge)}</span>` : ''}
+            </div>
             <p class="report-modal-sub">${escape(subtitleParts.join(' · '))}</p>
           </div>
         </div>
         <div class="report-modal-actions">
           <button type="button" class="button secondary small" data-action="report-download-html" ${hasDownloadable ? '' : 'disabled'}>⬇ 下载 HTML</button>
           <button type="button" class="button secondary small" data-action="report-open-tab" ${hasDownloadable ? '' : 'disabled'}>↗ 新标签打开</button>
-          <button type="button" class="button secondary small" data-action="report-refresh" ${st.loading ? 'disabled' : ''}>↻ 刷新</button>
+          <button type="button" class="button secondary small" data-action="report-refresh" ${st.loading || st.instantBusy ? 'disabled' : ''}>↻ 刷新</button>
           <button type="button" class="button secondary small" data-action="report-close">关闭</button>
         </div>
       </header>
       <form id="report-agent-form" class="report-agent-bar">
-        <input id="report-custom-prompt" type="text" value="${escape(st.customPrompt)}" placeholder="让 AI 按你的要求修改/重做报告，例如：补充 VOP/VON 瞬态波形图、增加功耗与增益对比表…">
-        <button type="submit" class="button primary small" data-action="report-generate" ${st.generating ? 'disabled' : ''}>${st.generating ? '推送中…' : '✨ 让 AI 生成/更新网页报告'}</button>
+        <div class="report-mode-switch" role="group" aria-label="报告生成模式">
+          <button type="button" class="report-mode-btn ${selectedMode === 'fast' ? 'is-active' : ''}" data-action="report-mode-select" data-mode="fast" aria-pressed="${selectedMode === 'fast' ? 'true' : 'false'}" title="约 1 分钟：AI 写精炼总结 + 自动整理波形图，套用预设框架极速出稿">⚡ 快速报告</button>
+          <button type="button" class="report-mode-btn ${selectedMode === 'deep' ? 'is-active' : ''}" data-action="report-mode-select" data-mode="deep" aria-pressed="${selectedMode === 'deep' ? 'true' : 'false'}" title="深度定制：AI 自主设计排版、物理分析与定制图表">🎨 自由创作</button>
+        </div>
+        <input id="report-custom-prompt" type="text" value="${escape(st.customPrompt)}" placeholder="${escapeAttr(promptPlaceholder)}">
+        <div class="report-agent-bar-actions">
+          <button type="submit" class="button primary small" data-action="report-generate" ${st.generating || st.instantBusy ? 'disabled' : ''}>${st.generating ? '推送中…' : submitLabel}</button>
+          <button type="button" class="button secondary small" data-action="report-instant-draft" ${st.instantBusy || st.generating ? 'disabled' : ''} title="无需等待 AI，约 0.2 秒直接生成带真实 SVG 波形图的 HTML 初稿">${st.instantBusy ? '生成初稿中…' : '📈 秒出波形初稿'}</button>
+        </div>
       </form>
       ${st.error ? `<p class="error-text report-modal-error" role="alert">${escape(st.error)}</p>` : ''}
       <div class="report-modal-body">${bodyHtml}</div>
@@ -4443,6 +4488,7 @@ function closeReportModal() {
   reportModalState.open = false;
   reportModalState.loading = false;
   reportModalState.generating = false;
+  reportModalState.instantBusy = false;
   reportModalState.error = null;
   renderReportViewerModal();
 }
@@ -4506,7 +4552,8 @@ async function openReportModal({scope = 'run', runId = '', project = '', testben
 }
 
 async function triggerReportModalGenerate() {
-  if (isPublicDemo() || !reportModalState.open || reportModalState.generating) return;
+  if (isPublicDemo() || !reportModalState.open || reportModalState.generating || reportModalState.instantBusy) return;
+  const mode = reportModalState.mode === 'deep' ? 'deep' : 'fast';
   reportModalState.generating = true;
   reportModalState.error = null;
   renderReportViewerModal();
@@ -4514,7 +4561,7 @@ async function triggerReportModalGenerate() {
     const customPrompt = String(reportModalState.customPrompt || '').trim();
     let res = null;
     if (reportModalState.scope === 'run') {
-      const body = {force: true};
+      const body = {force: true, mode};
       if (customPrompt) body.custom_prompt = customPrompt;
       res = await api(`/api/direct/runs/${encodeURIComponent(reportModalState.runId)}/ai-report`, {
         method: 'POST',
@@ -4524,6 +4571,7 @@ async function triggerReportModalGenerate() {
       const body = {
         scope: reportModalState.scope,
         project: reportModalState.project,
+        mode,
       };
       if (reportModalState.scope === 'testbench') body.testbench = reportModalState.testbench;
       if (customPrompt) body.custom_prompt = customPrompt;
@@ -4534,7 +4582,9 @@ async function triggerReportModalGenerate() {
     }
     const pushed = Boolean(res?.handoff?.pushed ?? res?.pushed);
     if (pushed) {
-      toast('✨ 已推送给 AI，正在编辑生成交互式 HTML 仿真报告…');
+      toast(mode === 'deep'
+        ? '🎨 已按「自由创作」模式推送给 AI，正在深度编排网页报告…'
+        : '⚡ 已按「快速报告」模式推送给 AI（套用模板+自动绘波形，约 1 分钟内完成）…');
       if (isStandaloneAgent()) {
         if (codexPanelState.status?.connected) openCodexEvents();
         else void refreshCodexStatus();
@@ -4550,6 +4600,58 @@ async function triggerReportModalGenerate() {
     toast(reportModalState.error);
   } finally {
     reportModalState.generating = false;
+    renderReportViewerModal();
+  }
+}
+
+async function triggerReportInstantDraft() {
+  if (isPublicDemo() || !reportModalState.open || reportModalState.instantBusy || reportModalState.generating) return;
+  const targetScope = reportModalState.scope;
+  const targetRunId = reportModalState.runId;
+  const targetProject = reportModalState.project;
+  const targetTb = reportModalState.testbench;
+  reportModalState.instantBusy = true;
+  reportModalState.error = null;
+  renderReportViewerModal();
+  try {
+    let rep = null;
+    if (targetScope === 'run') {
+      const res = await api(`/api/direct/runs/${encodeURIComponent(targetRunId)}/ai-report/instant`, {
+        method: 'POST',
+        body: {},
+      });
+      rep = res?.ai_report || null;
+      if (rep && directState.detail?.run_id === targetRunId) directState.aiReport = rep;
+    } else {
+      const body = {scope: targetScope, project: targetProject};
+      if (targetScope === 'testbench') body.testbench = targetTb;
+      const res = await api('/api/direct/scope-reports/instant', {
+        method: 'POST',
+        body,
+      });
+      rep = res?.report || null;
+    }
+    const sameTarget = reportModalState.open
+      && reportModalState.scope === targetScope
+      && reportModalState.runId === targetRunId
+      && reportModalState.project === targetProject
+      && reportModalState.testbench === targetTb;
+    if (sameTarget) {
+      if (rep && (rep.html || rep.markdown || rep.summary)) {
+        reportModalState.report = rep;
+      } else {
+        await fetchReportModalData();
+      }
+    }
+    void refreshDirect();
+    toast('📈 已秒出带真实波形图的报告初稿！可继续让 AI 补充总结或直接下载。');
+  } catch (error) {
+    if (reportModalState.open) {
+      reportModalState.error = error.message || '生成波形报告初稿失败。';
+    }
+    toast(error.message || '生成波形报告初稿失败。');
+  } finally {
+    reportModalState.instantBusy = false;
     renderReportViewerModal();
   }
 }
@@ -4601,11 +4703,14 @@ function renderOverviewRunDetailPanel(run) {
       aiHandoffHint = `<p class="ov-prepared-hint ov-ai-handoff-hint">✨ AI 仿真报告摘要：${escape(aiRep.summary)}</p>`;
     }
   }
+  const aiRepModeBadge = formatReportModeBadge(aiRep?.mode);
+  const aiRepModeClass = ['fast', 'deep', 'instant'].includes(aiRep?.mode) ? ` mode-${aiRep.mode}` : '';
   const aiReportCard = (hasAiReportMarkdown || hasAiReportHtml)
     ? `<section class="ov-ai-report-card">
         <div class="ov-ai-report-head">
           <div class="ov-ai-report-title">
             <strong>✨ AI 仿真报告${aiRep?.title ? ` · ${escape(aiRep.title)}` : ''}</strong>
+            ${aiRepModeBadge ? `<span class="report-mode-chip${aiRepModeClass}">${escape(aiRepModeBadge)}</span>` : ''}
             ${aiRep?.generated_at ? `<span class="ov-ai-report-time">${escape(formatHistoryTime(aiRep.generated_at))}</span>` : ''}
           </div>
           <div class="ov-row-actions">
@@ -4639,6 +4744,7 @@ function renderOverviewRunDetailPanel(run) {
       ${canCollect ? `<button type="button" class="button primary small" data-action="direct-collect" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>📥 收集报告与结果 (Collect)</button>` : ''}
       <button type="button" class="button secondary small ov-report-btn ${hasAnyAiReport ? 'has-report' : ''}" data-action="overview-open-run-report" data-id="${escape(run.run_id)}">${hasAnyAiReport ? '<span class="ov-report-dot" aria-hidden="true"></span>' : ''}📊 查看仿真报告</button>
       ${!hasAiReportMarkdown && !hasAiReportHtml && canGenerateAiReport ? `<button type="button" class="button ${canCollect ? 'secondary' : 'primary'} small" data-action="overview-generate-ai-report" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>✨ 让 AI 生成仿真报告</button>` : ''}
+      ${!hasAiReportMarkdown && !hasAiReportHtml && canGenerateAiReport ? `<button type="button" class="button secondary small" data-action="overview-instant-report" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''} title="无需等待 AI，立即生成带真实波形图的 HTML 初稿">📈 秒出波形初稿</button>` : ''}
       <button type="button" class="button secondary small" data-action="overview-handoff-agent" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>✧ 载入工作台 / 交给 Agent</button>
       <button type="button" class="button secondary small ov-btn-danger" data-action="overview-delete-run" data-id="${escape(run.run_id)}" ${canDelete ? '' : 'disabled'} title="${canDelete ? '删除此本地归档记录' : '运行中或待对账任务请先取消/对账后再删除'}">🗑 删除记录</button>
     </div>
@@ -6705,15 +6811,18 @@ document.addEventListener('click', async event => {
     }
     if (action === 'overview-generate-ai-report') {
       if (!id || directState.busy || isPublicDemo()) return;
+      const mode = reportModalState.mode === 'deep' ? 'deep' : 'fast';
       directState.busy = true;
       render();
       try {
         const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/ai-report`, {
           method: 'POST',
-          body: {force: true},
+          body: {force: true, mode},
         });
         if (res?.handoff?.pushed) {
-          toast('✨ 已推送给 AI，正在自动生成并存档仿真报告…');
+          toast(mode === 'deep'
+            ? '🎨 已按「自由创作」模式推送给 AI，正在深度编排网页报告…'
+            : '⚡ 已按「快速报告」模式推送给 AI（套用模板+自动绘波形，约 1 分钟内完成）…');
           if (isStandaloneAgent()) {
             if (codexPanelState.status?.connected) openCodexEvents();
             else void refreshCodexStatus();
@@ -6723,6 +6832,42 @@ document.addEventListener('click', async event => {
         }
       } catch (error) {
         toast(error.message);
+      } finally {
+        directState.busy = false;
+        await refreshDirect();
+      }
+      return;
+    }
+    if (action === 'overview-instant-report') {
+      if (!id || directState.busy || isPublicDemo()) return;
+      directState.busy = true;
+      render();
+      try {
+        const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/ai-report/instant`, {
+          method: 'POST',
+          body: {},
+        });
+        const rep = res?.ai_report || null;
+        if (rep && (rep.html || rep.markdown || rep.summary)) {
+          const run = res?.run || (directState.runs || []).find(r => r.run_id === id) || (directState.detail?.run_id === id ? directState.detail : null);
+          const org = run ? resolveRunOrganization(run) : {project: '', testbench: ''};
+          if (directState.detail?.run_id === id) directState.aiReport = rep;
+          reportModalState.open = true;
+          reportModalState.loading = false;
+          reportModalState.generating = false;
+          reportModalState.instantBusy = false;
+          reportModalState.scope = 'run';
+          reportModalState.runId = id;
+          reportModalState.project = org.project || '';
+          reportModalState.testbench = org.testbench || '';
+          reportModalState.report = rep;
+          reportModalState.customPrompt = '';
+          reportModalState.error = null;
+          renderReportViewerModal();
+        }
+        toast('📈 已秒出带真实波形图的报告初稿！可继续让 AI 补充总结或直接下载。');
+      } catch (error) {
+        toast(error.message || '生成波形报告初稿失败。');
       } finally {
         directState.busy = false;
         await refreshDirect();
@@ -7878,6 +8023,18 @@ document.addEventListener('click', event => {
   }
   if (action === 'report-refresh') {
     void fetchReportModalData();
+    return;
+  }
+  if (action === 'report-mode-select') {
+    event.preventDefault();
+    const nextMode = btn.dataset.mode === 'deep' ? 'deep' : 'fast';
+    setReportMode(nextMode);
+    renderReportViewerModal();
+    return;
+  }
+  if (action === 'report-instant-draft') {
+    event.preventDefault();
+    void triggerReportInstantDraft();
     return;
   }
   if (action === 'report-generate') {

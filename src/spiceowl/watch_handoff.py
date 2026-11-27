@@ -733,8 +733,12 @@ def build_completion_report_prompt(
     *,
     html_path: str | None = None,
     custom_prompt: str | None = None,
+    mode: str = "fast",
 ) -> str:
     """Build a concise, secret-free Chinese handoff prompt when a direct simulation completes."""
+    report_mode = "deep" if str(mode or "").strip().lower() == "deep" else "fast"
+    mode_badge = "[🎨 深度报告模式]" if report_mode == "deep" else "[⚡ 快速报告模式]"
+
     rec = run_record if isinstance(run_record, dict) else {}
     run_id = str(rec.get("run_id") or "unknown")
     org = rec.get("organization") if isinstance(rec.get("organization"), dict) else {}
@@ -761,7 +765,7 @@ def build_completion_report_prompt(
         mem_str = "-"
 
     lines = [
-        f"[SpiceOwl 仿真完成自动汇报 · {run_id}]",
+        f"[SpiceOwl 仿真完成自动汇报 · {run_id}] {mode_badge}",
         f"任务 ID: {run_id} | 项目: {project} | Library: {library} | Testbench: {testbench} | View: {view}",
         f"执行环境: host={host_id} | backend={backend} | simulator={simulator} | 资源配额: CPU={cpu_str}, 内存={mem_str}",
         f"终态信息: state={state} | raw_remote_state={raw_remote_state} | simulator_exit_code={exit_str}",
@@ -863,20 +867,31 @@ def build_completion_report_prompt(
         if len(datasets) > 4:
             lines.append(f"  - ... 其余 {len(datasets) - 4} 个数据集可通过 waveform_index 查询")
 
-    if isinstance(html_path, str) and html_path.strip():
+    if report_mode == "deep" and isinstance(html_path, str) and html_path.strip():
         lines.append(f"HTML 报告存档路径 (html_path): {html_path.strip()}")
 
     if isinstance(custom_prompt, str) and custom_prompt.strip():
         lines.append(f"用户附加分析要求: {custom_prompt.strip()}")
 
     run_id_json = json.dumps(run_id, ensure_ascii=False)
-    lines.extend([
-        "",
-        "请遵循 `spiceowl-sim-report` Skill 规范，按以下步骤核实仿真结果并生成图文并茂的自包含中文 HTML 仿真报告：",
-        "1. 调用 `spiceowl_direct_read`（`report`、`waveform_index`、`waveform_measure`、`waveform_query`、`log_tail` 等）核实完整仿真结果与关键信号实测指标（严禁编造未观测数据）。",
-        "2. 生成一份**自包含、视觉精美的交互式 HTML 仿真报告**（`<!doctype html>...`，包含：KPI 核心指标卡片、结构化测量与收敛/告警表格、基于 `results.raw` 实测数据生成的内联 SVG 或 base64 PNG 波形图、异常或瓶颈诊断、下一步设计或仿真建议；请勿只输出干巴巴的纯 Markdown 文本！）。",
-        f'3. 务必调用 `spiceowl_direct_control(operation="save_ai_report", arguments={{"run_id": {run_id_json}, "title": "...", "summary": "...", "html": "<!doctype html>...", "markdown": "..."}})` 将完整 HTML 报告（及简明 Markdown 摘要）永久存档到「仿真总览」的任务详情卡片中；若具备本地执行权限，也可用 Python/matplotlib 从 `results.raw` 绘制高清图表并生成离线 HTML 写入上述 `html_path` 后再调用 `save_ai_report` 注册元数据。',
-    ])
+    if report_mode == "fast":
+        lines.extend([
+            "",
+            "【⚡ 快速报告模式 · 目标：1 分钟内极速出稿（最多 2~4 步工具调用），遵循 `spiceowl-sim-report-fast` 规范】",
+            "1. **严禁手写 HTML/CSS/JS，严禁启动浏览器截图自检，严禁无意义多次复算！**",
+            "2. 如需确认 1~3 个核心数字（如增益/带宽/功耗/建立时间），仅做一次轻量 `spiceowl_direct_read`（`report` / `waveform_measure` / `waveform_query`），严禁编造未观测数据。",
+            f'3. 直接调用零审批工具 `spiceowl_direct_control(operation="render_fast_report", arguments={{"run_id": {run_id_json}, "title": "...", "summary": "<2~4 句简洁中文结论>", "highlights": ["..."], "kpis": [{{"label": "...", "value": "...", "status": "pass|warn|fail|info"}}], "plots": [{{"title": "...", "signals": ["..."]}}]}})` 一键生成并落盘。',
+            "4. SpiceOwl 后端会自动抓取真实 `results.raw` 波形（支持 `A - B`、`(A + B)/2` 表达式）、绘制高清交互式 SVG 图表并套用预设框架落盘——你只需写一段简洁清晰的中文总结并挑选 2~3 组关键信号即可（不传 `plots` 也会自动挑图）。",
+        ])
+    else:
+        lines.extend([
+            "",
+            "【🎨 深度报告模式】请遵循 `spiceowl-sim-report` Skill 规范，按以下步骤核实仿真结果并生成图文并茂的自包含中文 HTML 仿真报告：",
+            "1. 调用 `spiceowl_direct_read`（`report`、`waveform_index`、`waveform_measure`、`waveform_query`、`log_tail` 等）核实完整仿真结果与关键信号实测指标（严禁编造未观测数据）。",
+            "2. 生成一份**自包含、零外部 CDN、视觉精美的交互式 HTML 仿真报告**（`<!doctype html>...`，包含：KPI 核心指标卡片、结构化测量与收敛/告警表格、基于 `results.raw` 实测数据生成的内联 SVG 或 base64 PNG 波形图、异常或瓶颈诊断、下一步设计或仿真建议）。如使用本地 Python 脚本，可直接复用 `from spiceowl.report_builder import render_waveform_svg, wrap_editorial_html` 加速绘图与排版，并将成品 HTML 写入上述 `html_path`。",
+            "3. **严禁启动无头浏览器（Playwright/Chromium/Selenium 等）对 HTML 进行截图自检或循环微调样式**，确保 HTML 自包含无语法错误后直接存档即可。",
+            f'4. 务必调用零审批工具 `spiceowl_direct_control(operation="save_ai_report", arguments={{"run_id": {run_id_json}, "title": "...", "summary": "...", "mode": "deep", "html": "<!doctype html>...", "markdown": "..."}})` 将完整 HTML 报告（及简明 Markdown 摘要）永久存档到「仿真总览」的任务详情卡片中。',
+        ])
     return "\n".join(lines)
 
 
@@ -888,8 +903,12 @@ def build_scope_report_prompt(
     runs: list[dict],
     custom_prompt: str | None = None,
     html_path: str | None = None,
+    mode: str = "fast",
 ) -> str:
     """Build a structured Chinese prompt to synthesize a Project-level or Testbench-level HTML report."""
+    report_mode = "deep" if str(mode or "").strip().lower() == "deep" else "fast"
+    mode_badge = "[🎨 深度报告模式]" if report_mode == "deep" else "[⚡ 快速报告模式]"
+
     scope_clean = "testbench" if scope == "testbench" else "project"
     proj_label = str(project or "未归类项目")
     tb_label = str(testbench) if (scope_clean == "testbench" and testbench) else None
@@ -897,14 +916,14 @@ def build_scope_report_prompt(
     run_ids = [str(r["run_id"]) for r in run_list if r.get("run_id")]
 
     if scope_clean == "testbench":
-        header = f"[SpiceOwl Testbench 综合仿真报告 · {proj_label} / {tb_label or '-'}]"
+        header = f"[SpiceOwl 综合仿真报告请求 · {proj_label} / {tb_label or '-'}] {mode_badge}"
         scope_desc = f"报告范围: Testbench 级（项目={proj_label} | Testbench={tb_label or '-'} | 关联任务数={len(run_list)}）"
     else:
         tb_names = sorted({
             str((r.get("organization") or {}).get("testbench") or r.get("cell_name") or "-")
             for r in run_list
         })
-        header = f"[SpiceOwl 项目级综合仿真报告 · {proj_label}]"
+        header = f"[SpiceOwl 综合仿真报告请求 · {proj_label}] {mode_badge}"
         scope_desc = (
             f"报告范围: Project 级（项目={proj_label} | 涵盖 Testbench 数={len(tb_names)} | 关联任务数={len(run_list)}）"
         )
@@ -946,7 +965,7 @@ def build_scope_report_prompt(
     else:
         lines.append("当前该范围内暂无已记录的仿真任务，请先核实任务归属后给出说明。")
 
-    if isinstance(html_path, str) and html_path.strip():
+    if report_mode == "deep" and isinstance(html_path, str) and html_path.strip():
         lines.append(f"HTML 综合报告存档路径 (html_path): {html_path.strip()}")
 
     if isinstance(custom_prompt, str) and custom_prompt.strip():
@@ -957,13 +976,24 @@ def build_scope_report_prompt(
     tb_json = json.dumps(tb_label, ensure_ascii=False)
     rids_preview = json.dumps(run_ids[:32], ensure_ascii=False)
 
-    lines.extend([
-        "",
-        "请遵循 `spiceowl-sim-report` Skill 规范，综合上述全部相关任务，生成一份图文并茂的中文 **HTML 综合仿真报告**：",
-        "1. 调用 `spiceowl_direct_read`（`report`、`ai_report`、`waveform_index`、`waveform_measure`、`log_tail` 等）核实各任务的真实仿真数据、收敛状态与测量指标（严禁编造未观测数据）。",
-        "2. 编制一份**自包含、视觉精美的交互式 HTML 综合仿真报告**（`<!doctype html>...`，包含：总览 KPI 卡片、多任务/多参数/多 Corner 横向对比表格、内联 SVG 或 base64 PNG 趋势/对比图表、跨任务瓶颈与一致性结论、明确的下一步设计/验证建议）。",
-        f'3. 务必调用 `spiceowl_direct_control(operation="save_scope_report", arguments={{"scope": {scope_json}, "project": {proj_json}, "testbench": {tb_json}, "title": "...", "summary": "...", "html": "<!doctype html>...", "markdown": "...", "run_ids": {rids_preview}}})` 将综合报告永久存档到「仿真总览」对应范围的报告卡片中（若具备本地执行权限，亦可先用 Python/matplotlib 生成含真实对比图表的完整 HTML 写入上述 `html_path` 再调用 `save_scope_report` 注册）。',
-    ])
+    if report_mode == "fast":
+        lines.extend([
+            "",
+            "【⚡ 快速报告模式 · 目标：1 分钟内极速出稿（最多 2~4 步工具调用），遵循 `spiceowl-sim-report-fast` 规范】",
+            "1. **严禁手写 HTML/CSS/JS，严禁启动浏览器截图自检，严禁无意义多次复算！**",
+            "2. 如需核实 1~3 项跨任务关键指标，仅对代表性任务做轻量只读查询（`report` / `ai_report` / `waveform_measure`），严禁编造未观测数据。",
+            f'3. 直接调用零审批工具 `spiceowl_direct_control(operation="render_fast_scope_report", arguments={{"scope": {scope_json}, "project": {proj_json}, "testbench": {tb_json}, "run_ids": {rids_preview}, "title": "...", "summary": "<2~4 句简洁中文综合结论>", "highlights": ["..."], "kpis": [...], "comparison_rows": [...], "plots": [{{"run_id": "...", "title": "...", "signals": ["..."]}}]}})` 一键生成并归档。',
+            "4. SpiceOwl 后端会自动汇总全部任务状态、构建横向对比表、抓取代表性任务的真实波形并绘制高清交互式 SVG 图表后套用预设框架落盘（不传 `plots` 也会自动挑图）。",
+        ])
+    else:
+        lines.extend([
+            "",
+            "【🎨 深度报告模式】请遵循 `spiceowl-sim-report` Skill 规范，综合上述全部相关任务，生成一份图文并茂的中文 **HTML 综合仿真报告**：",
+            "1. 调用 `spiceowl_direct_read`（`report`、`ai_report`、`waveform_index`、`waveform_measure`、`log_tail` 等）核实各任务的真实仿真数据、收敛状态与测量指标（严禁编造未观测数据）。",
+            "2. 编制一份**自包含、零外部 CDN、视觉精美的交互式 HTML 综合仿真报告**（`<!doctype html>...`，包含：总览 KPI 卡片、多任务/多参数/多 Corner 横向对比表格、内联 SVG 或 base64 PNG 趋势/对比图表、跨任务瓶颈与一致性结论、明确的下一步设计/验证建议）。如使用本地 Python 脚本，可直接复用 `from spiceowl.report_builder import render_waveform_svg, wrap_editorial_html` 加速绘图与排版，并将成品 HTML 写入上述 `html_path`。",
+            "3. **严禁启动无头浏览器（Playwright/Chromium/Selenium 等）对 HTML 进行截图自检或循环微调样式**，确保 HTML 自包含无语法错误后直接存档即可。",
+            f'4. 务必调用零审批工具 `spiceowl_direct_control(operation="save_scope_report", arguments={{"scope": {scope_json}, "project": {proj_json}, "testbench": {tb_json}, "title": "...", "summary": "...", "mode": "deep", "html": "<!doctype html>...", "markdown": "...", "run_ids": {rids_preview}}})` 将综合报告永久存档到「仿真总览」对应范围的报告卡片中。',
+        ])
     return "\n".join(lines)
 
 

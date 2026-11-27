@@ -352,6 +352,32 @@ def _validate_report_content(
     return clean_html, clean_markdown, clean_title, clean_summary, clean_source
 
 
+def _clean_report_mode(mode: str | None, *, err_code: str = "invalid_ai_report") -> str | None:
+    if mode is None:
+        return None
+    if not isinstance(mode, str):
+        raise DomainError("mode must be a string or null.", err_code)
+    cleaned = mode.strip().lower()
+    if not cleaned:
+        return None
+    if len(cleaned) > 32 or any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        raise DomainError("mode must be a printable string up to 32 characters.", err_code)
+    return cleaned
+
+
+def _normalize_push_report_mode(mode: str | None, *, err_code: str = "invalid_ai_report") -> str:
+    if mode is None:
+        return "fast"
+    if not isinstance(mode, str):
+        raise DomainError("mode must be 'fast' or 'deep'.", err_code)
+    cleaned = mode.strip().lower()
+    if not cleaned:
+        return "fast"
+    if cleaned not in ("fast", "deep"):
+        raise DomainError("mode must be 'fast' or 'deep'.", err_code)
+    return cleaned
+
+
 def scope_key(scope: str, project: str, testbench: str | None = None) -> str:
     """Compute a deterministic filesystem-safe key for a project/testbench scope report."""
     if scope not in ("project", "testbench"):
@@ -536,6 +562,7 @@ class DirectExecutionManager:
                             "generated_at": existing_ai.get("generated_at") or mtime,
                             "updated_at": existing_ai.get("updated_at") or mtime,
                             "source": existing_ai.get("source") or "agent",
+                            "mode": existing_ai.get("mode"),
                         }
             except DomainError:
                 pass
@@ -1181,9 +1208,11 @@ class DirectExecutionManager:
         title: str | None = None,
         summary: str | None = None,
         source: str = "agent",
+        mode: str | None = None,
     ) -> dict:
         """Persist an Agent-generated HTML and/or Markdown simulation report alongside a run record."""
         run_id = _validate_run_id(run_id)
+        clean_mode = _clean_report_mode(mode, err_code="invalid_ai_report")
         clean_html, clean_markdown, clean_title, clean_summary, clean_source = _validate_report_content(
             html=html,
             markdown=markdown,
@@ -1210,6 +1239,7 @@ class DirectExecutionManager:
                     prev_meta = {}
             now = utcnow()
             generated_at = prev_meta.get("generated_at") or now
+            resolved_mode = clean_mode if clean_mode is not None else prev_meta.get("mode")
 
             if clean_html is not None:
                 _atomic_write_text(html_file, clean_html)
@@ -1231,6 +1261,7 @@ class DirectExecutionManager:
                 "generated_at": generated_at,
                 "updated_at": now,
                 "source": clean_source,
+                "mode": resolved_mode,
             }
             _atomic_write(meta_file, ai_report_meta)
             record["ai_report"] = {
@@ -1242,10 +1273,53 @@ class DirectExecutionManager:
                 "generated_at": ai_report_meta["generated_at"],
                 "updated_at": ai_report_meta["updated_at"],
                 "source": ai_report_meta["source"],
+                "mode": resolved_mode,
             }
             record["updated_at"] = now
             _atomic_write(run_dir / "run.json", record)
         return deepcopy(ai_report_meta)
+
+    def render_fast_report(
+        self,
+        run_id: str,
+        *,
+        title: str | None = None,
+        summary: str | None = None,
+        highlights: list[str] | None = None,
+        kpis: list[dict] | None = None,
+        plots: list[dict] | None = None,
+        notes: str | None = None,
+        images: list[dict] | None = None,
+        source: str = "agent_fast",
+        mode: str = "fast",
+    ) -> dict:
+        """Build a deterministic self-contained HTML+SVG run report and persist it."""
+        from spiceowl.report_builder import build_fast_run_report
+
+        built = build_fast_run_report(
+            self,
+            run_id,
+            title=title,
+            summary=summary,
+            highlights=highlights,
+            kpis=kpis,
+            plots=plots,
+            notes=notes,
+            images=images,
+            source=source,
+            mode=mode,
+        )
+        saved = self.save_ai_report(
+            run_id,
+            title=built["title"],
+            summary=built["summary"],
+            html=built["html"],
+            markdown=built["markdown"],
+            source=built["source"],
+            mode=built["mode"],
+        )
+        saved["plot_count"] = built["plot_count"]
+        return saved
 
     def read_ai_report(self, run_id: str) -> dict | None:
         """Read a persisted AI simulation report (merging direct disk edits to ai_report.html/md)."""
@@ -1292,6 +1366,7 @@ class DirectExecutionManager:
             "generated_at": generated_at,
             "updated_at": updated_at,
             "source": meta.get("source") or "agent",
+            "mode": meta.get("mode"),
         }
 
     # --- Project-level & Testbench-level Scope Summary Reports ---
@@ -1335,9 +1410,11 @@ class DirectExecutionManager:
         markdown: str | None = None,
         run_ids: list[str] | None = None,
         source: str = "agent",
+        mode: str | None = None,
     ) -> dict:
         """Persist a Project-level or Testbench-level HTML/Markdown summary report."""
         clean_scope, clean_proj, clean_tb, key = self._resolve_scope_identity(scope, project, testbench)
+        clean_mode = _clean_report_mode(mode, err_code="invalid_scope_report")
         fallback_title = (
             f"{clean_proj} / {clean_tb} 综合仿真报告"
             if clean_scope == "testbench"
@@ -1383,6 +1460,7 @@ class DirectExecutionManager:
                     prev_meta = {}
             now = utcnow()
             generated_at = prev_meta.get("generated_at") or now
+            resolved_mode = clean_mode if clean_mode is not None else prev_meta.get("mode")
 
             if clean_html is not None:
                 _atomic_write_text(html_file, clean_html)
@@ -1408,6 +1486,7 @@ class DirectExecutionManager:
                 "generated_at": generated_at,
                 "updated_at": now,
                 "source": clean_source,
+                "mode": resolved_mode,
             }
             _atomic_write(meta_file, meta)
 
@@ -1424,6 +1503,59 @@ class DirectExecutionManager:
             index["schema"] = SCOPE_REPORT_INDEX_SCHEMA
             _atomic_write(idx_path, index)
         return deepcopy(meta)
+
+    def render_fast_scope_report(
+        self,
+        *,
+        scope: str,
+        project: str,
+        testbench: str | None = None,
+        run_ids: list[str] | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        highlights: list[str] | None = None,
+        kpis: list[dict] | None = None,
+        comparison_rows: list[dict] | None = None,
+        plots: list[dict] | None = None,
+        notes: str | None = None,
+        images: list[dict] | None = None,
+        source: str = "agent_fast",
+        mode: str = "fast",
+    ) -> dict:
+        """Build a deterministic self-contained Project/Testbench HTML+SVG report and persist it."""
+        from spiceowl.report_builder import build_fast_scope_report
+
+        built = build_fast_scope_report(
+            self,
+            scope=scope,
+            project=project,
+            testbench=testbench,
+            run_ids=run_ids,
+            title=title,
+            summary=summary,
+            highlights=highlights,
+            kpis=kpis,
+            comparison_rows=comparison_rows,
+            plots=plots,
+            notes=notes,
+            images=images,
+            source=source,
+            mode=mode,
+        )
+        saved = self.save_scope_report(
+            scope=scope,
+            project=project,
+            testbench=testbench,
+            title=built["title"],
+            summary=built["summary"],
+            html=built["html"],
+            markdown=built["markdown"],
+            run_ids=built["run_ids"],
+            source=built["source"],
+            mode=built["mode"],
+        )
+        saved["plot_count"] = built["plot_count"]
+        return saved
 
     def list_scope_reports(self) -> list[dict]:
         """List persisted Project-level and Testbench-level report metadata sorted newest first."""
@@ -1510,6 +1642,7 @@ class DirectExecutionManager:
             "generated_at": generated_at,
             "updated_at": updated_at,
             "source": meta.get("source") or "agent",
+            "mode": meta.get("mode"),
         }
 
     def mark_completion_handoff(self, run_id: str, handoff: dict) -> dict:
@@ -2277,10 +2410,12 @@ class DirectRecoverySupervisor:
         *,
         force: bool = False,
         custom_prompt: str | None = None,
+        mode: str = "fast",
     ) -> dict:
         """Push a structured completion report prompt to the connected Agent and persist receipt."""
         from spiceowl.watch_handoff import build_completion_report_prompt
 
+        report_mode = _normalize_push_report_mode(mode, err_code="invalid_ai_report")
         clean_custom: str | None = None
         if custom_prompt is not None:
             if not isinstance(custom_prompt, str):
@@ -2300,6 +2435,7 @@ class DirectRecoverySupervisor:
                 "pushed": False,
                 "status": "no_agent_connected",
                 "note": "当前未配置 Codex Agent 桥接。",
+                "mode": report_mode,
             }
 
         rep = None
@@ -2320,6 +2456,7 @@ class DirectRecoverySupervisor:
             wf,
             html_path=html_path,
             custom_prompt=clean_custom,
+            mode=report_mode,
         )
         req_key = f"sim-report-{run_id[:64]}"
         if force or clean_custom is not None:
@@ -2328,7 +2465,7 @@ class DirectRecoverySupervisor:
         try:
             raw_res = _as_dict(
                 self.agent_pusher(
-                    event={"run_id": run_id, "kind": "simulation_completed"},
+                    event={"run_id": run_id, "kind": "simulation_completed", "mode": report_mode},
                     prompt=prompt,
                     request_key=req_key,
                     policy={},
@@ -2348,6 +2485,7 @@ class DirectRecoverySupervisor:
             "thread_id": raw_res.get("thread_id"),
             "note": str(raw_res.get("note") or ""),
             "request_key": req_key,
+            "mode": report_mode,
             "attempted_at": now,
             "pushed_at": now if pushed else None,
             "force": bool(force or clean_custom is not None),
@@ -2363,10 +2501,12 @@ class DirectRecoverySupervisor:
         project: str,
         testbench: str | None = None,
         custom_prompt: str | None = None,
+        mode: str = "fast",
     ) -> dict:
         """Gather matching runs for a Project or Testbench and push a multi-run HTML report task to Agent."""
         from spiceowl.watch_handoff import build_scope_report_prompt
 
+        report_mode = _normalize_push_report_mode(mode, err_code="invalid_scope_report")
         clean_scope, clean_proj, clean_tb, key = self.manager._resolve_scope_identity(scope, project, testbench)
         clean_custom: str | None = None
         if custom_prompt is not None:
@@ -2396,6 +2536,7 @@ class DirectRecoverySupervisor:
                 "pushed": False,
                 "status": "no_agent_connected",
                 "note": "当前未配置 Codex Agent 桥接。",
+                "mode": report_mode,
                 "scope": clean_scope,
                 "scope_key": key,
                 "project": clean_proj,
@@ -2412,6 +2553,7 @@ class DirectRecoverySupervisor:
             runs=matched_runs,
             custom_prompt=clean_custom,
             html_path=html_path,
+            mode=report_mode,
         )
         req_key = f"scope-report-{key}-{uuid.uuid4().hex[:6]}"
         try:
@@ -2419,6 +2561,7 @@ class DirectRecoverySupervisor:
                 self.agent_pusher(
                     event={
                         "kind": "scope_report_requested",
+                        "mode": report_mode,
                         "scope": clean_scope,
                         "scope_key": key,
                         "project": clean_proj,
@@ -2444,6 +2587,7 @@ class DirectRecoverySupervisor:
             "thread_id": raw_res.get("thread_id"),
             "note": str(raw_res.get("note") or ""),
             "request_key": req_key,
+            "mode": report_mode,
             "scope": clean_scope,
             "scope_key": key,
             "project": clean_proj,

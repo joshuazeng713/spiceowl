@@ -305,7 +305,9 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         log_watcher = IncrementalLogWatcher(direct_manager.data_dir / 'log_cursors')
 
         def _overnight_policy_override(name, arguments):
-            if name == 'spiceowl_direct_control' and isinstance(arguments, dict) and arguments.get('operation') in ('save_ai_report', 'save_scope_report'):
+            if name == 'spiceowl_direct_control' and isinstance(arguments, dict) and arguments.get('operation') in (
+                'render_fast_report', 'render_fast_scope_report', 'save_ai_report', 'save_scope_report',
+            ):
                 return 'read'
             policy = watch_mgr.get_policy()
             if not policy.get('enabled'):
@@ -585,7 +587,58 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     return direct_manager.collect(params['run_id'])
                 if op == 'delete':
                     return direct_manager.delete(params['run_id'])
+                if op == 'render_fast_report':
+                    saved = direct_manager.render_fast_report(
+                        params['run_id'],
+                        title=params.get('title'),
+                        summary=params.get('summary'),
+                        highlights=params.get('highlights'),
+                        kpis=params.get('kpis'),
+                        plots=params.get('plots'),
+                        notes=params.get('notes'),
+                        images=params.get('images'),
+                        source=params.get('source') or 'agent_fast',
+                        mode=params.get('mode') or 'fast',
+                    )
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_run_updated', {
+                            'run_id': params['run_id'],
+                            'ai_report_ready': True,
+                            'has_html': True,
+                            'title': saved.get('title'),
+                            'mode': saved.get('mode'),
+                        })
+                    return saved
+                if op == 'render_fast_scope_report':
+                    saved = direct_manager.render_fast_scope_report(
+                        scope=params['scope'],
+                        project=params['project'],
+                        testbench=params.get('testbench'),
+                        run_ids=params.get('run_ids'),
+                        title=params.get('title'),
+                        summary=params.get('summary'),
+                        highlights=params.get('highlights'),
+                        kpis=params.get('kpis'),
+                        comparison_rows=params.get('comparison_rows'),
+                        plots=params.get('plots'),
+                        notes=params.get('notes'),
+                        images=params.get('images'),
+                        source=params.get('source') or 'agent_fast',
+                        mode=params.get('mode') or 'fast',
+                    )
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_scope_report_updated', {
+                            'scope': params['scope'],
+                            'project': params['project'],
+                            'testbench': params.get('testbench'),
+                            'title': saved.get('title'),
+                            'mode': saved.get('mode'),
+                        })
+                    return saved
                 if op == 'save_ai_report':
+                    report_mode = params.get('mode')
+                    if report_mode is None and isinstance(params.get('html'), str) and params['html'].strip():
+                        report_mode = 'deep'
                     saved = direct_manager.save_ai_report(
                         params['run_id'],
                         markdown=params.get('markdown'),
@@ -593,6 +646,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                         title=params.get('title'),
                         summary=params.get('summary'),
                         source=params.get('source', 'agent'),
+                        mode=report_mode,
                     )
                     if callable(ui_patch_sink):
                         ui_patch_sink('direct_run_updated', {
@@ -600,9 +654,13 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                             'ai_report_ready': True,
                             'has_html': bool(saved.get('has_html')),
                             'title': saved.get('title'),
+                            'mode': saved.get('mode'),
                         })
                     return saved
                 if op == 'save_scope_report':
+                    report_mode = params.get('mode')
+                    if report_mode is None and isinstance(params.get('html'), str) and params['html'].strip():
+                        report_mode = 'deep'
                     saved = direct_manager.save_scope_report(
                         scope=params['scope'],
                         project=params['project'],
@@ -613,6 +671,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                         markdown=params.get('markdown'),
                         run_ids=params.get('run_ids'),
                         source=params.get('source', 'agent'),
+                        mode=report_mode,
                     )
                     if callable(ui_patch_sink):
                         ui_patch_sink('direct_scope_report_updated', {
@@ -620,6 +679,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                             'project': params['project'],
                             'testbench': params.get('testbench'),
                             'title': saved.get('title'),
+                            'mode': saved.get('mode'),
                         })
                     return saved
                 if op == 'watch_record_decision':

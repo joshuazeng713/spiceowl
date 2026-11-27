@@ -1112,13 +1112,68 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
                     st, raw_gen, _ = req_raw("POST", "/api/direct/scope-reports/generate", {
                         "scope": "project",
                         "project": "analog_lib",
+                        "mode": "deep",
                         "custom_prompt": "总结全部指标",
                     })
                     self.assertEqual(st, 202)
-                    self.assertIn("handoff", json.loads(raw_gen.decode("utf-8")))
+                    self.assertEqual(json.loads(raw_gen.decode("utf-8"))["handoff"]["mode"], "deep")
+
+                    st_bad, _, _ = req_raw("POST", f"/api/direct/runs/{run_id}/ai-report", {"mode": "bogus"})
+                    self.assertEqual(st_bad, 400)
+
+                    st_inst, raw_inst, _ = req_raw("POST", f"/api/direct/runs/{run_id}/ai-report/instant", {})
+                    self.assertEqual(st_inst, 200)
+                    inst_rep = json.loads(raw_inst.decode("utf-8"))["ai_report"]
+                    self.assertEqual(inst_rep["mode"], "instant")
+                    self.assertTrue(inst_rep["has_html"])
+
+                    st_sinst, raw_sinst, _ = req_raw("POST", "/api/direct/scope-reports/instant", {
+                        "scope": "testbench",
+                        "project": "analog_lib",
+                        "testbench": "tb_amp",
+                    })
+                    self.assertEqual(st_sinst, 200)
+                    self.assertEqual(json.loads(raw_sinst.decode("utf-8"))["report"]["mode"], "instant")
                 finally:
                     srv.shutdown()
                     srv.server_close()
+
+                # 8. Fast-report skill byte-parity + zero-approval render_fast_report & render_fast_scope_report
+                fast_skill_file = Path(__file__).resolve().parents[1] / "skills" / "spiceowl-sim-report-fast" / "SKILL.md"
+                self.assertTrue(fast_skill_file.is_file())
+                self.assertEqual(fast_skill_file.read_text(encoding="utf-8"), BUILTIN_SKILLS["spiceowl-sim-report-fast"]["content"])
+                self.assertEqual(disp.policy("spiceowl_direct_control", {"operation": "render_fast_report", "arguments": {"run_id": run_id}}), "read")
+                self.assertEqual(disp.policy("spiceowl_direct_control", {"operation": "render_fast_scope_report", "arguments": {"scope": "testbench"}}), "read")
+
+                fast_saved = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "render_fast_report",
+                    "arguments": {
+                        "run_id": run_id,
+                        "title": "快速测试报告",
+                        "summary": "瞬态仿真正常收敛。",
+                        "highlights": ["0 错误", "耗时极短"],
+                        "kpis": [{"label": "增益", "value": "7.38", "unit": "V/V", "status": "pass"}],
+                    },
+                })
+                self.assertEqual(fast_saved["mode"], "fast")
+                self.assertTrue(fast_saved["has_html"])
+                fast_read = dm.read_ai_report(run_id)
+                self.assertIn("快速测试报告", fast_read["html"])
+                self.assertNotIn("https://", fast_read["html"])
+                self.assertTrue(any(k == "direct_run_updated" and p.get("mode") == "fast" for k, p in patches))
+
+                fast_scope = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "render_fast_scope_report",
+                    "arguments": {
+                        "scope": "project",
+                        "project": "analog_lib",
+                        "title": "项目快速总览",
+                        "summary": "全部任务已完成。",
+                    },
+                })
+                self.assertEqual(fast_scope["mode"], "fast")
+                self.assertTrue(fast_scope["has_html"])
+                self.assertTrue(any(k == "direct_scope_report_updated" and p.get("mode") == "fast" for k, p in patches))
             finally:
                 ctrl.close()
 

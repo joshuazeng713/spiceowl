@@ -101,14 +101,147 @@ description: Fast, standardized Virtuoso-free simulation submission SOP for Spic
 """
 
 
-_SPICEOWL_SIM_REPORT_MD = r"""---
-name: spiceowl-sim-report
-description: Build rich, self-contained interactive HTML simulation reports (single-run, Testbench rollup, and Project rollup) with embedded SVG/PNG waveform plots, KPI cards, and spec tables.
+_SPICEOWL_SIM_REPORT_FAST_MD = r"""---
+name: spiceowl-sim-report-fast
+description: Fast (<1 min) simulation report SOP: write a concise engineering summary and let SpiceOwl's built-in template & SVG plotter assemble waveform plots and HTML automatically in 1 tool call.
 ---
 
-# SpiceOwl 交互式 HTML 仿真报告生成 SOP（Single-Run / Testbench / Project）
+# SpiceOwl 极速仿真报告生成 SOP（Fast Mode，<1 分钟出稿）
 
-本技能定义 SpiceOwl Agent 生成出版级、可离线独立打开、可二次迭代编辑的 HTML 仿真工程报告的标准化流程，覆盖 **单次仿真（Single Run）**、**Testbench 汇总（Testbench Rollup）** 与 **项目汇总（Project Rollup）** 三个层级。
+本技能是 SpiceOwl 默认的**极速仿真报告流程**，覆盖 **单次仿真（Single Run）**、**Testbench 汇总（Testbench Rollup）** 与 **项目汇总（Project Rollup）**。Agent 只需提炼真实工程结论与核心信号分组，由 SpiceOwl 内置模板与高精度 SVG 波形绘图引擎在 **1 次零审批工具调用**内自动组装离线自包含 HTML 报告。
+
+## 1. 铁律（反磨蹭规则 · 保证 20~60 秒、2~4 步完成）
+
+1. **绝不手写 HTML / CSS / JS**：严禁自己拼写网页骨架、样式表或脚本，排版全部交给内置模板自动生成。
+2. **绝不自己写 Python / matplotlib 画基础波形图**：常规时域/交流/直流波形以及差分/共模组合图全部交给内置 SVG 绘图引擎自动生成（除非用户明确要求特殊派生图如 FFT 频谱、眼图或直方图）。
+3. **绝不启动浏览器或截屏自检 HTML**：严禁调用浏览器、Playwright 或截图工具验证页面效果，SpiceOwl 前端自带隔离沙箱预览。
+4. **绝不反复多轮复算同一批数据**：提示词已附带关键仿真摘要与信号列表；补充数值最多做 1 次轻量读取即可出稿。
+5. **一切数字仍必须源自真实工具输出，严禁捏造**：严禁编造测量值、伪造趋势或补全缺失 Corner / Spec；未测项或失败项必须明确标注为「未测 / N/A / 失败」，并保持五维结论分离（执行状态、测量有效性、电路指标、工作区与 SOA、依赖来源）。
+
+## 2. 标准 2 步极速流程
+
+### 第 1 步：核对任务真实结果（0~2 次只读调用）
+- 先直接核对提示词附带的仿真状态、关键诊断与波形信号索引。
+- 若需补充核心实测指标，最多调用 1 次零审批只读工具：`spiceowl_direct_read(operation="waveform_measure" | "waveform_query" | "report", ...)`；TB / Project 汇总可用 `list` 与必要 `report` 快速核对各任务状态。
+
+### 第 2 步：1 次零审批调用自动绘图并归档
+- 单次仿真调用 `spiceowl_direct_control(operation="render_fast_report", ...)`；
+- Testbench / Project 汇总调用 `spiceowl_direct_control(operation="render_fast_scope_report", ...)`；
+- 只需填写结构化工程要点：
+  - `title`：简短中文报告标题；
+  - `summary`：2~4 句简洁明确的工程结论；
+  - `highlights`：3~5 条核心要点（字符串数组）；
+  - `kpis`（可选）：关键指标卡片数组（`label`、`value`、可选 `spec` / `status`: `pass` | `warn` | `fail` | `info`）；
+  - `plots`（可选）：挑选 2~3 组关键信号，例如 `[{"title": "差分输出", "signals": ["VOP", "VON"]}, {"title": "净差分与共模", "signals": ["VOP - VON", "(VOP + VON)/2"]}]`。引擎原生支持 `A - B` 差分与 `(A + B)/2` 共模表达式，**省略 `plots` 也会自动选图**；
+  - `comparison_rows`（仅 `render_fast_scope_report` 可选）：跨任务横向对比表；
+  - `notes`（可选）：告警说明、异常根因或下一步建议；
+  - `images`（可选）：仅当用户明确要求特殊派生图时，附带少量 `data:image/png;base64,...` 图像。
+- 以上工具均为**零审批弹窗**本机归档操作，调用后立即生成离线自包含 HTML 并实时刷新网页「仿真总览（Overview）」。
+
+## 3. 零审批 JSON 调用示例
+
+### 3.1 单次仿真（Single Run）
+```json
+{
+  "operation": "render_fast_report",
+  "arguments": {
+    "run_id": "<run_id>",
+    "title": "tb_amp 瞬态响应极速仿真报告",
+    "summary": "瞬态仿真正常收敛完成，差分输出稳定建立。测得差分增益 7.38x、静态功耗 2.59 mW，共模电平维持在 0.60 V 附近且无明显过冲。",
+    "highlights": [
+      "执行状态：Spectre 正常收敛退出，波形采集完整（psfbin）",
+      "输出摆幅：VOP - VON 峰峰值 442 mV，满足目标线性范围",
+      "共模稳定：(VOP + VON)/2 稳态 601 mV，纹波 < 3 mV"
+    ],
+    "kpis": [
+      {"label": "差分增益", "value": "7.38x", "spec": "> 6.0x", "status": "pass"},
+      {"label": "静态功耗", "value": "2.59 mW", "spec": "< 3.0 mW", "status": "pass"},
+      {"label": "输出共模", "value": "601 mV", "spec": "600 ± 20 mV", "status": "pass"}
+    ],
+    "plots": [
+      {"title": "差分输出", "signals": ["VOP", "VON"]},
+      {"title": "净差分与共模", "signals": ["VOP - VON", "(VOP + VON)/2"]}
+    ],
+    "notes": ["未配置 AC 稳定性分析，相位裕度标注为 N/A，建议后续补充 stb 验证。"]
+  }
+}
+```
+
+### 3.2 Testbench 汇总（同 TB 下多次仿真对比）
+```json
+{
+  "operation": "render_fast_scope_report",
+  "arguments": {
+    "scope": "testbench",
+    "project": "analog_lib",
+    "testbench": "tb_amp",
+    "run_ids": ["<run_id_1>", "<run_id_2>"],
+    "title": "analog_lib / tb_amp 跨任务快速对比报告",
+    "summary": "本 Testbench 共汇总 2 次仿真，均顺利收敛。TT 与 SS 条件下增益均高于 6x 规格下限，SS 下建立时间略增 14% 但仍在余量内。",
+    "highlights": [
+      "通过率：2 / 2 任务完成并采集波形",
+      "最差余量：SS 条件下建立时间 8.4 ns（Spec < 10 ns）",
+      "功耗区间：2.31 mW ~ 2.59 mW，整体受控"
+    ],
+    "kpis": [
+      {"label": "完成任务", "value": "2 / 2", "status": "pass"},
+      {"label": "最小增益", "value": "6.85x", "spec": "> 6.0x", "status": "pass"}
+    ],
+    "comparison_rows": [
+      {"run_id": "<run_id_1>", "condition": "TT 27C", "gain": "7.38x", "power": "2.59 mW", "status": "pass"},
+      {"run_id": "<run_id_2>", "condition": "SS 85C", "gain": "6.85x", "power": "2.31 mW", "status": "pass"}
+    ],
+    "plots": [
+      {"title": "净差分输出对比", "signals": ["VOP - VON"]}
+    ],
+    "notes": ["FF -40C 尚未运行，当前归类为未测。"]
+  }
+}
+```
+
+### 3.3 Project 汇总（同项目下全部 TB 总览）
+```json
+{
+  "operation": "render_fast_scope_report",
+  "arguments": {
+    "scope": "project",
+    "project": "analog_lib",
+    "run_ids": ["<run_id_1>", "<run_id_2>", "<run_id_3>"],
+    "title": "analog_lib 项目仿真总览报告",
+    "summary": "analog_lib 当前覆盖 2 个 Testbench、3 次仿真，核心瞬态指标全部达标，仅 tb_bias 存在 1 条轻微启动过冲告警待复查。",
+    "highlights": [
+      "tb_amp：2 / 2 通过，增益与共模余量充足",
+      "tb_bias：基准电流稳定，但上电阶段出现 6.2% 过冲",
+      "下一步建议：对 tb_bias 补充慢斜坡上电验证"
+    ],
+    "kpis": [
+      {"label": "覆盖 TB", "value": "2", "status": "info"},
+      {"label": "总通过率", "value": "3 / 3", "status": "pass"}
+    ],
+    "notes": ["未覆盖 Corner 均在对比表中显式标注 N/A。"]
+  }
+}
+```
+
+## 4. 何时改用深度创作模式（`spiceowl-sim-report`）
+
+仅当用户明确要求**自定义复杂多栏版式、深度电路机理剖析或专属交互/派生图表**（如相干 FFT 频谱、柱状线性度、自定义对比控件）时，再读取并遵循 `spiceowl-sim-report` 技能规范，使用 `save_ai_report` / `save_scope_report` 落盘。
+"""
+
+
+_SPICEOWL_SIM_REPORT_MD = r"""---
+name: spiceowl-sim-report
+description: Deep authoring mode for rich, self-contained interactive HTML simulation reports (single-run, Testbench rollup, and Project rollup) with custom editorial layouts, physical analysis, and bespoke SVG/PNG plots.
+---
+
+# SpiceOwl 深度交互式 HTML 仿真报告生成 SOP（Deep Authoring Mode）
+
+本技能定义 SpiceOwl Agent 进行**深度定制化、出版级、可离线独立打开、可二次迭代编辑**的 HTML 仿真工程报告的标准化流程，覆盖 **单次仿真（Single Run）**、**Testbench 汇总（Testbench Rollup）** 与 **项目汇总（Project Rollup）** 三个层级。
+
+## 0. 双模式选择（Fast 极速默认 vs Deep 深度创作）
+
+- **默认 / 快速需求（优先）**：日常仿真完成自动汇报或常规单次/TB/Project 总结，**优先使用 `spiceowl-sim-report-fast`**（调用 `render_fast_report` / `render_fast_scope_report`，由内置模板与 SVG 绘图引擎自动生成，**1 分钟内出稿**）。
+- **深度定制需求（本技能）**：仅当用户明确要求**自定义版式排版、复杂器件/电路物理分析、或专属交互/派生图表**（如相干 FFT 频谱、ADC 线性度、多维 PVT 散点/热图）时，使用本 **`spiceowl-sim-report` 深度创作模式** 并通过 `save_ai_report` / `save_scope_report` 落盘。
 
 ## 1. 数据优先铁律（Data-First Discipline）
 
@@ -116,11 +249,26 @@ description: Build rich, self-contained interactive HTML simulation reports (sin
   - 优先调用零审批只读工具检查真实数据：
     - `spiceowl_direct_read(operation="inspect" | "report" | "waveform_index" | "waveform_query" | "waveform_measure" | "waveform_cycles" | "log_tail" | "inputs", ...)`；
     - 跨任务汇总时先用 `spiceowl_direct_read(operation="list", arguments={})` 筛选同属目标 `project` / `testbench` 的 `run_id`，逐一读取各任务 `report` 与关键波形指标；
-    - 在 `supervised` 或 `full_access` 模式下，也可直接用 Python 读取本机 `collected/` 目录中的仿真结果与日志，或使用 `matplotlib` 生成真实波形图并编码为 `data:image/png;base64,...`。
+    - 在 `supervised` 或 `full_access` 模式下，也可直接用 Python 读取本机 `collected/` 目录中的仿真结果与日志，或使用 `matplotlib` 生成特殊派生图并编码为 `data:image/png;base64,...`。
   - **严禁捏造测量值、严禁伪造平滑曲线、严禁补全缺失的 Corner / 指标**；未测项或解析失败项必须明确标注为「未测 / N/A / 失败」并给出真实原因。
   - **五维结论严格分离**：始终区分展示执行状态（Execution）、测量有效性（Measurement Validity）、电路指标（Functional Performance）、工作区与 SOA（Operating Qualification）以及依赖/来源可追溯性（Dependency Provenance）。
 
-## 2. 出版级自包含 HTML 报告规范（Self-Contained Editorial HTML）
+## 2. 效率与脚手架对接规范（Fast Scaffolding & No Browser Self-Check）
+
+深度模式同样强调工程效率，避免无谓消耗时间：
+
+1. **直接复用 SpiceOwl 内置模板与 SVG 绘图脚手架**：
+   - 在具备 Python 执行权限时，直接导入并复用内置工具函数，无需从零手搓 CSS、配色体系和坐标网格：
+     ```python
+     from spiceowl.report_builder import render_waveform_svg, wrap_editorial_html
+     ```
+   - 常规波形用 `render_waveform_svg(...)` 快速生成轻量高清矢量图，再用 `wrap_editorial_html(...)` 包裹主体区块，将精力集中在深度电路分析与定制图表上。
+2. **严禁启动浏览器或 Playwright 截图验证 HTML**：
+   - SpiceOwl 前端「仿真总览（Overview）」自带隔离沙箱预览与一键下载，**绝不启动 headless 浏览器、Playwright 或截图工具自检 HTML**。
+3. **避免重复复算，控制在几分钟内完成**：
+   - 规划好一次提取所需全部信号与指标，做到 **最多 1 次 Python 数据提取/绘图 + 1 次 HTML 生成与 `save_ai_report` / `save_scope_report` 落盘**，切忌反复多轮重跑同一脚本或微调样式。
+
+## 3. 出版级自包含 HTML 报告规范（Self-Contained Editorial HTML）
 
 生成的 HTML 报告将直接嵌入「仿真总览（Overview）」并支持用户一键下载离线 `.html` 分享，必须遵循以下规范：
 
@@ -138,11 +286,11 @@ description: Build rich, self-contained interactive HTML simulation reports (sin
 3. **支持用户自然语言二次迭代**：
    - 用户提出补充波形、增加 Corner 对比列、改配色或深挖异常时，可先用 `ai_report` / `scope_report` 读回当前版本，结合新数据更新 HTML 后再次调用保存工具原地覆盖升级。
 
-## 3. 三级报告作用域与零审批保存工具
+## 4. 三级报告作用域与零审批保存工具
 
 以下保存工具均为本机归档操作，**不触碰远端服务器、不修改网表、无需人工审批弹窗**，直接生效并实时推送刷新网页「仿真总览（Overview）」：
 
-### 3.1 单次仿真报告（Single Run）
+### 4.1 单次仿真报告（Single Run）
 调用 `spiceowl_direct_control(operation="save_ai_report", ...)`：
 ```json
 {
@@ -152,13 +300,14 @@ description: Build rich, self-contained interactive HTML simulation reports (sin
     "title": "<简短中文报告标题>",
     "summary": "<一句话核心工程结论>",
     "html": "<!doctype html><html lang=\"zh-CN\">...</html>",
-    "markdown": "## 仿真结论与关键指标摘要"
+    "markdown": "## 仿真结论与关键指标摘要",
+    "mode": "deep"
   }
 }
 ```
 回读：`spiceowl_direct_read(operation="ai_report", arguments={"run_id": "<run_id>"})`。
 
-### 3.2 Testbench 汇总报告（同 TB 下全部仿真对比）
+### 4.2 Testbench 汇总报告（同 TB 下全部仿真对比）
 调用 `spiceowl_direct_control(operation="save_scope_report", ...)`：
 ```json
 {
@@ -171,12 +320,13 @@ description: Build rich, self-contained interactive HTML simulation reports (sin
     "summary": "<一句话 TB 级综合结论>",
     "html": "<!doctype html><html lang=\"zh-CN\">...</html>",
     "markdown": "## Testbench 跨任务对比摘要",
-    "run_ids": ["<run_id_1>", "<run_id_2>"]
+    "run_ids": ["<run_id_1>", "<run_id_2>"],
+    "mode": "deep"
   }
 }
 ```
 
-### 3.3 Project 汇总报告（同项目下全部 TB 与仿真总览）
+### 4.3 Project 汇总报告（同项目下全部 TB 与仿真总览）
 调用 `spiceowl_direct_control(operation="save_scope_report", ...)`：
 ```json
 {
@@ -188,7 +338,8 @@ description: Build rich, self-contained interactive HTML simulation reports (sin
     "summary": "<一句话项目级验证状态结论>",
     "html": "<!doctype html><html lang=\"zh-CN\">...</html>",
     "markdown": "## Project 各 Testbench 验证状态摘要",
-    "run_ids": ["<run_id_1>", "<run_id_2>"]
+    "run_ids": ["<run_id_1>", "<run_id_2>"],
+    "mode": "deep"
   }
 }
 ```
@@ -207,12 +358,22 @@ BUILTIN_SKILLS: dict[str, dict[str, str]] = {
         ),
         "content": _SPICEOWL_SIM_SUBMIT_MD,
     },
+    "spiceowl-sim-report-fast": {
+        "name": "spiceowl-sim-report-fast",
+        "title": "SpiceOwl 极速仿真报告生成 SOP（Fast Mode，<1 分钟出稿）",
+        "summary": (
+            "Fast (<1 min) simulation report SOP: write a concise engineering summary and let SpiceOwl's "
+            "built-in template & SVG plotter assemble waveform plots and HTML automatically in 1 tool call."
+        ),
+        "content": _SPICEOWL_SIM_REPORT_FAST_MD,
+    },
     "spiceowl-sim-report": {
         "name": "spiceowl-sim-report",
-        "title": "SpiceOwl 交互式 HTML 仿真报告生成 SOP（Single-Run / Testbench / Project）",
+        "title": "SpiceOwl 深度交互式 HTML 仿真报告生成 SOP（Deep Authoring Mode）",
         "summary": (
-            "Build rich, self-contained interactive HTML simulation reports (single-run, Testbench rollup, "
-            "and Project rollup) with embedded SVG/PNG waveform plots, KPI cards, and spec tables."
+            "Deep authoring mode for rich, self-contained interactive HTML simulation reports (single-run, "
+            "Testbench rollup, and Project rollup) with custom editorial layouts, physical analysis, "
+            "and bespoke SVG/PNG plots."
         ),
         "content": _SPICEOWL_SIM_REPORT_MD,
     },

@@ -266,13 +266,30 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 meta["ai_report_ready"] = payload.get("ai_report_ready")
                 meta["has_html"] = payload.get("has_html")
                 meta["title"] = payload.get("title")
+                meta["mode"] = payload.get("mode")
             elif kind == "direct_scope_report_updated" and isinstance(payload, dict):
                 meta["scope"] = payload.get("scope")
                 meta["project"] = payload.get("project")
                 meta["testbench"] = payload.get("testbench")
                 meta["title"] = payload.get("title")
+                meta["mode"] = payload.get("mode")
             bridge_obj.emit_ui_patch(meta)
         return rev
+
+    def _ensure_terminal_run_collected(run_id: str) -> None:
+        run_cur = direct_manager.read(run_id)
+        if run_cur.get("collection_phase") != "complete" and (
+            run_cur.get("raw_remote_state") in {"completed", "failed", "timed_out", "cancelled", "preflight_failed"}
+            or run_cur.get("state") in {
+                "completed", "simulator_complete_pending_measurements", "failed",
+                "timed_out", "cancelled", "cancelled_confirmed", "preflight_failed",
+                "oom_killed", "failed_verified", "failed_unverified",
+            }
+        ):
+            try:
+                direct_manager.collect(run_id)
+            except DomainError:
+                pass
 
     supervisor_ref = {"supervisor": None}
 
@@ -315,6 +332,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             "collection_phase": rec.get("collection_phase"),
             "ai_report_ready": bool((rec.get("ai_report") or {}).get("available")),
             "has_html": bool((rec.get("ai_report") or {}).get("has_html")),
+            "mode": (rec.get("ai_report") or {}).get("mode"),
         }),
     )
     supervisor_ref["supervisor"] = direct_supervisor
@@ -794,22 +812,49 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 )
             if path == "/api/direct/scope-reports/generate" and self.command == "POST":
                 req = self.body()
-                allowed = {"scope", "project", "testbench", "custom_prompt"}
+                allowed = {"scope", "project", "testbench", "custom_prompt", "mode"}
                 if set(req) - allowed or not {"scope", "project"} <= set(req):
-                    raise DomainError("Scope report generation requires scope, project, and optional testbench/custom_prompt.")
+                    raise DomainError("Scope report generation requires scope, project, and optional testbench/custom_prompt/mode.")
                 custom_prompt = req.get("custom_prompt")
                 if custom_prompt is not None and (not isinstance(custom_prompt, str) or len(custom_prompt) > 2000):
                     raise DomainError("custom_prompt must be a string of at most 2000 characters.")
+                raw_mode = req.get("mode")
+                mode = "fast" if raw_mode is None else raw_mode
+                if not isinstance(mode, str) or mode not in {"fast", "deep"}:
+                    raise DomainError("mode must be 'fast' or 'deep'.")
                 handoff = direct_supervisor.push_scope_report(
                     scope=req["scope"],
                     project=req["project"],
                     testbench=req.get("testbench"),
                     custom_prompt=custom_prompt,
+                    mode=mode,
                 )
                 return self.reply({"handoff": handoff}, 202)
+            if path == "/api/direct/scope-reports/instant" and self.command == "POST":
+                req = self.body(max_bytes=65536)
+                allowed = {"scope", "project", "testbench", "title", "summary"}
+                if set(req) - allowed or not {"scope", "project"} <= set(req):
+                    raise DomainError("Instant scope report requires scope, project, and optional testbench/title/summary.")
+                saved = direct_manager.render_fast_scope_report(
+                    scope=req["scope"],
+                    project=req["project"],
+                    testbench=req.get("testbench"),
+                    title=req.get("title"),
+                    summary=req.get("summary"),
+                    source="instant",
+                    mode="instant",
+                )
+                record_ui_patch("direct_scope_report_updated", {
+                    "scope": req["scope"],
+                    "project": req["project"],
+                    "testbench": req.get("testbench"),
+                    "title": saved.get("title"),
+                    "mode": "instant",
+                })
+                return self.reply({"report": saved})
             if path == "/api/direct/scope-reports/save" and self.command == "POST":
                 req = self.body(max_bytes=4 * 1024 * 1024 + 65536)
-                allowed = {"scope", "project", "testbench", "title", "summary", "html", "markdown", "run_ids", "source"}
+                allowed = {"scope", "project", "testbench", "title", "summary", "html", "markdown", "run_ids", "source", "mode"}
                 if set(req) - allowed or not {"scope", "project"} <= set(req):
                     raise DomainError("Scope report save requires scope, project, and supported report fields only.")
                 saved = direct_manager.save_scope_report(
@@ -822,12 +867,14 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     markdown=req.get("markdown"),
                     run_ids=req.get("run_ids"),
                     source=req.get("source") or "user",
+                    mode=req.get("mode"),
                 )
                 record_ui_patch("direct_scope_report_updated", {
                     "scope": req["scope"],
                     "project": req["project"],
                     "testbench": req.get("testbench"),
                     "title": saved.get("title"),
+                    "mode": saved.get("mode"),
                 })
                 return self.reply({"report": saved})
             if path == "/api/direct/prepare" and self.command == "POST":
@@ -1265,8 +1312,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     )
                 if len(sub) == 2 and sub[1] == "ai-report" and self.command == "PUT":
                     req = self.body(max_bytes=4 * 1024 * 1024 + 65536)
-                    if set(req) - {"title", "summary", "html", "markdown", "source"}:
-                        raise DomainError("AI report save accepts title, summary, html, markdown, and source only.")
+                    if set(req) - {"title", "summary", "html", "markdown", "source", "mode"}:
+                        raise DomainError("AI report save accepts title, summary, html, markdown, source, and mode only.")
                     saved = direct_manager.save_ai_report(
                         run_id,
                         title=req.get("title"),
@@ -1274,12 +1321,14 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         html=req.get("html"),
                         markdown=req.get("markdown"),
                         source=req.get("source") or "user",
+                        mode=req.get("mode"),
                     )
                     record_ui_patch("direct_run_updated", {
                         "run_id": run_id,
                         "ai_report_ready": True,
                         "has_html": bool(saved.get("has_html")),
                         "title": saved.get("title"),
+                        "mode": saved.get("mode"),
                     })
                     return self.reply({"run_id": run_id, "ai_report": saved, "run": direct_manager.read(run_id)})
                 if len(sub) == 2 and sub[1] == "inputs" and self.command == "GET":
@@ -1388,6 +1437,27 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                             tol_pct=float(req["tol_pct"]) if req.get("tol_pct") is not None else 2.0,
                         ))
                     raise DomainError("This endpoint does not exist.", "not_found")
+                if len(sub) == 3 and sub[1] == "ai-report" and sub[2] == "instant" and self.command == "POST":
+                    req = self.body(max_bytes=65536)
+                    if set(req) - {"title", "summary", "plots"}:
+                        raise DomainError("Instant AI report accepts optional title, summary, and plots only.")
+                    _ensure_terminal_run_collected(run_id)
+                    saved = direct_manager.render_fast_report(
+                        run_id,
+                        title=req.get("title"),
+                        summary=req.get("summary"),
+                        plots=req.get("plots"),
+                        source="instant",
+                        mode="instant",
+                    )
+                    record_ui_patch("direct_run_updated", {
+                        "run_id": run_id,
+                        "ai_report_ready": True,
+                        "has_html": True,
+                        "title": saved.get("title"),
+                        "mode": "instant",
+                    })
+                    return self.reply({"run_id": run_id, "ai_report": saved, "run": direct_manager.read(run_id)})
                 if len(sub) == 2 and self.command == "POST":
                     op = sub[1]
                     req = self.body(max_bytes=4 * 1024 * 1024 + 65536 if op == "ai-report" else 16384)
@@ -1426,8 +1496,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         return self.reply({"run": collected, "report": rep}, 202)
                     if op == "ai-report":
                         if req.get("action") == "save":
-                            if set(req) - {"action", "title", "summary", "html", "markdown", "source"}:
-                                raise DomainError("AI report save accepts action, title, summary, html, markdown, and source only.")
+                            if set(req) - {"action", "title", "summary", "html", "markdown", "source", "mode"}:
+                                raise DomainError("AI report save accepts action, title, summary, html, markdown, source, and mode only.")
                             saved = direct_manager.save_ai_report(
                                 run_id,
                                 title=req.get("title"),
@@ -1435,36 +1505,31 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                                 html=req.get("html"),
                                 markdown=req.get("markdown"),
                                 source=req.get("source") or "user",
+                                mode=req.get("mode"),
                             )
                             record_ui_patch("direct_run_updated", {
                                 "run_id": run_id,
                                 "ai_report_ready": True,
                                 "has_html": bool(saved.get("has_html")),
                                 "title": saved.get("title"),
+                                "mode": saved.get("mode"),
                             })
                             return self.reply({"run_id": run_id, "ai_report": saved, "run": direct_manager.read(run_id)})
-                        if set(req) - {"force", "custom_prompt"} or ("force" in req and type(req["force"]) is not bool):
-                            raise DomainError("AI report request accepts optional boolean force and custom_prompt.")
+                        if set(req) - {"force", "custom_prompt", "mode"} or ("force" in req and type(req["force"]) is not bool):
+                            raise DomainError("AI report request accepts optional boolean force, mode ('fast'|'deep'), and custom_prompt.")
+                        raw_mode = req.get("mode")
+                        mode = "fast" if raw_mode is None else raw_mode
+                        if not isinstance(mode, str) or mode not in {"fast", "deep"}:
+                            raise DomainError("mode must be 'fast' or 'deep'.")
                         custom_prompt = req.get("custom_prompt")
                         if custom_prompt is not None and (not isinstance(custom_prompt, str) or len(custom_prompt) > 2000):
                             raise DomainError("custom_prompt must be a string of at most 2000 characters.")
-                        run_cur = direct_manager.read(run_id)
-                        if run_cur.get("collection_phase") != "complete" and (
-                            run_cur.get("raw_remote_state") in {"completed", "failed", "timed_out", "cancelled", "preflight_failed"}
-                            or run_cur.get("state") in {
-                                "completed", "simulator_complete_pending_measurements", "failed",
-                                "timed_out", "cancelled", "cancelled_confirmed", "preflight_failed",
-                                "oom_killed", "failed_verified", "failed_unverified",
-                            }
-                        ):
-                            try:
-                                direct_manager.collect(run_id)
-                            except DomainError:
-                                pass
+                        _ensure_terminal_run_collected(run_id)
                         handoff = direct_supervisor.push_completion_report(
                             run_id,
                             force=bool(req.get("force", True)),
                             custom_prompt=custom_prompt,
+                            mode=mode,
                         )
                         return self.reply({"run_id": run_id, "handoff": handoff, "run": direct_manager.read(run_id)}, 202)
                     if op == "watch":

@@ -591,6 +591,7 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
                 ctrl.close()
 
     def test_find_remote_library_targets_and_agent_ui_configure_tools(self):
+        import os
         from spiceowl.standalone_agent import build_standalone_dispatcher
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -605,23 +606,24 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
             (sch / "sch.oa").write_bytes(b"OA")
             (maestro / "maestro.sdb").write_text("<setupdb/>", encoding="utf-8")
 
-            def local_runner(argv, *, input=b"", capture_output=True, timeout=25):
-                return subprocess.run(["/bin/sh", "-s"], input=input, capture_output=capture_output, timeout=timeout)
+            if os.name != "nt":
+                def local_runner(argv, *, input=b"", capture_output=True, timeout=25):
+                    return subprocess.run(["/bin/sh", "-s"], input=input, capture_output=capture_output, timeout=timeout)
 
-            res = find_remote_library_targets(
-                "sim-node-a",
-                None,
-                query="2026_pipeline research4 tb_constant_gain_amplifier",
-                path=str(root),
-                runner=local_runner,
-            )
-            self.assertEqual(res["schema"], FIND_SCHEMA)
-            self.assertGreaterEqual(len(res["matches"]), 1)
-            top = res["matches"][0]
-            self.assertEqual(top["kind"], "schematic")
-            self.assertEqual(top["lib_name"], "research4")
-            self.assertEqual(top["cell_name"], "tb_const_gain_amplifier")
-            self.assertEqual(top["maestro_views"], ["maestro"])
+                res = find_remote_library_targets(
+                    "sim-node-a",
+                    None,
+                    query="2026_pipeline research4 tb_constant_gain_amplifier",
+                    path=str(root),
+                    runner=local_runner,
+                )
+                self.assertEqual(res["schema"], FIND_SCHEMA)
+                self.assertGreaterEqual(len(res["matches"]), 1)
+                top = res["matches"][0]
+                self.assertEqual(top["kind"], "schematic")
+                self.assertEqual(top["lib_name"], "research4")
+                self.assertEqual(top["cell_name"], "tb_const_gain_amplifier")
+                self.assertEqual(top["maestro_views"], ["maestro"])
 
             # Verify standalone agent tools have read policy (no approval popup) and emit UI patches
             ctrl = Controller(root / "state", agent_mode="standalone")

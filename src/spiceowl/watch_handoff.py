@@ -745,9 +745,34 @@ class WatchHandoffManager:
             needs_human_review=True,
         )
 
+    def _sync_policy_from_script_config(self, cfg: dict | None) -> dict | None:
+        if not isinstance(cfg, dict) or not cfg:
+            return None
+        policy_updates: dict = {}
+        for bool_key in ("enabled", "auto_push_to_agent"):
+            if bool_key in cfg and type(cfg[bool_key]) is bool:
+                policy_updates[bool_key] = cfg[bool_key]
+        q_val = cfg.get("queue_timeout_seconds")
+        if type(q_val) is int and MIN_QUEUE_TIMEOUT_SECONDS <= q_val <= MAX_QUEUE_TIMEOUT_SECONDS:
+            policy_updates["queue_timeout_seconds"] = q_val
+        m_val = cfg.get("max_memory_gib")
+        if type(m_val) is int and 1 <= m_val <= MAX_ALLOWED_MEMORY_GIB:
+            policy_updates["max_memory_gib"] = m_val
+        r_val = cfg.get("max_agent_resubmissions")
+        if r_val is None:
+            r_val = cfg.get("max_resubmissions")
+        if type(r_val) is int and 0 <= r_val <= MAX_ALLOWED_RESUBMISSIONS:
+            policy_updates["max_agent_resubmissions"] = r_val
+        if policy_updates:
+            return self.update_policy(policy_updates)
+        return None
+
     def read_watch_script(self) -> dict:
         """Read the programmable `night_watch.py` script, parsed `CONFIG`, and `rule_*` inventory."""
-        return self.script_store.read()
+        info = self.script_store.read()
+        if not self.policy_path.is_file() and info.get("valid") is not False:
+            self._sync_policy_from_script_config(info.get("config"))
+        return info
 
     def save_watch_script(
         self,
@@ -760,26 +785,27 @@ class WatchHandoffManager:
     ) -> dict:
         """Validate & save `night_watch.py` and sync matching numeric/bool `CONFIG` fields to watch policy."""
         saved = self.script_store.save(code=code, edits=edits, source=source, note=note, reset=reset)
-        cfg = saved.get("config") if isinstance(saved.get("config"), dict) else {}
-        if cfg:
-            policy_updates: dict = {}
-            for bool_key in ("enabled", "auto_push_to_agent"):
-                if bool_key in cfg and type(cfg[bool_key]) is bool:
-                    policy_updates[bool_key] = cfg[bool_key]
-            q_val = cfg.get("queue_timeout_seconds")
-            if type(q_val) is int and MIN_QUEUE_TIMEOUT_SECONDS <= q_val <= MAX_QUEUE_TIMEOUT_SECONDS:
-                policy_updates["queue_timeout_seconds"] = q_val
-            m_val = cfg.get("max_memory_gib")
-            if type(m_val) is int and 1 <= m_val <= MAX_ALLOWED_MEMORY_GIB:
-                policy_updates["max_memory_gib"] = m_val
-            r_val = cfg.get("max_agent_resubmissions")
-            if r_val is None:
-                r_val = cfg.get("max_resubmissions")
-            if type(r_val) is int and 0 <= r_val <= MAX_ALLOWED_RESUBMISSIONS:
-                policy_updates["max_agent_resubmissions"] = r_val
-            if policy_updates:
-                self.update_policy(policy_updates)
+        self._sync_policy_from_script_config(saved.get("config"))
         return saved
+
+    def update_watch_config(
+        self,
+        updates: dict,
+        *,
+        source: str = "user",
+        note: str | None = None,
+    ) -> dict:
+        """Fast 1-call update for `night_watch.py` `CONFIG` switches/knobs with instant policy sync."""
+        saved = self.script_store.update_config(updates, source=source, note=note)
+        policy = self._sync_policy_from_script_config(saved.get("config")) or self.get_policy()
+        return {
+            "script": saved,
+            "config": saved.get("config"),
+            "policy": policy,
+            "sha256": saved.get("sha256"),
+            "updated_at": saved.get("updated_at"),
+            "note": saved.get("note"),
+        }
 
     def test_watch_script(
         self,
@@ -859,11 +885,14 @@ def build_watch_script_edit_prompt(
 
     lines.extend([
         "",
-        "请遵循 `spiceowl-night-watch` Skill 规范，按以下 4 步完成夜间值守规则定制与验证：",
-        '1. 调用 `spiceowl_direct_read(operation="watch_script")` 阅读当前完整的 `night_watch.py` 源码与规则顺序；',
-        '2. 优先使用局部补丁 `spiceowl_direct_control(operation="save_watch_script", arguments={"edits": [{"find": "...", "replace": "..."}], "note": "..."})`（或在大幅重构时传入完整 `code`）新增/修改规则函数并注册到 `BUG_RULES`，附带清晰中文注释，严守科学红线（不得改动原始网表/激励/Spec，保持 `protect_netlist_and_spec=True`）；',
-        '3. 调用 `spiceowl_direct_control(operation="test_watch_script", arguments={"scenario": "..."})`（如有真实故障日志可一并传入 `log_tail`）做隔离沙箱 Dry-Run，确认新规则准确命中且零报错；',
-        "4. 最后简明回复本次新增/修改的规则名称、触发条件、预期动作及 Dry-Run 验证结果。",
+        "请按修改复杂度选择最快通道（严禁为简单开关浪费多余工具调用）：",
+        "- **⚡ 极速通道（1 次调用、数秒完成）**：若用户只是开启/关闭夜间值守（`enabled`）、开关异常自动推 Agent（`auto_push_to_agent`）、或调整 `max_memory_gib` / `queue_timeout_seconds` / `max_resubmissions` / `license_retry_delay_seconds` / `preferred_hosts` / `auto_report_mode` 等 `CONFIG` 参数，直接 **1 次调用**零审批工具：",
+        '  `spiceowl_direct_control(operation="update_watch_config", arguments={"enabled": false, "note": "按用户要求关闭夜间值守"})`',
+        "  （一步同步修改 `night_watch.py` 与运行策略并实时刷新网页；**无需读取完整脚本、无需调用 `save_watch_script`、也无需跑 Dry-Run**，完成后直接一句话回复即可！）",
+        "- **🛠 规则编程通道（仅新增/修改 `rule_*` 逻辑时使用，遵循 `spiceowl-night-watch` Skill）**：",
+        '  1. 调用 `spiceowl_direct_read(operation="watch_script")` 阅读当前规则与顺序；',
+        '  2. 用局部补丁 `spiceowl_direct_control(operation="save_watch_script", arguments={"edits": [{"find": "...", "replace": "..."}], "note": "..."})` 更新规则并严守科学红线（保持 `protect_netlist_and_spec=True`）；',
+        '  3. 调用 `spiceowl_direct_control(operation="test_watch_script", arguments={"scenario": "..."})` 试运行验证后简明回复。',
     ])
     return "\n".join(lines)
 

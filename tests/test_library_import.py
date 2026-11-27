@@ -1285,6 +1285,47 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
                     self.assertEqual(st, 200)
                     self.assertIn("rule_custom_cmi", got["script"]["rules"])
 
+                    # Fast 1-call update_watch_config via zero-approval Agent tool + HTTP endpoint
+                    self.assertEqual(
+                        disp.policy("spiceowl_direct_control", {"operation": "update_watch_config", "arguments": {"enabled": False}}),
+                        "read",
+                    )
+                    quick_skill_file = Path(__file__).resolve().parents[1] / "skills" / "spiceowl-quick-ops" / "SKILL.md"
+                    self.assertEqual(quick_skill_file.read_text(encoding="utf-8"), BUILTIN_SKILLS["spiceowl-quick-ops"]["content"])
+                    self.assertTrue(any(s["name"] == "spiceowl-quick-ops" for s in list_skills()["skills"]))
+
+                    upd_tool = disp.dispatch("spiceowl_direct_control", {
+                        "operation": "update_watch_config",
+                        "arguments": {
+                            "enabled": False,
+                            "max_memory_gib": 96,
+                            "auto_report_mode": "deep",
+                            "note": "极速关闭夜间值守并调整内存上限",
+                        },
+                    })
+                    self.assertTrue(upd_tool["ok"])
+                    self.assertFalse(upd_tool["config"]["enabled"])
+                    self.assertFalse(upd_tool["policy"]["enabled"])
+                    self.assertEqual(upd_tool["config"]["max_memory_gib"], 96)
+                    self.assertEqual(upd_tool["policy"]["max_memory_gib"], 96)
+                    self.assertEqual(upd_tool["config"]["auto_report_mode"], "deep")
+                    # Comments & custom rules preserved
+                    after_upd = disp.dispatch("spiceowl_direct_read", {"operation": "watch_script", "arguments": {}})
+                    self.assertIn("rule_custom_cmi", after_upd["rules"])
+                    self.assertIn("夜间自主处置总开关", after_upd["code"])
+                    # Scientific redline cannot be weakened
+                    with self.assertRaises(DomainError):
+                        disp.dispatch("spiceowl_direct_control", {
+                            "operation": "update_watch_config",
+                            "arguments": {"protect_netlist_and_spec": False},
+                        })
+
+                    # HTTP 1-click toggle endpoint
+                    st, cfg_res = req_json("POST", "/api/direct/watch-script/config", {"enabled": True})
+                    self.assertEqual(st, 200)
+                    self.assertTrue(cfg_res["script"]["config"]["enabled"])
+                    self.assertTrue(cfg_res["policy"]["enabled"])
+
                     st, tested = req_json("POST", "/api/direct/watch-script/test", {
                         "scenario": "confirmed_oom",
                     })

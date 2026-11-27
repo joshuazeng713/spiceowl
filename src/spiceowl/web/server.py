@@ -1263,6 +1263,25 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     "rules": saved.get("rules"),
                 })
                 return self.reply({"script": saved})
+            if path == "/api/direct/watch-script/config" and self.command in ("PUT", "POST"):
+                if url.query:
+                    raise DomainError("Watch script config update does not accept query parameters.")
+                req = self.body()
+                note = req.get("note")
+                source = req.get("source") or "user"
+                updates = {k: v for k, v in req.items() if k not in ("note", "source")}
+                if not updates:
+                    raise DomainError("Provide at least one CONFIG field to update.")
+                result = handoff_manager.update_watch_config(updates, source=source, note=note)
+                saved = result["script"]
+                record_ui_patch("direct_watch_script_updated", {
+                    "sha256": saved.get("sha256"),
+                    "source": saved.get("source"),
+                    "note": saved.get("note"),
+                    "rules": saved.get("rules"),
+                    "config": saved.get("config"),
+                })
+                return self.reply({"script": saved, "policy": result["policy"]})
             if path == "/api/direct/watch-script/test" and self.command == "POST":
                 if url.query:
                     raise DomainError("Watch script test does not accept query parameters.")

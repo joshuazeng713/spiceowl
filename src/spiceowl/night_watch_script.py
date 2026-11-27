@@ -861,6 +861,169 @@ def _apply_surgical_edits(current_code: str, edits: list[dict]) -> str:
     return updated
 
 
+_CONFIG_ALLOWED_KEYS = {
+    "enabled",
+    "auto_push_to_agent",
+    "queue_timeout_seconds",
+    "max_memory_gib",
+    "max_resubmissions",
+    "max_agent_resubmissions",
+    "license_retry_delay_seconds",
+    "preferred_hosts",
+    "auto_report_mode",
+    "protect_netlist_and_spec",
+}
+
+
+def _validate_config_updates(updates: dict) -> dict:
+    if not isinstance(updates, dict) or not updates:
+        raise DomainError("updates 必须是非空 JSON 对象。", "invalid_watch_script")
+    unknown = set(updates) - _CONFIG_ALLOWED_KEYS
+    if unknown:
+        raise DomainError(
+            f"update_watch_config 不支持的 CONFIG 字段：{', '.join(sorted(unknown))}。",
+            "invalid_watch_script",
+        )
+    if "protect_netlist_and_spec" in updates and updates["protect_netlist_and_spec"] is not True:
+        raise DomainError(
+            "科学红线 protect_netlist_and_spec 不允许关闭（严禁擅自修改原始网表、激励或验收标准）。",
+            "scientific_redline_violation",
+        )
+    normalized: dict = {}
+    for bool_key in ("enabled", "auto_push_to_agent", "protect_netlist_and_spec"):
+        if bool_key in updates:
+            if type(updates[bool_key]) is not bool:
+                raise DomainError(f"{bool_key} 必须是布尔值 (true/false)。", "invalid_watch_script")
+            normalized[bool_key] = updates[bool_key]
+    int_bounds = {
+        "queue_timeout_seconds": (60, 86400),
+        "max_memory_gib": (1, 1024),
+        "max_resubmissions": (0, 20),
+        "max_agent_resubmissions": (0, 20),
+        "license_retry_delay_seconds": (10, 7200),
+    }
+    for int_key, (lo, hi) in int_bounds.items():
+        if int_key in updates:
+            val = updates[int_key]
+            if type(val) is not int or not (lo <= val <= hi):
+                raise DomainError(f"{int_key} 必须是 {lo}~{hi} 之间的整数。", "invalid_watch_script")
+            normalized[int_key] = val
+    if "preferred_hosts" in updates:
+        raw_hosts = updates["preferred_hosts"]
+        if not isinstance(raw_hosts, list) or len(raw_hosts) > 64:
+            raise DomainError("preferred_hosts 必须是最多 64 项的字符串列表。", "invalid_watch_script")
+        clean_hosts: list[str] = []
+        for item in raw_hosts:
+            if not isinstance(item, str) or not item.strip() or len(item.strip()) > 128:
+                raise DomainError("preferred_hosts 中的每一项必须是非空主机名字符串。", "invalid_watch_script")
+            clean_hosts.append(item.strip())
+        normalized["preferred_hosts"] = clean_hosts
+    if "auto_report_mode" in updates:
+        mode = updates["auto_report_mode"]
+        if not isinstance(mode, str) or mode.strip().lower() not in ("fast", "deep"):
+            raise DomainError("auto_report_mode 必须是 'fast' 或 'deep'。", "invalid_watch_script")
+        normalized["auto_report_mode"] = mode.strip().lower()
+    return normalized
+
+
+def _format_python_literal(value) -> str:
+    if type(value) is bool:
+        return "True" if value else "False"
+    if type(value) is int:
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "[" + ", ".join(json.dumps(str(v), ensure_ascii=False) for v in value) + "]"
+    return repr(value)
+
+
+def _apply_config_updates(code: str, updates: dict) -> str:
+    """Surgically update literal values in top-level `CONFIG = { ... }` while preserving comments."""
+    normalized = _validate_config_updates(updates)
+    try:
+        tree = ast.parse(code, filename="night_watch.py")
+    except SyntaxError as exc:
+        raise DomainError(f"当前 night_watch.py 存在语法错误，无法局部更新 CONFIG：{exc.msg}", "invalid_watch_script") from None
+
+    config_dict_node: ast.Dict | None = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "CONFIG" and isinstance(node.value, ast.Dict):
+                    config_dict_node = node.value
+                    break
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == "CONFIG" and isinstance(node.value, ast.Dict):
+                config_dict_node = node.value
+        if config_dict_node is not None:
+            break
+
+    if config_dict_node is None:
+        raise DomainError("未在 night_watch.py 中找到顶层 CONFIG 字典，请使用 save_watch_script 更新。", "invalid_watch_script")
+
+    existing_keys: dict[str, ast.AST] = {}
+    for k_node, v_node in zip(config_dict_node.keys, config_dict_node.values):
+        if isinstance(k_node, ast.Constant) and isinstance(k_node.value, str):
+            existing_keys[k_node.value] = v_node
+
+    resolved_updates: dict = {}
+    for key, val in normalized.items():
+        if key == "max_agent_resubmissions" and "max_agent_resubmissions" not in existing_keys and "max_resubmissions" in existing_keys:
+            resolved_updates["max_resubmissions"] = val
+        elif key == "max_resubmissions" and "max_resubmissions" not in existing_keys and "max_agent_resubmissions" in existing_keys:
+            resolved_updates["max_agent_resubmissions"] = val
+        else:
+            resolved_updates[key] = val
+
+    lines = code.splitlines(keepends=True)
+    line_byte_starts: list[int] = []
+    acc = 0
+    for ln in lines:
+        line_byte_starts.append(acc)
+        acc += len(ln.encode("utf-8"))
+    code_bytes = code.encode("utf-8")
+
+    def _span(node: ast.AST) -> tuple[int, int]:
+        start = line_byte_starts[node.lineno - 1] + node.col_offset
+        end = line_byte_starts[node.end_lineno - 1] + node.end_col_offset
+        return start, end
+
+    replacements: list[tuple[int, int, bytes]] = []
+    missing_items: list[tuple[str, object]] = []
+    for key, val in resolved_updates.items():
+        if key in existing_keys:
+            s_off, e_off = _span(existing_keys[key])
+            replacements.append((s_off, e_off, _format_python_literal(val).encode("utf-8")))
+        else:
+            missing_items.append((key, val))
+
+    if missing_items:
+        _, dict_end = _span(config_dict_node)
+        close_idx = code_bytes.rfind(b"}", 0, dict_end)
+        if close_idx < 0:
+            raise DomainError("无法定位 CONFIG 字典结束位置。", "invalid_watch_script")
+        prefix_chunk = code_bytes[:close_idx].rstrip(b" \t\r\n")
+        need_comma = bool(existing_keys) and not prefix_chunk.endswith(b",") and not prefix_chunk.endswith(b"{")
+        if need_comma:
+            insert_pos = len(prefix_chunk)
+            insert_text = ",\n" + "".join(
+                f'    "{k}": {_format_python_literal(v)},\n' for k, v in missing_items
+            )
+            replacements.append((insert_pos, insert_pos, insert_text.encode("utf-8")))
+        else:
+            prefix_nl = "" if code_bytes[:close_idx].endswith(b"\n") else "\n"
+            insert_text = prefix_nl + "".join(
+                f'    "{k}": {_format_python_literal(v)},\n' for k, v in missing_items
+            )
+            replacements.append((close_idx, close_idx, insert_text.encode("utf-8")))
+
+    buf = bytearray(code_bytes)
+    for s_off, e_off, payload in sorted(replacements, key=lambda item: (item[0], item[1]), reverse=True):
+        buf[s_off:e_off] = payload
+    return buf.decode("utf-8")
+
+
 class NightWatchScriptStore:
     """Durable local store + AST validator + isolated subprocess dry-run runner for `night_watch.py`."""
 
@@ -1019,6 +1182,47 @@ class NightWatchScriptStore:
                     "updated_at": now,
                     "source": resolved_source,
                     "note": resolved_note,
+                },
+            )
+        return self.read()
+
+    def update_config(
+        self,
+        updates: dict,
+        *,
+        source: str = "user",
+        note: str | None = None,
+    ) -> dict:
+        """Fast 1-call surgical update of `CONFIG` keys in `night_watch.py` without touching rules or comments."""
+        if not isinstance(source, str) or not source.strip():
+            raise DomainError("source must be a non-empty string.", "invalid_watch_script")
+        clean_source = source.strip()[:64]
+        clean_note: str | None = None
+        if note is not None:
+            if not isinstance(note, str):
+                raise DomainError("note must be a string or null.", "invalid_watch_script")
+            stripped_note = note.strip()
+            if len(stripped_note) > 500:
+                raise DomainError("note exceeds 500 characters.", "invalid_watch_script")
+            clean_note = stripped_note or None
+
+        with self._locked():
+            self.ensure_initialized()
+            current_code = self.script_path.read_text(encoding="utf-8")
+            new_code = _apply_config_updates(current_code, updates)
+            validate_watch_script(new_code)
+            sha = _sha256_text(new_code)
+            now = utcnow()
+            _atomic_write_text(self.script_path, new_code)
+            auto_note = clean_note or ("更新夜间值守配置：" + ", ".join(f"{k}={updates[k]!r}" for k in updates))[:500]
+            _atomic_write_json(
+                self.meta_path,
+                {
+                    "schema": NIGHT_WATCH_SCRIPT_SCHEMA,
+                    "sha256": sha,
+                    "updated_at": now,
+                    "source": clean_source,
+                    "note": auto_note,
                 },
             )
         return self.read()

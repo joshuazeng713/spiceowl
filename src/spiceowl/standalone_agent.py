@@ -307,7 +307,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         def _overnight_policy_override(name, arguments):
             if name == 'spiceowl_direct_control' and isinstance(arguments, dict) and arguments.get('operation') in (
                 'render_fast_report', 'render_fast_scope_report', 'save_ai_report', 'save_scope_report',
-                'save_watch_script', 'test_watch_script',
+                'update_watch_config', 'save_watch_script', 'test_watch_script',
             ):
                 return 'read'
             policy = watch_mgr.get_policy()
@@ -687,6 +687,30 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                             'mode': saved.get('mode'),
                         })
                     return saved
+                if op == 'update_watch_config':
+                    note = params.get('note')
+                    source = params.get('source') or 'agent'
+                    updates = {k: v for k, v in params.items() if k not in ('note', 'source')}
+                    if not updates:
+                        raise DomainError('update_watch_config requires at least one CONFIG field (e.g. enabled, max_memory_gib).', 'invalid_tool_arguments')
+                    result = watch_mgr.update_watch_config(updates, source=source, note=note)
+                    saved = result['script']
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_watch_script_updated', {
+                            'sha256': saved.get('sha256'),
+                            'source': saved.get('source'),
+                            'note': saved.get('note'),
+                            'rules': saved.get('rules'),
+                            'config': saved.get('config'),
+                        })
+                    return {
+                        'ok': True,
+                        'config': result['config'],
+                        'policy': result['policy'],
+                        'sha256': result['sha256'],
+                        'updated_at': result['updated_at'],
+                        'note': result['note'],
+                    }
                 if op == 'save_watch_script':
                     unknown = set(params) - {'code', 'edits', 'note', 'reset', 'source'}
                     if unknown:

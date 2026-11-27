@@ -7,6 +7,22 @@ description: Night-watch recovery playbooks for known and unknown EDA simulation
 
 本技能定义 SpiceOwl Agent 处理已知与未知 EDA 仿真故障的夜间值守恢复剧本（Playbooks），以及阅读、修改并隔离试运行用户可编程值守脚本 `<state_dir>/night_watch.py` 的标准化作业流程。
 
+## 0. ⚡ 极速通道：开关值守与修改 `CONFIG` 参数（1 次调用，3 秒完成）
+
+当用户只是**开启/关闭夜间值守**、**开关异常自动唤醒 Agent**，或调整 `CONFIG` 数值参数（`max_memory_gib`、`queue_timeout_seconds`、`max_resubmissions`、`license_retry_delay_seconds`、`preferred_hosts`、`auto_report_mode`）时：
+- **直接 1 次调用零审批工具 `spiceowl_direct_control(operation="update_watch_config", ...)`**，一步同步改写 `night_watch.py` 的 `CONFIG` 与底层运行策略并实时刷新网页：
+  ```json
+  {
+    "operation": "update_watch_config",
+    "arguments": {
+      "enabled": false,
+      "note": "按用户要求关闭夜间值守"
+    }
+  }
+  ```
+- **铁律**：走极速通道时**无需先读取 456 行完整源码**、**无需拼写 `edits`**、**无需跑沙箱 Dry-Run**，调用返回 `ok: true` 后直接 1～2 句回复用户即可！
+- 若用户要求一键恢复默认模板，直接 1 次调用 `spiceowl_direct_control(operation="save_watch_script", arguments={"reset": true})` 即可，同样无需 Dry-Run。
+
 ## 1. 核心理念：用可编程 `night_watch.py` 取代僵化复选框
 
 - **不是僵化的静态复选框，而是人与 Agent 共同维护的 Python 规则脚本**：SpiceOwl 将用户的夜间值守逻辑直接落盘为 `<state_dir>/night_watch.py`。开箱即内置常见 EDA 仿真故障恢复规则，遇到任何新/未知仿真 Bug 或个性化值守习惯时，Agent 可直接帮用户阅读、修改并试运行检验 `night_watch.py`。

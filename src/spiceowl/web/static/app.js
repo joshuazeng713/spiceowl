@@ -1361,6 +1361,43 @@ async function saveWatchScript() {
   }
 }
 
+async function toggleWatchScriptEnabled() {
+  if (isPublicDemo() || watchScriptState.saving || watchScriptState.loading) return;
+  const currentConfig = watchScriptState.script?.config && typeof watchScriptState.script.config === 'object'
+    ? watchScriptState.script.config
+    : {};
+  const nextEnabled = currentConfig.enabled === false;
+  watchScriptState.saving = true;
+  watchScriptState.error = null;
+  render();
+  try {
+    const res = await api('/api/direct/watch-script/config', {
+      method: 'POST',
+      body: {
+        enabled: nextEnabled,
+        note: nextEnabled ? '网页一键开启夜间值守' : '网页一键暂停夜间值守',
+      },
+    });
+    const script = res?.script || null;
+    if (script) {
+      watchScriptState.script = script;
+      watchScriptState.draftCode = script.code || '';
+      watchScriptState.dirty = false;
+      watchScriptState.loaded = true;
+    }
+    if (res?.policy) {
+      watchState.policy = res.policy;
+    }
+    toast(nextEnabled ? '▶ 已开启夜间值守（脚本与运行策略已同步）' : '⏸ 已暂停夜间值守（脚本与运行策略已同步）');
+  } catch (error) {
+    watchScriptState.error = error.message || '切换夜间值守开关失败。';
+    toast(watchScriptState.error);
+  } finally {
+    watchScriptState.saving = false;
+    render();
+  }
+}
+
 async function resetWatchScriptToDefault() {
   if (isPublicDemo() || watchScriptState.saving || watchScriptState.loading) return;
   if (typeof window.confirm === 'function' && !window.confirm('确认将 night_watch.py 恢复为默认内置模板？当前自定义修改将被覆盖。')) return;
@@ -1560,6 +1597,7 @@ function directRecoveryReportsPanel() {
           </div>
         </div>
         <div class="watch-studio-actions">
+          <button type="button" class="button ${scriptPaused ? 'primary' : 'secondary'} small" data-action="watch-script-toggle" ${watchScriptState.saving || watchScriptState.loading ? 'disabled' : ''}>${scriptPaused ? '▶ 开启夜间值守' : '⏸ 暂停夜间值守'}</button>
           <button type="button" class="button primary small" data-action="watch-script-save" ${watchScriptState.saving || watchScriptState.loading ? 'disabled' : ''}>${watchScriptState.saving ? '保存中…' : '💾 保存脚本'}</button>
           <button type="button" class="button secondary small" data-action="watch-script-reset" ${watchScriptState.saving || watchScriptState.loading ? 'disabled' : ''}>↺ 恢复默认</button>
           <button type="button" class="button secondary small" data-action="watch-script-refresh" ${watchScriptState.loading ? 'disabled' : ''}>${watchScriptState.loading ? '加载中…' : '↻ 刷新'}</button>
@@ -8549,6 +8587,10 @@ document.addEventListener('click', async event => {
   const btn = event.target.closest?.('button[data-action^="watch-script-"]');
   if (!btn) return;
   const action = btn.dataset.action.slice(13);
+  if (action === 'toggle') {
+    await toggleWatchScriptEnabled();
+    return;
+  }
   if (action === 'save') {
     await saveWatchScript();
     return;

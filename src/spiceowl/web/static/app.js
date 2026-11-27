@@ -5364,7 +5364,11 @@ function receiveCodexEvent(event) {
     if (userItem) userItem.status = 'accepted';
     confirmCodexPending(event.request_key, turnId);
   }
-  if (!codexPanelState.selectedThread && threadId) codexPanelState.selectedThread = threadId;
+  if (status.thread_id && (!codexPanelState.selectedThread || (location.hash === '#direct' && codexPanelState.selectedThread !== status.thread_id))) {
+    codexPanelState.selectedThread = status.thread_id;
+  } else if (!codexPanelState.selectedThread && threadId && location.hash !== '#direct') {
+    codexPanelState.selectedThread = threadId;
+  }
 }
 
 async function refreshCodexStatus() {

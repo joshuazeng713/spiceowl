@@ -6274,7 +6274,7 @@ function renderCodexActivity() {
         : `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>`)
     : '';
   if ($('#codex-notices')) {
-    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pendingBanner}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">已折叠更早的历史记录，仅展示近期对话。</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">历史会话（只读）· 请切换回当前会话或点「新对话」继续。</p>' : ''}`;
+    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pendingBanner}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">已折叠更早的历史记录，仅展示近期对话。</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">历史会话（只读 · Historical conversation）· 请切换回当前会话或点「新对话」继续。</p>' : ''}`;
   }
   const evalOut = $('#codex-eval-output');
   if (evalOut) {

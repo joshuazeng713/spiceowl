@@ -273,6 +273,11 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 meta["testbench"] = payload.get("testbench")
                 meta["title"] = payload.get("title")
                 meta["mode"] = payload.get("mode")
+            elif kind == "direct_watch_script_updated" and isinstance(payload, dict):
+                meta["sha256"] = payload.get("sha256")
+                meta["source"] = payload.get("source")
+                meta["note"] = payload.get("note")
+                meta["rules"] = payload.get("rules")
             bridge_obj.emit_ui_patch(meta)
         return rev
 
@@ -1223,6 +1228,108 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 req = self.body()
                 updated = handoff_manager.update_policy(req)
                 return self.reply({"policy": updated})
+            if path == "/api/direct/watch-script" and self.command == "GET":
+                if url.query:
+                    raise DomainError("Watch script read does not accept query parameters.")
+                return self.reply({"script": handoff_manager.read_watch_script()})
+            if path == "/api/direct/watch-script" and self.command in ("PUT", "POST"):
+                if url.query:
+                    raise DomainError("Watch script save does not accept query parameters.")
+                req = self.body(max_bytes=320 * 1024)
+                allowed = {"code", "edits", "note", "reset", "source"}
+                if set(req) - allowed:
+                    raise DomainError("Watch script save accepts optional code, edits, note, reset, and source only.")
+                if "reset" in req and type(req["reset"]) is not bool:
+                    raise DomainError("reset must be boolean.")
+                if "code" in req and req["code"] is not None and not isinstance(req["code"], str):
+                    raise DomainError("code must be a string.")
+                if "note" in req and req["note"] is not None and not isinstance(req["note"], str):
+                    raise DomainError("note must be a string.")
+                if "source" in req and req["source"] is not None and not isinstance(req["source"], str):
+                    raise DomainError("source must be a string.")
+                saved = handoff_manager.save_watch_script(
+                    code=req.get("code"),
+                    edits=req.get("edits"),
+                    source=req.get("source") or "user",
+                    note=req.get("note"),
+                    reset=bool(req.get("reset", False)),
+                )
+                record_ui_patch("direct_watch_script_updated", {
+                    "sha256": saved.get("sha256"),
+                    "source": saved.get("source"),
+                    "note": saved.get("note"),
+                    "rules": saved.get("rules"),
+                })
+                return self.reply({"script": saved})
+            if path == "/api/direct/watch-script/test" and self.command == "POST":
+                if url.query:
+                    raise DomainError("Watch script test does not accept query parameters.")
+                req = self.body(max_bytes=320 * 1024)
+                allowed = {"scenario", "run_id", "log_excerpt", "code"}
+                if set(req) - allowed:
+                    raise DomainError("Watch script test accepts optional scenario, run_id, log_excerpt, and code only.")
+                code = req.get("code")
+                if code is not None and not isinstance(code, str):
+                    raise DomainError("code must be a string.")
+                scenario = req.get("scenario")
+                if scenario is not None and (not isinstance(scenario, str) or not scenario.strip()):
+                    raise DomainError("scenario must be a non-empty string.")
+                log_excerpt = req.get("log_excerpt")
+                if log_excerpt is not None and not isinstance(log_excerpt, str):
+                    raise DomainError("log_excerpt must be a string.")
+                raw_run_id = req.get("run_id")
+                run_record = None
+                report = None
+                host_pool = None
+                log_tail = log_excerpt or ""
+                if raw_run_id is not None and raw_run_id != "":
+                    run_id = require_id(raw_run_id, "direct run ID")
+                    run_record = direct_manager.read(run_id)
+                    try:
+                        report = direct_manager.report(run_id)
+                    except DomainError:
+                        report = None
+                    if not log_tail:
+                        run_dir = direct_manager.path(run_id)
+                        for rel in (("collected", "psf", "spectre.out"), ("collected", "console.log")):
+                            log_file = run_dir.joinpath(*rel)
+                            if log_file.is_file() and not log_file.is_symlink():
+                                try:
+                                    with log_file.open("rb") as fh:
+                                        fh.seek(0, 2)
+                                        size = fh.tell()
+                                        fh.seek(max(0, size - 65536))
+                                        log_tail = fh.read(65536).decode("utf-8", errors="replace")
+                                except OSError:
+                                    log_tail = ""
+                                break
+                    if hasattr(controller, "hosts") and controller.hosts is not None:
+                        host_pool = controller.hosts.list()
+                result = handoff_manager.test_watch_script(
+                    code=code,
+                    scenario=scenario or "queue_timeout",
+                    run_record=run_record,
+                    report=report,
+                    log_tail=log_tail,
+                    host_pool=host_pool,
+                )
+                return self.reply({"test_result": result})
+            if path == "/api/direct/watch-script/ai-edit" and self.command == "POST":
+                if url.query:
+                    raise DomainError("Watch script AI edit does not accept query parameters.")
+                req = self.body()
+                allowed = {"instruction", "run_id"}
+                if set(req) - allowed or "instruction" not in req:
+                    raise DomainError("Watch script AI edit requires instruction and optional run_id only.")
+                instruction = req.get("instruction")
+                if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 2000:
+                    raise DomainError("instruction must be a non-empty string of at most 2000 characters.")
+                raw_run_id = req.get("run_id")
+                run_id = None
+                if raw_run_id is not None and raw_run_id != "":
+                    run_id = require_id(raw_run_id, "direct run ID")
+                handoff = direct_supervisor.push_watch_script_edit(instruction.strip(), run_id=run_id)
+                return self.reply({"handoff": handoff}, 202)
             if path == "/api/direct/watch-events/simulate" and self.command == "POST":
                 req = self.body()
                 allowed = {"scenario"}

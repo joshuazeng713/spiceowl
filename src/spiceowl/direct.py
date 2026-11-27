@@ -2320,6 +2320,49 @@ class DirectRecoverySupervisor:
         except (ValueError, DomainError):
             return False
 
+    def _read_local_log_tail(self, run_id: str, *, max_bytes: int = 8192) -> str:
+        """Read the bounded tail of a collected simulator log if available locally."""
+        try:
+            collected_dir = self.manager.path(run_id) / "collected"
+        except DomainError:
+            return ""
+        candidates = (
+            collected_dir / "spectre.log",
+            collected_dir / "psf" / "spectre.out",
+            collected_dir / "ngspice.log",
+            collected_dir / "console.log",
+            collected_dir / "stderr.log",
+        )
+        for path in candidates:
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                size = path.stat().st_size
+                with path.open("rb") as stream:
+                    if size > max_bytes:
+                        stream.seek(size - max_bytes)
+                    data = stream.read(max_bytes)
+                text = data.decode("utf-8", errors="replace").strip()
+                if text:
+                    return text
+            except OSError:
+                continue
+        return ""
+
+    def _resolve_script_default_report_mode(self) -> str:
+        """Return `fast` or `deep` from `night_watch.py` CONFIG when available, else `fast`."""
+        if self.handoff_manager is None or not hasattr(self.handoff_manager, "read_watch_script"):
+            return "fast"
+        try:
+            info = self.handoff_manager.read_watch_script()
+            cfg = _as_dict(_as_dict(info).get("config"))
+            raw = str(cfg.get("auto_report_mode") or "").strip().lower()
+            if raw in ("fast", "deep"):
+                return raw
+        except Exception:
+            pass
+        return "fast"
+
     def _handoff_anomaly(self, anomaly_type: str, run_record: dict, summary: str = "", evidence: dict | None = None) -> None:
         if self.handoff_manager is None:
             return
@@ -2337,6 +2380,31 @@ class DirectRecoverySupervisor:
                     "performance": _as_dict(rep.get("functional_performance")).get("status"),
                     "soa": _as_dict(rep.get("operating_qualification")).get("status"),
                 }
+            enriched_evidence = deepcopy(evidence) if isinstance(evidence, dict) else {}
+            if hasattr(self.handoff_manager, "test_watch_script"):
+                try:
+                    host_pool = []
+                    try:
+                        host_pool = self.manager.hosts.list()
+                    except Exception:
+                        host_pool = []
+                    log_tail = self._read_local_log_tail(run_record["run_id"])
+                    root_id = run_record.get("root_run_id") or run_record["run_id"]
+                    resub_used = 0
+                    if hasattr(self.handoff_manager, "count_agent_resubmissions"):
+                        resub_used = int(self.handoff_manager.count_agent_resubmissions(root_id))
+                    eval_res = self.handoff_manager.test_watch_script(
+                        scenario=anomaly_type,
+                        run_record=run_record,
+                        report=rep,
+                        log_tail=log_tail,
+                        host_pool=host_pool,
+                        ctx={"anomaly_type": anomaly_type, "resubmissions_used": resub_used},
+                    )
+                    if isinstance(eval_res, dict) and eval_res.get("ok") and isinstance(eval_res.get("decision"), dict):
+                        enriched_evidence["script_decision"] = eval_res["decision"]
+                except Exception:
+                    pass
             self.handoff_manager.record_anomaly(
                 anomaly_type=anomaly_type,
                 run_id=run_record["run_id"],
@@ -2347,7 +2415,7 @@ class DirectRecoverySupervisor:
                 attempt_number=int(run_record.get("attempt_number") or 1),
                 summary=summary,
                 five_dim_summary=fd,
-                evidence=evidence,
+                evidence=enriched_evidence,
                 agent_pusher=self.agent_pusher,
             )
         except Exception:
@@ -2404,18 +2472,91 @@ class DirectRecoverySupervisor:
         self._check_queue_timeout(result)
         return result
 
+    def push_watch_script_edit(self, instruction: str, *, run_id: str | None = None) -> dict:
+        """Push a natural-language `night_watch.py` customization request to the connected Agent."""
+        from spiceowl.watch_handoff import build_watch_script_edit_prompt
+
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise DomainError("instruction must be a non-empty string.", "invalid_watch_script")
+        clean_instruction = instruction.strip()
+        if len(clean_instruction) > 2000:
+            raise DomainError("instruction exceeds 2000 characters.", "invalid_watch_script")
+        if self.handoff_manager is None or not hasattr(self.handoff_manager, "read_watch_script"):
+            raise DomainError("Watch handoff manager is not configured.", "watch_unavailable")
+
+        script_info = self.handoff_manager.read_watch_script()
+        clean_run_id: str | None = None
+        run_record = None
+        rep = None
+        log_tail = ""
+        if run_id is not None:
+            if not isinstance(run_id, str) or not run_id.strip():
+                raise DomainError("run_id must be a non-empty string or null.", "invalid_watch_script")
+            clean_run_id = run_id.strip()
+            try:
+                run_record = self.manager.read(clean_run_id)
+            except DomainError:
+                run_record = None
+            try:
+                rep = self.manager.report(clean_run_id)
+            except DomainError:
+                rep = None
+            log_tail = self._read_local_log_tail(clean_run_id)
+
+        req_key = f"watch-script-{uuid.uuid4().hex[:8]}"
+        if self.agent_pusher is None:
+            return {
+                "pushed": False,
+                "status": "no_agent_connected",
+                "thread_id": None,
+                "note": "当前未配置 Codex Agent 桥接。",
+                "request_key": req_key,
+            }
+
+        prompt = build_watch_script_edit_prompt(
+            clean_instruction,
+            script_info=script_info,
+            run_record=run_record,
+            report=rep,
+            log_tail=log_tail,
+        )
+        try:
+            raw_res = _as_dict(
+                self.agent_pusher(
+                    event={"kind": "watch_script_edit", "run_id": clean_run_id},
+                    prompt=prompt,
+                    request_key=req_key,
+                    policy={},
+                )
+            )
+        except DomainError as exc:
+            status_code = "agent_busy" if exc.code == "codex_turn_busy" else "push_error"
+            raw_res = {"pushed": False, "thread_id": None, "status": status_code, "note": str(exc)}
+        except Exception as exc:
+            raw_res = {"pushed": False, "thread_id": None, "status": "push_error", "note": str(exc)}
+
+        pushed = bool(raw_res.get("pushed"))
+        return {
+            "pushed": pushed,
+            "status": str(raw_res.get("status") or ("pushed" if pushed else "unknown")),
+            "thread_id": raw_res.get("thread_id"),
+            "note": str(raw_res.get("note") or ""),
+            "request_key": req_key,
+        }
+
     def push_completion_report(
         self,
         run_id: str,
         *,
         force: bool = False,
         custom_prompt: str | None = None,
-        mode: str = "fast",
+        mode: str | None = None,
     ) -> dict:
         """Push a structured completion report prompt to the connected Agent and persist receipt."""
         from spiceowl.watch_handoff import build_completion_report_prompt
 
-        report_mode = _normalize_push_report_mode(mode, err_code="invalid_ai_report")
+        effective_mode = self._resolve_script_default_report_mode() if mode is None else mode
+        report_mode = _normalize_push_report_mode(effective_mode, err_code="invalid_ai_report")
         clean_custom: str | None = None
         if custom_prompt is not None:
             if not isinstance(custom_prompt, str):

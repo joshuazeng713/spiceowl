@@ -38,9 +38,8 @@ let directState = {
   selectedId: null, detail: null, report: null, aiReport: null, lookup: null, error: null,
   directPollTimer: null, directPollInFlight: false, pendingRefresh: false,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
-  recoveryQuery: '', recoveryOutcome: '',
+  recoveryQuery: '', recoveryOutcome: '', recoveryHistoryOpen: false,
   watchEvents: [], watchPolicy: null, watchAgentConnected: false, watchAgentState: 'disconnected',
-  watchSimScenario: 'queue_timeout',
   wfIndex: null, wfDataset: '', wfSignals: [], wfQuery: null,
   wfWindow: {xMin: '', xMax: ''}, wfMaxPoints: 1200,
   wfToolMode: 'zoom', wfCursorA: null, wfCursorB: null, wfCursorNext: 'A',
@@ -51,6 +50,30 @@ let directState = {
   batches: [], selectedBatchId: null, batchDetail: null, batchMetric: '',
   batchBusy: false, batchError: null,
 };
+function createInitialWatchScriptState() {
+  return {
+    loaded: false,
+    loading: false,
+    saving: false,
+    testing: false,
+    aiBusy: false,
+    script: null,
+    draftCode: '',
+    dirty: false,
+    aiPrompt: '',
+    testScenario: 'queue_timeout',
+    testRunId: '',
+    testLogExcerpt: '',
+    testResult: null,
+    error: null,
+  };
+}
+let watchScriptState = createInitialWatchScriptState();
+let watchScriptPendingForce = false;
+function resetWatchScriptState() {
+  watchScriptState = createInitialWatchScriptState();
+  watchScriptPendingForce = false;
+}
 let overviewState = {
   project: '',
   testbench: '',
@@ -517,6 +540,7 @@ function disconnectConnector() {
   connectorState.phase = 'idle';
   connectorState.note = '';
   directState.loaded = false;
+  resetWatchScriptState();
   wizardState.loaded = false;
   live.loaded = false;
   codexPanelState.loaded = false;
@@ -688,6 +712,7 @@ window.addEventListener('message', async event => {
   const dlg = $('#connector-dialog');
   if (dlg?.open) dlg.close();
   directState.loaded = false;
+  resetWatchScriptState();
   wizardState.loaded = false;
   live.loaded = false;
   codexPanelState.loaded = false;
@@ -1050,8 +1075,14 @@ async function pollDirectRunsSilently() {
       directState.wfIndex = detail.waveforms || null;
     }
     renderSidebarRecentRuns();
-    const activeTag = String(document.activeElement?.tagName || '').toUpperCase();
-    const editingField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag);
+    const activeEl = document.activeElement;
+    const activeTag = String(activeEl?.tagName || '').toUpperCase();
+    const activeId = String(activeEl?.id || '');
+    const editingWatch = ['watch-script-editor', 'watch-script-ai-input', 'watch-script-test-log', 'watch-script-test-scenario'].includes(activeId)
+      || Boolean(activeEl?.closest?.('#watch-script-ai-form, .watch-studio-card'));
+    const editingField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)
+      || editingWatch
+      || (curHash === '#direct' && directState.activeTab === 'recovery' && watchScriptState.dirty);
     if (!editingField && ['#overview', '#direct'].includes(curHash)) {
       render();
     }
@@ -1198,18 +1229,248 @@ function recoveryOutcomeChip(outcome) {
   return chip(label, color);
 }
 
+function normalizeWatchRules(rules) {
+  if (!Array.isArray(rules)) return [];
+  return rules.map(item => {
+    if (typeof item === 'string') return {name: item, doc: ''};
+    if (item && typeof item === 'object') {
+      return {
+        name: String(item.name || item.id || item.rule || ''),
+        doc: String(item.doc || item.description || item.summary || ''),
+      };
+    }
+    return {name: '', doc: ''};
+  }).filter(item => item.name);
+}
+
+function watchScriptSourceLabel(script) {
+  if (!script) return '加载中…';
+  const src = String(script.source || '').toLowerCase();
+  if (script.is_default || src === 'default' || src === 'template' || src === 'reset') return '默认模板';
+  if (src === 'ai' || src === 'agent' || src === 'ai_edit' || src === 'codex' || src === 'mcp') return 'AI 定制';
+  if (src === 'manual' || src === 'user' || src === 'web' || src === 'editor' || src === 'ui') return '手动编辑';
+  return script.source || '已自定义';
+}
+
+async function refreshWatchScript({force = false} = {}) {
+  if (isPublicDemo()) return null;
+  if (watchScriptState.loading) {
+    if (force) watchScriptPendingForce = true;
+    return null;
+  }
+  if (watchScriptState.loaded && !force) return watchScriptState.script;
+  watchScriptState.loading = true;
+  watchScriptState.error = null;
+  try {
+    const data = await api('/api/direct/watch-script');
+    const script = data?.script || null;
+    watchScriptState.script = script;
+    if (script && typeof script.code === 'string' && (force || !watchScriptState.dirty || !watchScriptState.loaded)) {
+      watchScriptState.draftCode = script.code;
+      watchScriptState.dirty = false;
+    }
+    watchScriptState.loaded = true;
+    return script;
+  } catch (error) {
+    watchScriptState.error = error.message || '读取 night_watch.py 失败。';
+    return null;
+  } finally {
+    watchScriptState.loading = false;
+    const shouldReRun = watchScriptPendingForce;
+    watchScriptPendingForce = false;
+    if (location.hash === '#direct' && directState.activeTab === 'recovery') {
+      const activeId = String(document.activeElement?.id || '');
+      if (activeId !== 'watch-script-editor' || force) {
+        render();
+      }
+    }
+    if (shouldReRun) {
+      void refreshWatchScript({force: true});
+    }
+  }
+}
+
+async function saveWatchScript() {
+  if (isPublicDemo() || watchScriptState.saving || watchScriptState.loading) return;
+  const code = typeof watchScriptState.draftCode === 'string' ? watchScriptState.draftCode : (watchScriptState.script?.code || '');
+  watchScriptState.saving = true;
+  watchScriptState.error = null;
+  render();
+  try {
+    const res = await api('/api/direct/watch-script', {
+      method: 'PUT',
+      body: {code, note: '网页编辑器手动保存'},
+    });
+    const script = res?.script || null;
+    watchScriptState.script = script;
+    if (script && typeof script.code === 'string') {
+      watchScriptState.draftCode = script.code;
+    }
+    watchScriptState.dirty = false;
+    watchScriptState.loaded = true;
+    if (script && script.valid === false) {
+      toast(`⚠ 脚本已保存，但检测到语法错误：${script.syntax_error || '请检查 Python 语法'}`);
+    } else {
+      toast('💾 已保存 night_watch.py 夜间值守脚本！');
+    }
+  } catch (error) {
+    watchScriptState.error = error.message || '保存脚本失败。';
+    toast(watchScriptState.error);
+  } finally {
+    watchScriptState.saving = false;
+    render();
+  }
+}
+
+async function resetWatchScriptToDefault() {
+  if (isPublicDemo() || watchScriptState.saving || watchScriptState.loading) return;
+  if (typeof window.confirm === 'function' && !window.confirm('确认将 night_watch.py 恢复为默认内置模板？当前自定义修改将被覆盖。')) return;
+  watchScriptState.saving = true;
+  watchScriptState.error = null;
+  render();
+  try {
+    const res = await api('/api/direct/watch-script', {
+      method: 'PUT',
+      body: {reset: true},
+    });
+    const script = res?.script || null;
+    watchScriptState.script = script;
+    watchScriptState.draftCode = script?.code || '';
+    watchScriptState.dirty = false;
+    watchScriptState.loaded = true;
+    watchScriptState.testResult = null;
+    toast('↺ 已恢复为默认 night_watch.py 夜间值守脚本模板。');
+  } catch (error) {
+    watchScriptState.error = error.message || '恢复默认脚本失败。';
+    toast(watchScriptState.error);
+  } finally {
+    watchScriptState.saving = false;
+    render();
+  }
+}
+
+async function runWatchScriptTest() {
+  if (isPublicDemo() || watchScriptState.testing || watchScriptState.loading) return;
+  watchScriptState.testing = true;
+  watchScriptState.error = null;
+  render();
+  try {
+    const code = watchScriptState.draftCode || watchScriptState.script?.code || '';
+    const body = {code};
+    if (watchScriptState.testRunId) {
+      body.run_id = watchScriptState.testRunId;
+      body.scenario = watchScriptState.testScenario || 'unknown_bug';
+    } else {
+      body.scenario = watchScriptState.testScenario || 'queue_timeout';
+    }
+    const excerpt = String(watchScriptState.testLogExcerpt || '').trim();
+    if (excerpt) body.log_excerpt = excerpt;
+    const res = await api('/api/direct/watch-script/test', {method: 'POST', body});
+    watchScriptState.testResult = res?.test_result || res || null;
+    if (watchScriptState.testResult?.ok) {
+      const ruleName = watchScriptState.testResult?.decision?.rule || '默认兜底';
+      const actionName = watchScriptState.testResult?.decision?.action || '—';
+      toast(`▶ 试运行通过：命中 ${ruleName} → ${actionName}`);
+    } else {
+      toast('⚠ 试运行发现异常，请查看下方诊断输出。');
+    }
+  } catch (error) {
+    watchScriptState.error = error.message || '试运行脚本失败。';
+    toast(watchScriptState.error);
+  } finally {
+    watchScriptState.testing = false;
+    render();
+  }
+}
+
+async function submitWatchScriptAiEdit() {
+  if (isPublicDemo() || watchScriptState.aiBusy) return;
+  const inputEl = $('#watch-script-ai-input');
+  const instruction = String(watchScriptState.aiPrompt || inputEl?.value || '').trim();
+  if (!instruction) {
+    toast('请先输入你希望 AI 修改或新增的夜间值守规则说明。');
+    if (inputEl) inputEl.focus();
+    return;
+  }
+  watchScriptState.aiPrompt = instruction;
+  watchScriptState.aiBusy = true;
+  watchScriptState.error = null;
+  render();
+  try {
+    const body = {instruction};
+    if (watchScriptState.testRunId) body.run_id = watchScriptState.testRunId;
+    const res = await api('/api/direct/watch-script/ai-edit', {method: 'POST', body});
+    if (isStandaloneAgent()) {
+      if (!codexPanelState.status?.connected) void refreshCodexStatus();
+      else openCodexEvents();
+    }
+    const handoff = res?.handoff || {};
+    if (handoff.pushed === false) {
+      toast(handoff.note || '当前未检测到已连接的 Agent，请先在首页连接本机 Codex Agent 后重试。');
+    } else {
+      watchScriptState.aiPrompt = '';
+      toast('✨ 已推送给 AI，正在按 spiceowl-night-watch 规范编辑并试运行 night_watch.py…');
+    }
+  } catch (error) {
+    watchScriptState.error = error.message || '推送 AI 修改请求失败。';
+    toast(watchScriptState.error);
+  } finally {
+    watchScriptState.aiBusy = false;
+    render();
+  }
+}
+
+function renderWatchTestResult(tr) {
+  if (!tr || typeof tr !== 'object') return '';
+  const ok = Boolean(tr.ok);
+  const dec = (tr.decision && typeof tr.decision === 'object') ? tr.decision : null;
+  const durationLabel = Number.isFinite(Number(tr.duration_ms)) ? `${Number(tr.duration_ms).toFixed(1)} ms` : '';
+  const ruleLabel = dec?.rule || dec?.matched_rule || '—';
+  const actionLabel = dec?.action || '—';
+  const reasonText = dec?.reason || dec?.summary || '';
+  const overrides = dec?.overrides && typeof dec.overrides === 'object' && Object.keys(dec.overrides).length ? dec.overrides : null;
+  const completedHook = tr.completed_hook && typeof tr.completed_hook === 'object' && Object.keys(tr.completed_hook).length ? tr.completed_hook : null;
+  const actionTone = ['resubmit', 'retry', 'migrate', 'scale_memory', 'auto_recover'].some(k => String(actionLabel).includes(k))
+    ? 'green'
+    : ['handoff', 'notify', 'agent', 'pause', 'review'].some(k => String(actionLabel).includes(k))
+    ? 'amber'
+    : 'blue';
+  return `
+    <div class="watch-test-result ${ok ? 'is-ok' : 'is-fail'}" role="status">
+      <div class="watch-test-result-head">
+        <div class="watch-test-result-badges">
+          ${ok ? chip('试运行通过 · Dry-Run OK', 'green') : chip('试运行失败 · Dry-Run Error', 'red')}
+          ${tr.scenario ? `<span class="chip">场景：${escape(tr.scenario)}</span>` : ''}
+          ${durationLabel ? `<span class="subtle-note">耗时 ${escape(durationLabel)}</span>` : ''}
+        </div>
+        ${dec ? `<span class="chip ${actionTone}">决策：${escape(actionLabel)}</span>` : ''}
+      </div>
+      ${dec ? `
+        <div class="watch-test-kv">
+          <div><span>命中规则 (decision.rule)</span><code>${escape(ruleLabel)}</code></div>
+          <div><span>执行动作 (decision.action)</span><code>${escape(actionLabel)}</code></div>
+          ${reasonText ? `<div class="watch-test-kv-wide"><span>判定依据 (decision.reason)</span><p>${escape(reasonText)}</p></div>` : ''}
+        </div>` : ''}
+      ${overrides ? `<div class="watch-test-block"><strong>参数覆写 (overrides)</strong><pre class="watch-test-json">${escape(JSON.stringify(overrides, null, 2))}</pre></div>` : ''}
+      ${tr.error ? `<div class="watch-test-block"><strong>错误信息</strong><pre class="watch-test-err">${escape(tr.error)}</pre></div>` : ''}
+      ${tr.stderr ? `<div class="watch-test-block"><strong>标准错误 (stderr)</strong><pre class="watch-test-err">${escape(tr.stderr)}</pre></div>` : ''}
+      ${tr.stdout ? `<details class="watch-test-io"><summary>标准输出 (stdout)</summary><pre>${escape(tr.stdout)}</pre></details>` : ''}
+      ${completedHook ? `<details class="watch-test-io"><summary>完成钩子输出 (on_run_completed)</summary><pre>${escape(JSON.stringify(completedHook, null, 2))}</pre></details>` : ''}
+    </div>`;
+}
+
 function directRecoveryReportsPanel() {
   const pub = isPublicDemo();
   if (pub) {
     return `
       <section class="panel direct-panel direct-rec-panel" data-public-demo-info="direct-recovery">
         <div class="section-title">
-          <h2>夜间值守与自动恢复</h2>
+          <h2>夜间值守与可编程恢复脚本（night_watch.py）</h2>
           ${chip('未连接本机', '')}
         </div>
         <div class="empty" style="margin:8px 0 4px">
-          <h2>连接本机连接器以开启夜间值守与自动恢复</h2>
-          <p>连上本机后，排队超时、License 阻塞或 OOM 异常会自动记录并推送给你的 Codex Agent，在睡前授权边界内自动换机、扩内存并留痕归档，严禁修改原始网表与科学条件。</p>
+          <h2>连接本机连接器，解锁可编程夜间值守 Studio</h2>
+          <p>夜间值守由一份自带详细注释、可由你和 Agent 任意 DIY 定制的 <code>night_watch.py</code> 脚本驱动——内置排队超时、OOM、License 阻塞、收敛异常与未知 Bug 兜底规则，遇到新 Bug 直接让 Agent 改代码并一键试运行验证（严禁擅自修改原始网表与科学条件）。</p>
           <div class="direct-actions" style="justify-content:center">
             <button type="button" class="button primary" data-action="connector-open">🔌 连接本机连接器</button>
             <a class="button secondary" href="#quickstart">返回首页与连接 →</a>
@@ -1217,6 +1478,124 @@ function directRecoveryReportsPanel() {
         </div>
       </section>`;
   }
+
+  const script = watchScriptState.script;
+  const config = (script && typeof script.config === 'object' && script.config) ? script.config : {};
+  const rules = normalizeWatchRules(script?.rules);
+  const draftCode = watchScriptState.draftCode || script?.code || '';
+  const lineCount = draftCode ? draftCode.split(/\r?\n/).length : (Number(script?.line_count) || 0);
+  const scriptPaused = config.enabled === false;
+  const sourceLabel = watchScriptSourceLabel(script);
+  const updatedLabel = script?.updated_at ? new Date(script.updated_at).toLocaleString() : '';
+
+  const ruleTagsHtml = rules.length
+    ? rules.map(r => `<code class="watch-rule-tag" title="${escape(r.doc || r.name)}">${escape(r.name)}</code>`).join('')
+    : `<span class="subtle-note">${watchScriptState.loading ? '正在解析规则列表…' : '暂无已解析规则'}</span>`;
+
+  const builtinScenarios = [
+    ['queue_timeout', '排队超时 (queue_timeout)'],
+    ['confirmed_oom', '确认 OOM (confirmed_oom)'],
+    ['license_unavailable', 'License 阻塞 (license_unavailable)'],
+    ['convergence_failure', '收敛失败 (convergence_failure)'],
+    ['unknown_bug', '未知新 Bug (unknown_bug)'],
+  ];
+  const selectedScenarioVal = watchScriptState.testRunId
+    ? `run:${watchScriptState.testRunId}`
+    : (watchScriptState.testScenario || 'queue_timeout');
+  const realRuns = Array.isArray(directState.runs) ? directState.runs : [];
+  const realRunOptionsHtml = realRuns.length
+    ? `<optgroup label="使用真实仿真记录日志测试">${realRuns.slice(0, 30).map(r => `<option value="run:${escape(r.run_id)}" ${selectedScenarioVal === `run:${r.run_id}` ? 'selected' : ''}>真实任务：${escape(r.run_id)} (${escape(r.host_id || '-')} · ${escape(r.state || '-')})</option>`).join('')}</optgroup>`
+    : '';
+
+  const studioCard = `
+    <section class="panel direct-panel direct-rec-panel watch-studio-card">
+      <div class="watch-studio-head">
+        <div class="watch-studio-title-group">
+          <h2>夜间值守与可编程恢复脚本（night_watch.py）</h2>
+          <div class="watch-studio-chips">
+            ${scriptPaused ? chip('脚本已暂停', 'amber') : chip('夜间值守已启用', 'green')}
+            <span class="chip">Skill: spiceowl-night-watch</span>
+            <span class="chip">${rules.length} 条规则</span>
+            ${script && script.valid === false ? chip('语法错误', 'red') : ''}
+            <span id="watch-script-dirty-badge" class="chip amber" ${watchScriptState.dirty ? '' : 'hidden'}><i class="dot"></i>未保存修改</span>
+          </div>
+        </div>
+        <div class="watch-studio-actions">
+          <button type="button" class="button primary small" data-action="watch-script-save" ${watchScriptState.saving || watchScriptState.loading ? 'disabled' : ''}>${watchScriptState.saving ? '保存中…' : '💾 保存脚本'}</button>
+          <button type="button" class="button secondary small" data-action="watch-script-reset" ${watchScriptState.saving || watchScriptState.loading ? 'disabled' : ''}>↺ 恢复默认</button>
+          <button type="button" class="button secondary small" data-action="watch-script-refresh" ${watchScriptState.loading ? 'disabled' : ''}>${watchScriptState.loading ? '加载中…' : '↻ 刷新'}</button>
+        </div>
+      </div>
+      <p class="subtle-note">夜间值守由你本机的 <code>night_watch.py</code> 驱动：可直接手改规则或用自然语言指挥 Agent 按 <code>spiceowl-night-watch</code> 规范编写与试运行验证（🔒 科学红线锁定：严禁擅自修改原始网表、激励与验收标准）。</p>
+      ${watchScriptState.error ? `<p class="error-text" role="alert">${escape(watchScriptState.error)}</p>` : ''}
+      ${script && script.valid === false && script.syntax_error ? `<p class="error-text" role="alert">Python 语法错误：${escape(script.syntax_error)}</p>` : ''}
+
+      <div class="watch-ai-bar">
+        <form id="watch-script-ai-form" class="watch-ai-form">
+          <input
+            id="watch-script-ai-input"
+            type="text"
+            value="${escape(watchScriptState.aiPrompt)}"
+            placeholder="用自然语言指挥 Agent 修改或新增夜间值守规则（例如：“遇到 FlexLM License 队列满时每隔 5 分钟重试最多 6 次”或“针对刚才的新报错新增一条恢复规则”）…"
+            autocomplete="off"
+            ${watchScriptState.aiBusy ? 'disabled' : ''}
+          >
+          <button type="submit" class="button primary small" ${watchScriptState.aiBusy ? 'disabled' : ''}>${watchScriptState.aiBusy ? '推送中…' : '✨ 让 AI 修改脚本'}</button>
+        </form>
+        <div class="watch-quick-chips">
+          <button type="button" class="watch-quick-chip" data-action="watch-script-quick-prompt" data-prompt="新增一条自定义报错恢复规则：匹配日志中的特定报错关键字后执行安全的退避重试或迁移主机，严禁改动原始网表，改完后试运行验证。" ${watchScriptState.aiBusy ? 'disabled' : ''}>＋ 添加自定义报错规则</button>
+          <button type="button" class="watch-quick-chip" data-action="watch-script-quick-prompt" data-prompt="调整 night_watch.py 中 CONFIG 的夜间内存上限、排队超时阈值与优先主机列表，并试运行验证。" ${watchScriptState.aiBusy ? 'disabled' : ''}>⚙ 调整内存上限与优先主机</button>
+          <button type="button" class="watch-quick-chip" data-action="watch-script-quick-prompt" data-prompt="定制 night_watch.py 的 on_run_completed 钩子：仿真完成后按任务特征自动生成深度或快速仿真报告，并试运行验证。" ${watchScriptState.aiBusy ? 'disabled' : ''}>📊 完成后自动生成深度/快速报告</button>
+        </div>
+      </div>
+
+      <div class="watch-editor-wrap">
+        <div class="watch-editor-meta">
+          <div class="watch-editor-meta-left">
+            <strong>📄 night_watch.py</strong>
+            <span id="watch-script-line-count" class="watch-meta-item">共 ${lineCount} 行</span>
+            <span class="watch-meta-item">${escape(sourceLabel)}</span>
+            ${script?.note ? `<span class="watch-meta-note" title="${escape(script.note)}">· ${escape(script.note)}</span>` : ''}
+          </div>
+          ${updatedLabel ? `<span class="watch-meta-time">更新于 ${escape(updatedLabel)}</span>` : ''}
+        </div>
+        <div class="watch-rule-tags" aria-label="当前生效规则列表">
+          <span class="watch-rule-label">BUG_RULES</span>
+          ${ruleTagsHtml}
+        </div>
+        <textarea
+          id="watch-script-editor"
+          class="watch-script-editor"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          aria-label="night_watch.py 代码编辑器"
+          placeholder="${watchScriptState.loading ? '正在加载 night_watch.py…' : '# 在此查看或编辑 night_watch.py（支持 Tab 缩进与 Ctrl/Cmd+S 保存）'}"
+        >${escape(draftCode)}</textarea>
+      </div>
+
+      <div class="watch-test-bar">
+        <div class="watch-test-controls">
+          <select id="watch-script-test-scenario" aria-label="试运行场景">
+            <optgroup label="内置异常场景">
+              ${builtinScenarios.map(([val, label]) => `<option value="${escape(val)}" ${selectedScenarioVal === val ? 'selected' : ''}>${escape(label)}</option>`).join('')}
+            </optgroup>
+            ${realRunOptionsHtml}
+          </select>
+          <input
+            id="watch-script-test-log"
+            type="text"
+            value="${escape(watchScriptState.testLogExcerpt)}"
+            placeholder="可选：粘贴一段报错日志用于测试自定义规则…"
+            autocomplete="off"
+          >
+          <button type="button" class="button primary small" data-action="watch-script-test" ${watchScriptState.testing || watchScriptState.loading ? 'disabled' : ''}>${watchScriptState.testing ? '试运行中…' : '▶ 试运行检验 (Dry-Run)'}</button>
+        </div>
+        ${renderWatchTestResult(watchScriptState.testResult)}
+      </div>
+    </section>`;
+
   const rows = directState.recoveryReports || [];
   const detail = directState.recoveryDetail?.report || null;
   const markdown = directState.recoveryDetail?.markdown || '';
@@ -1242,11 +1621,6 @@ function directRecoveryReportsPanel() {
     detailHtml = `<div class="direct-rec-card"><div class="section-title"><h3>恢复报告详情 · ${escape(detail.root_run_id)}</h3>${recoveryOutcomeChip(detail.outcome)}</div><p>${escape(detail.summary_zh)}</p><div class="direct-rec-integrity"><strong>输入完整性验证：</strong><span>网表 SHA-256 ${integrity.preserved_across_all_attempts ? '全程一致 ✓' : '存在差异'}</span><span>·</span><span>科学条件未修改 ✓</span><span>·</span><span>预算：尝试 ${budget.attempts_used}/${budget.max_recovery_attempts} 次 · 峰值内存 ${((budget.peak_memory_bytes || 0) / 2**30).toFixed(2)} / ${((budget.max_memory_bytes || 0) / 2**30).toFixed(2)} GiB</span></div><div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>尝试</th><th>Run ID</th><th>主机</th><th>内存</th><th>Job ID</th><th>执行状态</th><th>故障类</th><th>五维结论 (执行/测量/性能/SOA)</th></tr></thead><tbody>${attemptRows}</tbody></table></div><h4>恢复决策与变更记录</h4><ol class="direct-rec-decisions">${decisionRows || '<li>暂无决策记录。</li>'}</ol><div class="direct-actions"><button type="button" class="button secondary small" data-action="direct-rec-download" data-id="${escape(detail.root_run_id)}">下载 Markdown 报告 (.md)</button></div><details class="host-form-details"><summary>查看完整 Markdown 报告（本地路径：${escape(detail.markdown_path || '未记录')}）</summary><pre class="direct-rec-md">${escape(markdown)}</pre></details></div>`;
   }
 
-  const wp = directState.watchPolicy || {
-    enabled: false, auto_push_to_agent: true, queue_timeout_seconds: 1800,
-    allow_host_migration: true, allow_memory_scale: true, max_memory_gib: 64,
-    allow_sim_option_tuning: true, max_agent_resubmissions: 3, protect_netlist_and_spec: true,
-  };
   const watchStateChip = s => {
     if (s === 'resolved_resubmitted') return chip('Agent 已重提解决', 'green');
     if (s === 'awaiting_morning_review') return chip('留待早起人工审阅', 'amber');
@@ -1254,19 +1628,35 @@ function directRecoveryReportsPanel() {
     if (s === 'dismissed') return chip('已归档', '');
     return chip('已记录待认领', '');
   };
-  const watchRowsHtml = (directState.watchEvents || []).length
-    ? directState.watchEvents.map(ev => {
+  const watchEvents = directState.watchEvents || [];
+  const watchRowsHtml = watchEvents.length
+    ? watchEvents.map(ev => {
       const dec = ev.agent_decision;
       const resRows = (dec?.resource_assessment || []).map(r => `<tr><td><code>${escape(r.host_id)}</code></td><td>${escape(r.idle_cpus ?? '-')} 核</td><td>${escape(r.available_gib ?? '-')} GiB</td><td>${escape(r.verdict || '-')}</td></tr>`).join('');
       const cfgDiff = dec?.config_changes ? Object.entries(dec.config_changes).map(([k, v]) => `<li><code>${escape(k)}</code>：${escape(typeof v === 'object' && v !== null && 'from' in v ? `${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}` : String(v))}</li>`).join('') : '';
       const tlRows = (ev.timeline || []).map(t => `<li><strong>[${escape(t.actor)}]</strong> ${escape(t.note)} <span class="subtle-note">(${escape(String(t.at || '').slice(11, 19))})</span></li>`).join('');
       return `<div class="direct-rec-card"><div class="section-title"><strong>🦉 ${escape(ev.anomaly_type)} · <code>${escape(ev.run_id)}</code></strong>${watchStateChip(ev.state)}</div><p class="subtle-note">${escape(ev.summary)}</p><div class="direct-rec-integrity"><span>原主机：<code>${escape(ev.host_id)}</code> (${escape(ev.backend)})</span><span>·</span><span>Agent 推送：${ev.agent_handoff?.pushed ? '已自动唤醒 ✓' : escape(ev.agent_handoff?.push_status || '待推送')}</span>${ev.new_run_id ? `<span>·</span><span>新提交：<code>${escape(ev.new_run_id)}</code></span>` : ''}</div>${dec ? `<p style="margin-top:8px"><strong>Agent 排查结论与依据：</strong>${escape(dec.rationale)}</p>` : ''}${resRows ? `<div class="direct-rec-table-wrap"><table class="direct-rec-table"><thead><tr><th>主机节点</th><th>空闲 CPU</th><th>可用内存</th><th>SpiceOwl 资源评估</th></tr></thead><tbody>${resRows}</tbody></table></div>` : ''}${cfgDiff ? `<h4>配置变更与科学红线校验</h4><ul class="direct-rec-decisions">${cfgDiff}</ul>` : ''}${tlRows ? `<details><summary>查看完整夜间值守时间线（${(ev.timeline || []).length} 步）与 Agent 交接提示词</summary><ol class="direct-rec-decisions">${tlRows}</ol>${ev.agent_handoff?.prompt_preview ? `<pre class="direct-rec-md">${escape(ev.agent_handoff.prompt_preview)}</pre>` : ''}</details>` : ''}${!ev.agent_handoff?.pushed ? `<div class="direct-actions" style="margin-top:8px"><button type="button" class="button secondary small" data-action="direct-watch-push" data-id="${escape(ev.event_id)}">立即推送给已连接的 Agent</button></div>` : ''}</div>`;
     }).join('')
-    : '<p class="subtle-note">暂无夜间值守异常记录。点上方按钮可一键演练「排队超时 / OOM → 推送给用户 Agent → 查机房资源并重提 → 早上网页验收」全流程。</p>';
+    : '<p class="subtle-note">暂无夜间值守触发记录。可使用上方「▶ 试运行检验 (Dry-Run)」即时验证规则；当真实夜间仿真触发异常时，完整交接时间线会自动留痕在这里。</p>';
 
-  const watchHandoffCard = `<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>夜间值守与 Agent 自主交接中心（无外部软件打扰 · 仅网页留痕）</h2>${chip('人类安心睡眠 · AGENT HANDOFF', 'green')}</div><p class="subtle-note">兑现 <em>“你去休息，仿真我盯”</em>：不接入外部聊天催命符，所有排队超时、License 阻塞、OOM 或收敛异常只在网页端安静留痕，并自动推送给您接入的 Agent（Codex / CircuitGit 宿主），由 Agent 查 SpiceOwl 实时主机资源、在授权边界内换主机/扩内存/调配置并提交可追溯新任务；超出边界或涉及网表改动则暂停留待早起人工审阅。</p><details class="host-form-details" open><summary>睡前自治授权边界（Overnight Autonomy Policy · Agent 状态：${directState.watchAgentConnected ? '已连接' : '演示/待连接'}）</summary><div class="direct-grid" style="margin-top:8px"><label class="check-row"><input id="wp-enabled" type="checkbox" ${wp.enabled ? 'checked' : ''}> 开启夜间 Agent 自主处置（边界内免人工弹窗）</label><label class="check-row"><input id="wp-autopush" type="checkbox" ${wp.auto_push_to_agent ? 'checked' : ''}> 异常发生时自动唤醒我接入的 Agent</label><label class="check-row"><input id="wp-migrate" type="checkbox" ${wp.allow_host_migration ? 'checked' : ''}> 允许 Agent 迁移至更空闲主机</label><label class="check-row"><input id="wp-mem" type="checkbox" ${wp.allow_memory_scale ? 'checked' : ''}> 允许 Agent 扩配内存</label><label class="check-row"><input id="wp-opt" type="checkbox" ${wp.allow_sim_option_tuning ? 'checked' : ''}> 允许调整队列/线程/仿真选项</label><label>排队超时阈值（秒）<input id="wp-qtimeout" type="number" min="30" max="86400" value="${escape(wp.queue_timeout_seconds)}"></label><label>夜间内存上限（GiB）<input id="wp-maxmem" type="number" min="1" max="1024" value="${escape(wp.max_memory_gib)}"></label><label>最多自主重提次数<input id="wp-maxresub" type="number" min="0" max="10" value="${escape(wp.max_agent_resubmissions)}"></label></div><div class="direct-actions" style="margin-top:8px"><button type="button" class="button secondary small" data-action="direct-watch-policy-save">保存睡前自治边界</button><span class="subtle-note">🔒 科学红线强制锁定：严禁擅自修改原始网表、激励或验收标准。</span></div></details><div class="direct-rec-filters" style="margin-top:12px"><select id="watch-sim-scenario"><option value="queue_timeout" ${directState.watchSimScenario === 'queue_timeout' ? 'selected' : ''}>场景 1：排队超时 → Agent 换空闲主机重提</option><option value="confirmed_oom" ${directState.watchSimScenario === 'confirmed_oom' ? 'selected' : ''}>场景 2：确认 OOM → Agent 扩内存重提</option><option value="convergence_needs_review" ${directState.watchSimScenario === 'convergence_needs_review' ? 'selected' : ''}>场景 3：收敛失败 → 守红线留待早起审阅</option></select><button type="button" class="button primary small" data-action="direct-watch-simulate">🦉 演练夜间异常 → Agent 自主交接</button></div>${watchRowsHtml}</section>`;
+  const watchEventsDetails = `
+    <details class="panel direct-panel direct-rec-panel watch-history-details" ${watchEvents.length ? 'open' : ''}>
+      <summary class="watch-history-summary"><span>夜间值守触发记录（${watchEvents.length} 条）</span><span class="subtle-note">异常分类、资源评估与 Agent 交接时间线</span></summary>
+      <div class="watch-history-body">${watchRowsHtml}</div>
+    </details>`;
 
-  return `${watchHandoffCard}<section class="panel direct-panel direct-rec-panel"><div class="section-title"><h2>异常自动恢复审计报告（可搜索归档）</h2><span class="section-note">共 ${rows.length} 份报告</span></div><p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p><div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div><div class="direct-run-list">${listHtml}</div>${detailHtml}</section>`;
+  const recoveryAuditDetails = `
+    <details class="panel direct-panel direct-rec-panel watch-history-details" ${directState.recoveryHistoryOpen ? 'open' : ''}>
+      <summary class="watch-history-summary"><span>有界自动恢复审计报告（${rows.length} 份）</span><span class="subtle-note">网表 SHA-256 一致性证明与可检索 Markdown 归档</span></summary>
+      <div class="watch-history-body">
+        <p class="subtle-note">所有触发过有界自动恢复（例如确认 OOM 后自动内存翻倍或许可证退避重试）的任务谱系都会自动保留网表 SHA-256 一致性证明与决策日志，支持一键导出 Markdown。</p>
+        <div class="direct-rec-filters"><input id="direct-rec-query" value="${escape(directState.recoveryQuery)}" placeholder="按 Run ID、主机、故障类型（如 confirmed_oom / license）或摘要搜索"><select id="direct-rec-outcome"><option value="" ${directState.recoveryOutcome === '' ? 'selected' : ''}>全部结论</option><option value="recovered" ${directState.recoveryOutcome === 'recovered' ? 'selected' : ''}>已自动恢复</option><option value="in_progress" ${directState.recoveryOutcome === 'in_progress' ? 'selected' : ''}>恢复执行中</option><option value="exhausted" ${directState.recoveryOutcome === 'exhausted' ? 'selected' : ''}>预算耗尽停止</option><option value="not_recoverable" ${directState.recoveryOutcome === 'not_recoverable' ? 'selected' : ''}>不可自动恢复</option><option value="policy_disabled" ${directState.recoveryOutcome === 'policy_disabled' ? 'selected' : ''}>未开启恢复</option></select><button type="button" class="button secondary small" data-action="direct-rec-search" ${directState.busy ? 'disabled' : ''}>检索报告</button></div>
+        <div class="direct-run-list">${listHtml}</div>
+        ${detailHtml}
+      </div>
+    </details>`;
+
+  return `${studioCard}${watchEventsDetails}${recoveryAuditDetails}`;
 }
 
 function directRunChip(run) {
@@ -3382,6 +3772,9 @@ async function handleDirectClick(event) {
       }
     }
     render();
+    if (nextTab === 'recovery' && !isPublicDemo()) {
+      void refreshWatchScript({force: false});
+    }
     if (nextTab === 'waveforms' && directState.wfIndex?.datasets?.length && !directState.wfQuery) {
       await runWaveformQuery();
       if (directState.wfClock || directState.wfPeriod) await runWaveformCycles();
@@ -3450,43 +3843,14 @@ async function handleDirectClick(event) {
     return;
   }
   if (action === 'rec-select') {
+    directState.recoveryHistoryOpen = true;
     directState.selectedRecoveryId = id;
     await refreshDirect();
     return;
   }
   if (action === 'rec-search') {
+    directState.recoveryHistoryOpen = true;
     await refreshDirect();
-    return;
-  }
-  if (action === 'watch-policy-save') {
-    try {
-      const payload = {
-        enabled: Boolean($('#wp-enabled')?.checked),
-        auto_push_to_agent: Boolean($('#wp-autopush')?.checked),
-        allow_host_migration: Boolean($('#wp-migrate')?.checked),
-        allow_memory_scale: Boolean($('#wp-mem')?.checked),
-        allow_sim_option_tuning: Boolean($('#wp-opt')?.checked),
-        queue_timeout_seconds: Number($('#wp-qtimeout')?.value || 1800),
-        max_memory_gib: Number($('#wp-maxmem')?.value || 64),
-        max_agent_resubmissions: Number($('#wp-maxresub')?.value || 3),
-      };
-      const res = await api('/api/direct/watch-policy', {method: 'POST', body: payload});
-      directState.watchPolicy = res.policy;
-      render();
-      toast('已保存睡前 Agent 自治授权边界（无任何外部软件推送，全程仅在网页留痕）。');
-    } catch (error) { toast(error.message); }
-    return;
-  }
-  if (action === 'watch-simulate') {
-    try {
-      const res = await api('/api/direct/watch-events/simulate', {
-        method: 'POST',
-        body: {scenario: directState.watchSimScenario || 'queue_timeout'},
-      });
-      directState.watchEvents = Array.isArray(res.events) ? res.events : directState.watchEvents;
-      render();
-      toast('已演练夜间异常 → 自动交接给用户 Agent → 网页记录决策全流程！');
-    } catch (error) { toast(error.message); }
     return;
   }
   if (action === 'watch-push') {
@@ -5880,6 +6244,13 @@ function applyAgentUiPatch(patch) {
     }
     return true;
   }
+  if (kind === 'direct_watch_script_updated') {
+    watchScriptState.aiBusy = false;
+    void refreshWatchScript({force: true});
+    const note = typeof data.note === 'string' && data.note.trim() ? `：${data.note.trim()}` : '';
+    toast(`✨ AI 已更新夜间值守脚本 night_watch.py${note}`);
+    return true;
+  }
   return false;
 }
 
@@ -6263,7 +6634,7 @@ function renderCleanDirectTimeline(items) {
     if (item.type === 'user') {
       const cleanUser = stripSimAgentContextEnvelope(item.text || '');
       const uBadge = item.status === 'unconfirmed' ? ' · 发送中' : item.status === 'failed' ? ' · 未发送' : '';
-      const autoMatch = /^\[(SpiceOwl\s+(?:仿真完成自动汇报|综合仿真报告请求|夜间值守异常交接)[^\]]*)\]/.exec(cleanUser.trim());
+      const autoMatch = /^\[(SpiceOwl\s+(?:仿真完成自动汇报|综合仿真报告请求|夜间值守异常交接|夜间值守脚本定制)[^\]]*)\]/.exec(cleanUser.trim());
       if (autoMatch) {
         chunks.push(`<details class="sim-ai-handoff-pill"><summary><span>🦉 ${escape(autoMatch[1])}${uBadge}</span><small>展开系统指令</small></summary><pre>${escape(cleanUser)}</pre></details>`);
       } else {
@@ -6498,6 +6869,9 @@ function render() {
   if (page === 'direct') {
     if (!directState.loaded && !directState.loading) refreshDirect();
     if (!isPublicDemo()) {
+      if (directState.activeTab === 'recovery' && !watchScriptState.loaded && !watchScriptState.loading) {
+        void refreshWatchScript({force: false});
+      }
       const curSig = state.hosts.map(h => h.host_id).sort().join(',');
       const stale = !hostLiveState.loaded || hostLiveState.hostSignature !== curSig || (Date.now() - hostLiveState.loadedAt > 30000);
       if (state.hosts.length && !hostLiveState.loading && stale) {
@@ -6580,6 +6954,7 @@ document.addEventListener('click', async event => {
     || action.startsWith('direct-')
     || action.startsWith('wizard-')
     || action.startsWith('report-')
+    || action.startsWith('watch-script-')
     || action === 'overview-open-run-report'
     || action === 'overview-open-scope-report'
   ) return;
@@ -6706,6 +7081,7 @@ document.addEventListener('click', async event => {
       demoPendingRequests.clear();
       directState.loaded = false; directState.wfQuery = null; directState.wfCycles = null;
       directState.selectedId = null; directState.selectedBatchId = null; directState.aiReport = null; directState.scopeReports = []; directState.activeTab = 'waveforms';
+      resetWatchScriptState();
       clearDirectLivePoll();
       closeReportModal();
       codexPanelState.evalReport = null; wizardState.tutorialStep = 1;
@@ -7323,8 +7699,20 @@ document.addEventListener('change', event => {
   if (event.target.id === 'direct-rec-lic') directDraft.rec_retry_license = event.target.checked;
   if (event.target.id === 'direct-rec-oom') directDraft.rec_retry_oom = event.target.checked;
   if (event.target.id === 'direct-rec-relocate') directDraft.rec_allow_relocate = event.target.checked;
-  if (event.target.id === 'direct-rec-outcome') { directState.recoveryOutcome = event.target.value; refreshDirect(); }
-  if (event.target.id === 'watch-sim-scenario') { directState.watchSimScenario = event.target.value; }
+  if (event.target.id === 'direct-rec-outcome') {
+    directState.recoveryHistoryOpen = true;
+    directState.recoveryOutcome = event.target.value;
+    refreshDirect();
+  }
+  if (event.target.id === 'watch-script-test-scenario') {
+    const val = String(event.target.value || '');
+    if (val.startsWith('run:')) {
+      watchScriptState.testRunId = val.slice(4);
+    } else {
+      watchScriptState.testRunId = '';
+      watchScriptState.testScenario = val || 'queue_timeout';
+    }
+  }
   if (event.target.id === 'wf-dataset') {
     directState.wfDataset = event.target.value;
     syncWaveformSelection(true);
@@ -7920,6 +8308,26 @@ document.addEventListener('change', event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'watch-script-editor') {
+    watchScriptState.draftCode = event.target.value;
+    watchScriptState.dirty = watchScriptState.draftCode !== (watchScriptState.script?.code ?? '');
+    const dirtyBadge = $('#watch-script-dirty-badge');
+    if (dirtyBadge) dirtyBadge.hidden = !watchScriptState.dirty;
+    const lc = $('#watch-script-line-count');
+    if (lc) {
+      const n = watchScriptState.draftCode ? watchScriptState.draftCode.split(/\r?\n/).length : 0;
+      lc.textContent = `共 ${n} 行`;
+    }
+    return;
+  }
+  if (event.target.id === 'watch-script-ai-input') {
+    watchScriptState.aiPrompt = event.target.value;
+    return;
+  }
+  if (event.target.id === 'watch-script-test-log') {
+    watchScriptState.testLogExcerpt = event.target.value;
+    return;
+  }
   if (event.target.id === 'report-custom-prompt') {
     reportModalState.customPrompt = event.target.value;
     return;
@@ -7943,6 +8351,32 @@ document.addEventListener('input', event => {
 });
 
 document.addEventListener('keydown', event => {
+  if (event.target.id === 'watch-script-editor') {
+    if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      const ta = event.target;
+      const start = ta.selectionStart ?? 0;
+      const end = ta.selectionEnd ?? start;
+      const val = ta.value;
+      ta.value = `${val.slice(0, start)}    ${val.slice(end)}`;
+      ta.selectionStart = ta.selectionEnd = start + 4;
+      watchScriptState.draftCode = ta.value;
+      watchScriptState.dirty = watchScriptState.draftCode !== (watchScriptState.script?.code ?? '');
+      const dirtyBadge = $('#watch-script-dirty-badge');
+      if (dirtyBadge) dirtyBadge.hidden = !watchScriptState.dirty;
+      const lc = $('#watch-script-line-count');
+      if (lc) {
+        const n = watchScriptState.draftCode ? watchScriptState.draftCode.split(/\r?\n/).length : 0;
+        lc.textContent = `共 ${n} 行`;
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      void saveWatchScript();
+      return;
+    }
+  }
   if (event.key === 'Escape' && reportModalState.open) {
     event.preventDefault();
     closeReportModal();
@@ -8066,7 +8500,52 @@ document.addEventListener('click', event => {
   }
 });
 
+document.addEventListener('click', async event => {
+  const btn = event.target.closest?.('button[data-action^="watch-script-"]');
+  if (!btn) return;
+  const action = btn.dataset.action.slice(13);
+  if (action === 'save') {
+    await saveWatchScript();
+    return;
+  }
+  if (action === 'reset') {
+    await resetWatchScriptToDefault();
+    return;
+  }
+  if (action === 'refresh') {
+    if (watchScriptState.dirty && typeof window.confirm === 'function'
+        && !window.confirm('当前编辑器有未保存修改，强制刷新将覆盖本地草稿。继续刷新吗？')) {
+      return;
+    }
+    await refreshWatchScript({force: true});
+    toast('↻ 已重新加载最新 night_watch.py。');
+    return;
+  }
+  if (action === 'test') {
+    await runWatchScriptTest();
+    return;
+  }
+  if (action === 'quick-prompt') {
+    const prompt = btn.dataset.prompt || '';
+    watchScriptState.aiPrompt = prompt;
+    const inp = $('#watch-script-ai-input');
+    if (inp) {
+      inp.value = prompt;
+      inp.focus();
+      if (typeof inp.setSelectionRange === 'function') {
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    }
+    return;
+  }
+});
+
 document.addEventListener('submit', event => {
+  if (event.target.id === 'watch-script-ai-form') {
+    event.preventDefault();
+    void submitWatchScriptAiEdit();
+    return;
+  }
   if (event.target.id === 'report-agent-form') {
     event.preventDefault();
     void triggerReportModalGenerate();
@@ -8132,7 +8611,9 @@ setInterval(() => {
       && !document.activeElement?.closest('.live-input-grid')) refreshLive();
   if (!isPublicDemo() && location.hash === '#direct' && !directState.busy && !directState.loading && !document.hidden
       && directState.monitor?.watches?.some(w => w?.watch_state === 'armed')
-      && !document.activeElement?.closest('#direct-prepare-form')) refreshDirect();
+      && !document.activeElement?.closest('#direct-prepare-form')
+      && !document.activeElement?.closest('#watch-script-editor, #watch-script-ai-form, .watch-studio-card')
+      && !(directState.activeTab === 'recovery' && watchScriptState.dirty)) refreshDirect();
 }, 3000);
 // Update the age label locally; this does not request another remote sample.
 setInterval(() => {

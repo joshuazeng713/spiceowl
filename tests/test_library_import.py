@@ -1177,6 +1177,137 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
             finally:
                 ctrl.close()
 
+    def test_programmable_night_watch_script_skill_tools_and_http_api(self):
+        import http.client
+        import threading
+        from spiceowl.direct import DirectExecutionManager
+        from spiceowl.service import Controller
+        from spiceowl.skills import BUILTIN_SKILLS, get_skill, list_skills
+        from spiceowl.standalone_agent import build_standalone_dispatcher
+        from spiceowl.watch_handoff import WatchHandoffManager
+        from spiceowl.web.server import make_server
+
+        # 1. Canonical spiceowl-night-watch SKILL.md matches embedded BUILTIN_SKILLS byte-for-byte
+        nw_skill_file = Path(__file__).resolve().parents[1] / "skills" / "spiceowl-night-watch" / "SKILL.md"
+        self.assertTrue(nw_skill_file.is_file())
+        self.assertEqual(nw_skill_file.read_text(encoding="utf-8"), BUILTIN_SKILLS["spiceowl-night-watch"]["content"])
+        self.assertEqual(get_skill("spiceowl-night-watch")["content"], nw_skill_file.read_text(encoding="utf-8"))
+        self.assertTrue(any(s["name"] == "spiceowl-night-watch" for s in list_skills()["skills"]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctrl = Controller(root / "state", agent_mode="standalone")
+            try:
+                dm = DirectExecutionManager(ctrl.store.directory, hosts=ctrl.hosts)
+                hm = WatchHandoffManager(ctrl.store.directory)
+                patches = []
+                disp = build_standalone_dispatcher(
+                    ctrl,
+                    direct_manager=dm,
+                    handoff_manager=hm,
+                    ui_patch_sink=lambda k, p: patches.append((k, p)) or len(patches),
+                )
+
+                # 2. Zero-approval policies for watch_script read/save/test
+                self.assertEqual(disp.policy("spiceowl_direct_read", {"operation": "watch_script", "arguments": {}}), "read")
+                self.assertEqual(disp.policy("spiceowl_direct_control", {"operation": "save_watch_script", "arguments": {}}), "read")
+                self.assertEqual(disp.policy("spiceowl_direct_control", {"operation": "test_watch_script", "arguments": {}}), "read")
+
+                # 3. Default script auto-materializes with 5 rules and passes dry-run on unknown_bug fallback
+                script0 = disp.dispatch("spiceowl_direct_read", {"operation": "watch_script", "arguments": {}})
+                self.assertTrue(script0["is_default"])
+                self.assertTrue(script0["valid"])
+                self.assertIn("rule_queue_timeout", script0["rules"])
+                self.assertIn("rule_confirmed_oom", script0["rules"])
+                self.assertIn("rule_license_unavailable", script0["rules"])
+
+                t0 = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "test_watch_script",
+                    "arguments": {"scenario": "unknown_bug"},
+                })
+                self.assertTrue(t0["ok"])
+                self.assertEqual(t0["decision"]["rule"], "unknown_bug_fallback")
+                self.assertEqual(t0["decision"]["action"], "handoff_to_agent")
+
+                # 4. Agent surgically adds a custom bug rule via edits and verifies with dry-run
+                custom_rule = (
+                    "def rule_custom_cmi(run, report, log_tail, host_pool, config):\n"
+                    "    if 'CMI-2116' in (log_tail or ''):\n"
+                    "        return {'action': 'retry_later', 'rule': 'rule_custom_cmi', 'delay_seconds': 60, 'reason': '检测到 CMI-2116 模型表短暂缺失，60 秒后重试'}\n"
+                    "    return None\n\n"
+                    "BUG_RULES = [\n"
+                    "    rule_custom_cmi,\n"
+                )
+                saved = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "save_watch_script",
+                    "arguments": {
+                        "edits": [{"find": "BUG_RULES = [\n", "replace": custom_rule}],
+                        "note": "新增 CMI-2116 自定义恢复规则",
+                    },
+                })
+                self.assertFalse(saved["is_default"])
+                self.assertIn("rule_custom_cmi", saved["rules"])
+                self.assertTrue(any(k == "direct_watch_script_updated" for k, _ in patches))
+
+                t1 = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "test_watch_script",
+                    "arguments": {"scenario": "unknown_bug", "log_excerpt": "ERROR (CMI-2116): custom model table missing"},
+                })
+                self.assertTrue(t1["ok"])
+                self.assertEqual(t1["decision"]["rule"], "rule_custom_cmi")
+                self.assertEqual(t1["decision"]["action"], "retry_later")
+
+                # 5. End-to-end HTTP endpoints: GET/PUT /api/direct/watch-script, /test, /ai-edit
+                srv = make_server(ctrl, port=0, enable_direct_exec=True)
+                port = srv.server_address[1]
+                t_srv = threading.Thread(target=srv.serve_forever, daemon=True)
+                t_srv.start()
+                try:
+                    conn0 = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    conn0.request("GET", "/api/state")
+                    token = json.loads(conn0.getresponse().read().decode("utf-8"))["csrf_token"]
+                    conn0.close()
+
+                    def req_json(method: str, path: str, body: dict | None = None):
+                        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                        headers = {"X-SpiceOwl-Token": token}
+                        raw = None
+                        if body is not None:
+                            headers["Content-Type"] = "application/json"
+                            raw = json.dumps(body).encode("utf-8")
+                        conn.request(method, path, body=raw, headers=headers)
+                        resp = conn.getresponse()
+                        data = json.loads(resp.read().decode("utf-8"))
+                        conn.close()
+                        return resp.status, data
+
+                    st, got = req_json("GET", "/api/direct/watch-script")
+                    self.assertEqual(st, 200)
+                    self.assertIn("rule_custom_cmi", got["script"]["rules"])
+
+                    st, tested = req_json("POST", "/api/direct/watch-script/test", {
+                        "scenario": "confirmed_oom",
+                    })
+                    self.assertEqual(st, 200)
+                    self.assertTrue(tested["test_result"]["ok"])
+                    self.assertEqual(tested["test_result"]["decision"]["rule"], "rule_confirmed_oom")
+
+                    st, ai_edit = req_json("POST", "/api/direct/watch-script/ai-edit", {
+                        "instruction": "将内存上限调到 96 GiB 并优先选择空闲节点",
+                    })
+                    self.assertEqual(st, 202)
+                    self.assertIn("handoff", ai_edit)
+
+                    st, reset_res = req_json("PUT", "/api/direct/watch-script", {"reset": True})
+                    self.assertEqual(st, 200)
+                    self.assertTrue(reset_res["script"]["is_default"])
+                    self.assertNotIn("rule_custom_cmi", reset_res["script"]["rules"])
+                finally:
+                    srv.shutdown()
+                    srv.server_close()
+            finally:
+                ctrl.close()
+
 
 if __name__ == "__main__":
     unittest.main()

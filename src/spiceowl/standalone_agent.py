@@ -307,6 +307,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         def _overnight_policy_override(name, arguments):
             if name == 'spiceowl_direct_control' and isinstance(arguments, dict) and arguments.get('operation') in (
                 'render_fast_report', 'render_fast_scope_report', 'save_ai_report', 'save_scope_report',
+                'save_watch_script', 'test_watch_script',
             ):
                 return 'read'
             policy = watch_mgr.get_policy()
@@ -408,6 +409,10 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     return {'events': watch_mgr.list_events(state=params.get('state'), limit=int(params.get('limit', 30)))}
                 if op == 'watch_policy':
                     return watch_mgr.get_policy()
+                if op == 'watch_script':
+                    if params:
+                        raise DomainError('watch_script takes empty arguments.', 'invalid_tool_arguments')
+                    return watch_mgr.read_watch_script()
                 if op == 'batch_list':
                     if params:
                         raise DomainError('batch_list takes empty arguments.', 'invalid_tool_arguments')
@@ -682,6 +687,77 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                             'mode': saved.get('mode'),
                         })
                     return saved
+                if op == 'save_watch_script':
+                    unknown = set(params) - {'code', 'edits', 'note', 'reset', 'source'}
+                    if unknown:
+                        raise DomainError(f'Unsupported save_watch_script arguments: {", ".join(sorted(unknown))}.', 'invalid_tool_arguments')
+                    if 'reset' in params and type(params['reset']) is not bool:
+                        raise DomainError('reset must be a boolean.', 'invalid_tool_arguments')
+                    saved = watch_mgr.save_watch_script(
+                        code=params.get('code'),
+                        edits=params.get('edits'),
+                        source=params.get('source') or 'agent',
+                        note=params.get('note'),
+                        reset=bool(params.get('reset', False)),
+                    )
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_watch_script_updated', {
+                            'sha256': saved.get('sha256'),
+                            'source': saved.get('source'),
+                            'note': saved.get('note'),
+                            'rules': saved.get('rules'),
+                        })
+                    return saved
+                if op == 'test_watch_script':
+                    unknown = set(params) - {'scenario', 'run_id', 'log_excerpt', 'code'}
+                    if unknown:
+                        raise DomainError(f'Unsupported test_watch_script arguments: {", ".join(sorted(unknown))}.', 'invalid_tool_arguments')
+                    code = params.get('code')
+                    if code is not None and not isinstance(code, str):
+                        raise DomainError('code must be a string.', 'invalid_tool_arguments')
+                    scenario = params.get('scenario')
+                    if scenario is not None and (not isinstance(scenario, str) or not scenario.strip()):
+                        raise DomainError('scenario must be a non-empty string.', 'invalid_tool_arguments')
+                    log_excerpt = params.get('log_excerpt')
+                    if log_excerpt is not None and not isinstance(log_excerpt, str):
+                        raise DomainError('log_excerpt must be a string.', 'invalid_tool_arguments')
+                    run_id = params.get('run_id')
+                    run_record = None
+                    report = None
+                    host_pool = None
+                    log_tail = log_excerpt or ''
+                    if run_id is not None and run_id != '':
+                        if not isinstance(run_id, str) or not run_id.strip():
+                            raise DomainError('run_id must be a non-empty string.', 'invalid_tool_arguments')
+                        run_record = direct_manager.read(run_id)
+                        try:
+                            report = direct_manager.report(run_id)
+                        except Exception:
+                            report = None
+                        if not log_tail:
+                            run_dir = direct_manager.path(run_id)
+                            for rel in (('collected', 'psf', 'spectre.out'), ('collected', 'console.log')):
+                                log_file = run_dir.joinpath(*rel)
+                                if log_file.is_file() and not log_file.is_symlink():
+                                    try:
+                                        with log_file.open('rb') as fh:
+                                            fh.seek(0, 2)
+                                            size = fh.tell()
+                                            fh.seek(max(0, size - 65536))
+                                            log_tail = fh.read(65536).decode('utf-8', errors='replace')
+                                    except OSError:
+                                        log_tail = ''
+                                    break
+                        if hasattr(controller, 'hosts') and controller.hosts is not None:
+                            host_pool = controller.hosts.list()
+                    return watch_mgr.test_watch_script(
+                        code=code,
+                        scenario=scenario or 'queue_timeout',
+                        run_record=run_record,
+                        report=report,
+                        log_tail=log_tail,
+                        host_pool=host_pool,
+                    )
                 if op == 'watch_record_decision':
                     return watch_mgr.record_agent_decision(
                         params['event_id'],

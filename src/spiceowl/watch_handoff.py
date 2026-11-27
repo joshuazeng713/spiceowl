@@ -29,6 +29,7 @@ import uuid
 
 from spiceowl._platform import file_lock
 from spiceowl.domain.common import DomainError, utcnow
+from spiceowl.night_watch_script import NightWatchScriptStore
 
 
 WATCH_EVENT_SCHEMA = "spiceowl.watch-event.v1"
@@ -184,13 +185,30 @@ def build_agent_handoff_prompt(event: dict, policy: dict) -> str:
         f"摘要: {event['summary']}",
         f"四维状态: execution={fd.get('execution', 'unknown')}, measurement={fd.get('measurement', 'unknown')}, performance={fd.get('performance', 'unknown')}, soa={fd.get('soa', 'unknown')}",
         f"夜间自治授权边界: {'；'.join(perm_items)}；严禁擅自修改原始网表、激励或验收标准。",
+    ]
+    script_decision = (event.get("evidence") or {}).get("script_decision") if isinstance(event.get("evidence"), dict) else None
+    if isinstance(script_decision, dict):
+        sd_action = script_decision.get("action") or "unknown"
+        sd_rule = script_decision.get("rule") or "unknown"
+        sd_reason = str(script_decision.get("reason") or "").strip()
+        lines.append(f"夜间值守脚本预判 (night_watch.py): action={sd_action} | rule={sd_rule}" + (f" | {sd_reason}" if sd_reason else ""))
+        sd_overrides = script_decision.get("overrides")
+        if isinstance(sd_overrides, dict) and sd_overrides:
+            lines.append(f"脚本建议参数覆盖: {json.dumps(sd_overrides, ensure_ascii=False)}")
+        sd_delay = script_decision.get("delay_seconds")
+        if isinstance(sd_delay, (int, float)) and not isinstance(sd_delay, bool) and sd_delay > 0:
+            lines.append(f"脚本建议退避等待: {int(sd_delay)} 秒")
+        sd_inst = str(script_decision.get("agent_instruction") or "").strip()
+        if sd_inst:
+            lines.append(f"脚本规则指引: {sd_inst}")
+    lines.extend([
         "",
         "请按以下步骤使用 SpiceOwl 工具自主排查并处理（人类正在休息，处理完后请把结论记录回网页端）：",
         "1. 调用 `spiceowl_scan_resources` / `spiceowl_recommend_hosts` 检查已注册主机的实时 CPU、内存与负载余量；",
         "2. 调用 `spiceowl_direct_read`（`inspect` / `report` / `log_tail`）核实故障证据与当前参数；",
         "3. 若在授权边界内（如排队超时换空闲节点/队列、OOM 扩内存或换大内存主机、调整运行选项），使用 `spiceowl_direct_control` 取消卡死任务并通过 `operation='submit'` 一键提交可追溯的新尝试；若涉及修改网表或超出边界，请不要强行提交，留待早起人工审阅；",
         f"4. 最后调用 `spiceowl_direct_control(operation='watch_record_decision', arguments={{'event_id': '{event['event_id']}', ...}})`，把查到的资源情况、决策理由与新 `run_id` 写入网页值守记录。",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -329,9 +347,11 @@ class WatchHandoffManager:
 
     def __init__(self, data_dir: str | Path):
         self.root = Path(data_dir).expanduser().resolve() / "watch_handoff"
+        self.state_dir = self.root
         self.policy_path = self.root / "policy.json"
         self.events_path = self.root / "events.json"
         self.lock_path = self.root / "watch_handoff.lock"
+        self.script_store = NightWatchScriptStore(self.state_dir)
 
     @contextlib.contextmanager
     def _locked(self):
@@ -725,6 +745,128 @@ class WatchHandoffManager:
             needs_human_review=True,
         )
 
+    def read_watch_script(self) -> dict:
+        """Read the programmable `night_watch.py` script, parsed `CONFIG`, and `rule_*` inventory."""
+        return self.script_store.read()
+
+    def save_watch_script(
+        self,
+        *,
+        code: str | None = None,
+        edits: list[dict] | None = None,
+        source: str = "user",
+        note: str | None = None,
+        reset: bool = False,
+    ) -> dict:
+        """Validate & save `night_watch.py` and sync matching numeric/bool `CONFIG` fields to watch policy."""
+        saved = self.script_store.save(code=code, edits=edits, source=source, note=note, reset=reset)
+        cfg = saved.get("config") if isinstance(saved.get("config"), dict) else {}
+        if cfg:
+            policy_updates: dict = {}
+            for bool_key in ("enabled", "auto_push_to_agent"):
+                if bool_key in cfg and type(cfg[bool_key]) is bool:
+                    policy_updates[bool_key] = cfg[bool_key]
+            q_val = cfg.get("queue_timeout_seconds")
+            if type(q_val) is int and MIN_QUEUE_TIMEOUT_SECONDS <= q_val <= MAX_QUEUE_TIMEOUT_SECONDS:
+                policy_updates["queue_timeout_seconds"] = q_val
+            m_val = cfg.get("max_memory_gib")
+            if type(m_val) is int and 1 <= m_val <= MAX_ALLOWED_MEMORY_GIB:
+                policy_updates["max_memory_gib"] = m_val
+            r_val = cfg.get("max_agent_resubmissions")
+            if r_val is None:
+                r_val = cfg.get("max_resubmissions")
+            if type(r_val) is int and 0 <= r_val <= MAX_ALLOWED_RESUBMISSIONS:
+                policy_updates["max_agent_resubmissions"] = r_val
+            if policy_updates:
+                self.update_policy(policy_updates)
+        return saved
+
+    def test_watch_script(
+        self,
+        *,
+        code: str | None = None,
+        scenario: str = "queue_timeout",
+        run_record: dict | None = None,
+        report: dict | None = None,
+        log_tail: str = "",
+        host_pool: list[dict] | None = None,
+        ctx: dict | None = None,
+    ) -> dict:
+        """Dry-run `night_watch.py` in a fresh isolated subprocess against synthetic or real run evidence."""
+        return self.script_store.dry_run(
+            code=code,
+            scenario=scenario,
+            run_record=run_record,
+            report=report,
+            log_tail=log_tail,
+            host_pool=host_pool,
+            ctx=ctx,
+        )
+
+
+def build_watch_script_edit_prompt(
+    instruction: str,
+    *,
+    script_info: dict,
+    run_record: dict | None = None,
+    report: dict | None = None,
+    log_tail: str = "",
+) -> str:
+    """Build a structured Chinese prompt instructing the connected Agent to customize `night_watch.py`."""
+    info = script_info if isinstance(script_info, dict) else {}
+    script_path = str(info.get("path") or "night_watch.py")
+    cfg = info.get("config") if isinstance(info.get("config"), dict) else {}
+    rules = info.get("rules") if isinstance(info.get("rules"), list) else []
+
+    lines = [
+        "[SpiceOwl 夜间值守脚本定制 · night_watch.py]",
+        f"用户定制需求: {str(instruction or '').strip()}",
+        f"脚本路径: {script_path} (总行数: {info.get('line_count', '-')}, 语法有效: {info.get('valid', True)})",
+        f"当前 CONFIG: {json.dumps(cfg, ensure_ascii=False)}",
+        f"当前规则函数 (BUG_RULES): {', '.join(str(r) for r in rules) if rules else '(无)'}",
+    ]
+
+    if isinstance(run_record, dict) and run_record:
+        rid = str(run_record.get("run_id") or "unknown")
+        host_id = run_record.get("host_id") or "unknown"
+        backend = run_record.get("backend") or "unknown"
+        simulator = run_record.get("simulator") or "unknown"
+        state = run_record.get("state") or "unknown"
+        exit_code = run_record.get("simulator_exit_code")
+        lines.append(
+            f"关联真实故障任务: run_id={rid} | host={host_id} | backend={backend} | "
+            f"simulator={simulator} | state={state} | exit_code={exit_code}"
+        )
+
+    if isinstance(report, dict) and report:
+        diag_block = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
+        diag_items = diag_block.get("diagnostics") if isinstance(diag_block.get("diagnostics"), list) else []
+        diag_preview = []
+        for item in diag_items[:6]:
+            if isinstance(item, dict):
+                code_str = item.get("code") or item.get("category") or "diag"
+                msg_str = str(item.get("message") or item.get("summary") or "")[:140]
+                diag_preview.append(f"{code_str}: {msg_str}" if msg_str else str(code_str))
+        if diag_preview:
+            lines.append("关联故障诊断摘要: " + " ; ".join(diag_preview))
+
+    clean_log = str(log_tail or "").strip()
+    if clean_log:
+        lines.append("关联故障日志尾部 (log_tail):")
+        lines.append("```text")
+        lines.append(clean_log[-3000:])
+        lines.append("```")
+
+    lines.extend([
+        "",
+        "请遵循 `spiceowl-night-watch` Skill 规范，按以下 4 步完成夜间值守规则定制与验证：",
+        '1. 调用 `spiceowl_direct_read(operation="watch_script")` 阅读当前完整的 `night_watch.py` 源码与规则顺序；',
+        '2. 优先使用局部补丁 `spiceowl_direct_control(operation="save_watch_script", arguments={"edits": [{"find": "...", "replace": "..."}], "note": "..."})`（或在大幅重构时传入完整 `code`）新增/修改规则函数并注册到 `BUG_RULES`，附带清晰中文注释，严守科学红线（不得改动原始网表/激励/Spec，保持 `protect_netlist_and_spec=True`）；',
+        '3. 调用 `spiceowl_direct_control(operation="test_watch_script", arguments={"scenario": "..."})`（如有真实故障日志可一并传入 `log_tail`）做隔离沙箱 Dry-Run，确认新规则准确命中且零报错；',
+        "4. 最后简明回复本次新增/修改的规则名称、触发条件、预期动作及 Dry-Run 验证结果。",
+    ])
+    return "\n".join(lines)
+
 
 def build_completion_report_prompt(
     run_record: dict,
@@ -1004,6 +1146,7 @@ def build_codex_bridge_pusher(codex_bridge):
         kind = event.get("kind") if isinstance(event, dict) else None
         is_completion = kind == "simulation_completed"
         is_scope_report = kind == "scope_report_requested"
+        is_script_edit = kind == "watch_script_edit"
         if codex_bridge is None:
             return {"pushed": False, "thread_id": None, "status": "no_agent_connected", "note": "当前未配置 Codex Agent 桥接。"}
         st = codex_bridge.status()
@@ -1012,6 +1155,8 @@ def build_codex_bridge_pusher(codex_bridge):
                 note = "用户的 Codex Agent 当前未连接；仿真结果已保留，连接后可在任务详情页一键触发 AI 仿真报告。"
             elif is_scope_report:
                 note = "用户的 Codex Agent 当前未连接；连接后即可一键生成综合 HTML 仿真报告。"
+            elif is_script_edit:
+                note = "用户的 Codex Agent 当前未连接；连接后可由 Agent 按要求自动定制并测试 night_watch.py。"
             else:
                 note = "用户的 Codex Agent 当前未连接；异常已记录在网页收件箱，连接后可一键推送或自动认领。"
             return {"pushed": False, "thread_id": None, "status": "agent_disconnected", "note": note}
@@ -1022,6 +1167,8 @@ def build_codex_bridge_pusher(codex_bridge):
                 note = f"Agent 当前状态为 {st.get('state')}，仿真完成汇报将在当前回合结束后自动重试推送。"
             elif is_scope_report:
                 note = f"Agent 当前状态为 {st.get('state')}，请等待当前回合完成后再触发综合报告生成。"
+            elif is_script_edit:
+                note = f"Agent 当前状态为 {st.get('state')}，请等待当前回合完成后再发送 night_watch.py 定制指令。"
             else:
                 note = f"Agent 当前状态为 {st.get('state')}，异常已排队留在网页值守列表等待推送。"
             return {"pushed": False, "thread_id": st.get("thread_id"), "status": "agent_busy", "note": note}
@@ -1034,6 +1181,8 @@ def build_codex_bridge_pusher(codex_bridge):
             note = f"已将仿真完成摘要自动推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在核实结果并生成 HTML 仿真报告。"
         elif is_scope_report:
             note = f"已将综合仿真报告任务推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在汇总分析并生成 HTML 综合报告。"
+        elif is_script_edit:
+            note = f"已将夜间值守脚本定制任务推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在更新并 Dry-Run 验证 night_watch.py。"
         else:
             note = f"已将异常事件自动推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在根据 SpiceOwl 工具排查。"
         return {

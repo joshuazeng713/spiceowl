@@ -19,6 +19,7 @@ const codexPanelState = {loaded: false, loading: false, busy: false, interruptin
   stream: null, streamState: 'idle', cursor: 0, statusCursor: 0, threads: [], selectedThread: null,
   approvals: new Map(), profile: '', model: '', reasoningEffort: '', draft: '', pending: null, pendingLoaded: false,
   models: [], defaultModel: '', modelsLoaded: false, authAccount: null, settingsOpen: false,
+  permissionConfirmPending: false,
   turnStartedAt: null, turnTimer: null, lastTurnStatus: '', lastTurnDurationMs: null,
   uiPatchRevision: 0, uiPatchSyncing: false,
   historyTruncated: false, recoverySnapshot: null, recoveryConfirmed: false, recoveryAutoLoadedKey: null, evalReport: null, evalBusy: false};
@@ -1357,6 +1358,57 @@ function simAgentStatusChip(status) {
   return chip('已就绪', 'green');
 }
 
+function codexPermissionMode() {
+  const mode = codexPanelState.status?.permission_mode;
+  return ['safe', 'supervised', 'full_access'].includes(mode) ? mode : 'safe';
+}
+
+function simAgentPermissionChip(mode = codexPermissionMode()) {
+  if (mode === 'full_access') return chip('🚀 满血全权', 'amber');
+  if (mode === 'supervised') return chip('⚡ 满血受控', 'blue');
+  return chip('🔒 安全托管', '');
+}
+
+function codexComposerHint(mode = codexPermissionMode()) {
+  if (mode === 'full_access') {
+    return '🚀 满血全权已开启：Codex 可直接运行本机 Shell/Python 与一键仿真提交（随时可点「⏹ 停止」急停）。';
+  }
+  if (mode === 'supervised') {
+    return '⚡ 满血受控已开启：开放原生 Shell/Python/Skill 与网页联动，高危写入/提交需人工批准。';
+  }
+  return '已自动附带当前电路、Maestro 与实时服务器余量；仅远程变更需人工批准。';
+}
+
+function renderCodexPermissionBar() {
+  if (!isStandaloneAgent() || isPublicDemo()) return '';
+  const mode = codexPermissionMode();
+  const locked = Boolean(codexPanelState.busy || codexActiveTurn() || codexPanelState.status?.recovery_required);
+  const confirmOpen = Boolean(codexPanelState.permissionConfirmPending && mode !== 'full_access');
+  const modes = [
+    {id: 'safe', label: '🔒 安全托管', cls: ''},
+    {id: 'supervised', label: '⚡ 满血受控', cls: 'is-supervised'},
+    {id: 'full_access', label: '🚀 满血全权', cls: 'is-full'},
+  ];
+  const bar = `<div class="sim-perm-bar" role="group" aria-label="Codex 权限等级">${modes.map(m => `<button type="button" class="sim-perm-btn ${m.cls}${mode === m.id ? ' is-active' : ''}" data-action="codex-set-permission" data-mode="${m.id}" aria-pressed="${mode === m.id ? 'true' : 'false'}" ${locked ? 'disabled' : ''}>${m.label}</button>`).join('')}</div>`;
+  const confirmBox = confirmOpen
+    ? `<div class="sim-perm-confirm" role="alertdialog" aria-label="确认开启满血全权"><p>确认开启「满血全权（Full Access）」？开启后网页端 Codex 将拥有与本机终端完全一致的 Shell / Python / 文件 / SSH 与一键仿真提交权限，工具与命令将自动执行不再逐项弹窗（你可随时点击「⏹ 停止」急停）。仅限本机受信任环境使用。</p><div class="sim-perm-confirm-actions"><button type="button" class="button primary small sim-perm-confirm-go" data-action="codex-confirm-full-access" ${locked ? 'disabled' : ''}>🚀 确认开启满血全权</button><button type="button" class="button secondary small" data-action="codex-cancel-full-access" ${codexPanelState.busy ? 'disabled' : ''}>取消</button></div></div>`
+    : '';
+  return `${bar}${confirmBox}`;
+}
+
+function formatShellCmd(raw) {
+  if (Array.isArray(raw)) return raw.map(part => String(part ?? '')).join(' ').trim();
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function formatCommandExecutionText(cmd, output, exitCode) {
+  const parts = [];
+  if (cmd) parts.push(`$ ${cmd}`);
+  if (typeof output === 'string' && output.length) parts.push(output.replace(/\n+$/, ''));
+  if (Number.isFinite(exitCode)) parts.push(`[exit ${exitCode}]`);
+  return parts.join('\n');
+}
+
 function pickMostIdleHostId() {
   const list = state.hosts || [];
   if (!list.length) return '';
@@ -1650,13 +1702,14 @@ function directAgentSetupPanel(hostsList) {
   const agentCard = (isStandaloneAgent() && !circuitGitManaged) ? `
     <section class="sim-agent-card" data-sim-agent-mode="standalone">
       <div class="sim-card-head">
-        <h2>✧ Agent 仿真配置助手 <span id="codex-runtime-state">${simAgentStatusChip(status)}</span></h2>
+        <h2>✧ Agent 仿真配置助手 <span id="codex-runtime-state">${simAgentStatusChip(status)}</span><span id="codex-perm-chip">${simAgentPermissionChip(codexPermissionMode())}</span></h2>
         <div class="direct-actions">
           ${agentReady
             ? `<button type="button" class="button secondary small sim-ai-gear" data-action="sim-agent-settings" aria-label="AI 设置与连接" aria-expanded="${codexPanelState.settingsOpen ? 'true' : 'false'}" title="模型、思考强度与本机 Codex 连接">⚙</button><button type="button" class="button secondary small" data-action="codex-thread">新对话</button>`
             : `<button type="button" class="button primary small" data-action="sim-agent-connect" ${codexPanelState.busy ? 'disabled' : ''}>${codexPanelState.busy ? '连接中…' : '连接本机 Codex'}</button>`}
         </div>
       </div>
+      ${!isPublicDemo() ? `<div id="codex-permission-slot" class="sim-perm-slot">${renderCodexPermissionBar()}</div>` : ''}
       ${agentReady && codexPanelState.settingsOpen ? `
         <div class="sim-ai-settings" role="group" aria-label="AI 设置与连接">
           <div class="sim-ai-settings-account">
@@ -1709,7 +1762,7 @@ function directAgentSetupPanel(hostsList) {
       <form id="sim-agent-form" class="codex-composer sim-ai-composer">
         <textarea id="codex-message" maxlength="4000" rows="2" placeholder="向 AI 提问或描述仿真需求（Enter 发送，Shift+Enter 换行）…">${escape(codexPanelState.draft)}</textarea>
         <div>
-          <span class="subtle-note">已自动附带当前电路、Maestro 与实时服务器余量；仅远程变更需人工批准。</span>
+          <span id="codex-composer-hint" class="subtle-note">${escape(codexComposerHint(codexPermissionMode()))}</span>
           <div class="sim-ai-composer-actions">
             <button id="codex-stop" class="button secondary small sim-ai-stop" type="button" data-action="codex-interrupt" ${codexActiveTurn() || codexPanelState.pending ? '' : 'hidden'} ${codexPanelState.interrupting ? 'disabled' : ''}>⏹ 停止</button>
             <button id="codex-send" class="button primary small" type="submit" ${codexPanelState.busy || codexActiveTurn() ? 'disabled' : ''}>发送</button>
@@ -4887,6 +4940,10 @@ function friendlyCodexToolName(name) {
     spiceowl_inspect_agent_source: '解析电路网表',
     spiceowl_netlist_requirements: '分析器件与模型依赖',
     spiceowl_diagnose_spectre: '诊断仿真日志',
+    commandExecution: '运行终端命令',
+    fileChange: '修改本机文件',
+    shell_tool: '运行终端命令',
+    apply_patch: '编辑文件',
   };
   return map[name] || name || '工具';
 }
@@ -5113,6 +5170,19 @@ function receiveCodexEvent(event) {
       item.preview = item.preview === true || params.preview_only === true || text.length > 32768;
       item.text = codexText(text);
     }
+  } else if (event.method === 'item/commandExecution/outputDelta' && typeof params.delta === 'string') {
+    const targetThread = thread || codexThread(status.thread_id || codexPanelState.selectedThread);
+    const itemId = params.itemId || params.item_id || `cmd:${turnId}`;
+    const existing = codexItem(targetThread, itemId, 'tool');
+    if (existing) {
+      if (!existing.name) existing.name = '终端命令';
+      const combined = `${existing.output || ''}${params.delta}`;
+      const truncated = combined.length > 16000;
+      const bounded = truncated ? combined.slice(-16000) : combined;
+      existing.output = bounded;
+      existing.preview = existing.preview === true || params.preview_only === true || truncated;
+      existing.text = formatCommandExecutionText(existing.cmd || '', bounded, existing.exitCode);
+    }
   } else if (['item/started', 'item/completed'].includes(event.method)) {
     const item = params.item || {};
     const complete = event.method === 'item/completed';
@@ -5128,6 +5198,55 @@ function receiveCodexEvent(event) {
       const optimistic = thread?.items.find(row => row.requestKey && row.requestKey === event.request_key);
       codexItem(thread, optimistic?.id || item.id || `user:${turnId}`, 'user', {text: codexText(text), status: 'accepted',
         preview: optimistic?.preview === true || params.preview_only === true || text.length > 32768});
+    } else if (item.id && item.type === 'commandExecution') {
+      const targetThread = thread || codexThread(status.thread_id || codexPanelState.selectedThread);
+      const prev = targetThread?.items.find(row => row.id === item.id);
+      const cmd = formatShellCmd(item.command ?? item.cmd) || prev?.cmd || '';
+      const rawOut = typeof item.aggregatedOutput === 'string'
+        ? item.aggregatedOutput
+        : typeof item.aggregated_output === 'string'
+        ? item.aggregated_output
+        : typeof item.output === 'string'
+        ? item.output
+        : (typeof item.stdout === 'string' || typeof item.stderr === 'string')
+        ? [item.stdout, item.stderr].filter(Boolean).join('\n')
+        : (prev?.output || '');
+      const exitCode = Number.isFinite(item.exitCode)
+        ? item.exitCode
+        : Number.isFinite(item.exit_code)
+        ? item.exit_code
+        : prev?.exitCode;
+      const outTrunc = rawOut.length > 16000;
+      const boundedOut = outTrunc ? rawOut.slice(-16000) : rawOut;
+      const cmdPreview = cmd ? cmd.replace(/\s+/g, ' ').slice(0, 72) : '';
+      const name = cmdPreview ? `终端命令 · ${cmdPreview}${cmd.length > 72 ? '…' : ''}` : (prev?.name || '终端命令');
+      const statusVal = complete
+        ? (item.status || (Number.isFinite(exitCode) && exitCode !== 0 ? 'failed' : 'completed'))
+        : 'running';
+      codexItem(targetThread, item.id, 'tool', {
+        name,
+        cmd,
+        output: boundedOut,
+        exitCode,
+        text: formatCommandExecutionText(cmd, boundedOut, exitCode),
+        preview: prev?.preview === true || params.preview_only === true || item.preview_only === true || outTrunc,
+        status: statusVal,
+      });
+    } else if (item.id && item.type === 'fileChange') {
+      const targetThread = thread || codexThread(status.thread_id || codexPanelState.selectedThread);
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const rawText = changes.length
+        ? changes.map(c => {
+            const header = [c.kind || 'edit', c.path || c.file || ''].filter(Boolean).join(' ');
+            return c.diff ? `${header}\n${c.diff}` : header;
+          }).join('\n\n')
+        : codexText(item.diff ?? item.patch ?? item.arguments ?? item, Number.MAX_SAFE_INTEGER);
+      codexItem(targetThread, item.id, 'tool', {
+        name: '编辑本机文件',
+        text: codexText(rawText, 8000),
+        preview: params.preview_only === true || item.preview_only === true || rawText.length > 8000,
+        status: complete ? item.status || 'completed' : 'running',
+      });
     } else if (item.id) {
       const text = codexText(item.arguments ?? item.command ?? item, Number.MAX_SAFE_INTEGER);
       codexItem(thread, item.id, 'tool', {name: item.name || item.tool || item.type || 'Tool call',
@@ -5170,6 +5289,15 @@ function receiveCodexEvent(event) {
   }
   if (liveEvent) {
     if (event.method === 'bridge/connected') Object.assign(status, {connected: true, state: 'connected'});
+    if (event.method === 'bridge/permission_mode') {
+      if (typeof params.permission_mode === 'string') status.permission_mode = params.permission_mode;
+      if (params.thread_reset) {
+        status.thread_id = null;
+        status.turn_id = null;
+        status.thread_permission_mode = null;
+      }
+      codexPanelState.permissionConfirmPending = false;
+    }
     if (event.method === 'bridge/thread') {
       const id = threadId || params.thread_id;
       Object.assign(status, {thread_id: id, turn_id: null, state: 'ready'});
@@ -5274,7 +5402,15 @@ async function refreshCodexStatus() {
 
 function formatDirectApprovalTitle(approval) {
   const p = approval?.params || {};
-  const tool = p.tool || approval?.method || '操作';
+  const method = approval?.method || '';
+  if (method === 'item/commandExecution/requestApproval' || p.tool === 'item/commandExecution/requestApproval') {
+    const cmd = Array.isArray(p.command) ? p.command.join(' ') : (p.command || '').toString();
+    return `终端命令 · ${cmd.slice(0, 80)}`;
+  }
+  if (method === 'item/fileChange/requestApproval' || p.tool === 'item/fileChange/requestApproval') {
+    return '修改本机文件';
+  }
+  const tool = p.tool || method || '操作';
   const args = p.arguments && typeof p.arguments === 'object' ? p.arguments : {};
   if (tool === 'spiceowl_probe_host') return `SSH 探测主机 ${args.host_id || ''}`.trim();
   if (tool === 'spiceowl_scan_resources') {
@@ -5447,6 +5583,15 @@ function renderCodexActivity() {
       ? simAgentStatusChip(status)
       : chip(status?.state || 'disconnected', status?.connected ? 'green' : '');
   }
+  if ($('#codex-perm-chip')) {
+    $('#codex-perm-chip').innerHTML = simAgentPermissionChip(codexPermissionMode());
+  }
+  if ($('#codex-permission-slot')) {
+    $('#codex-permission-slot').innerHTML = renderCodexPermissionBar();
+  }
+  if ($('#codex-composer-hint')) {
+    $('#codex-composer-hint').textContent = codexComposerHint(codexPermissionMode());
+  }
   if ($('#codex-stream-state')) {
     $('#codex-stream-state').textContent = codexPanelState.streamState === 'reconnecting'
       ? 'Updates interrupted; reconnecting the read-only event stream. Messages are not resent.'
@@ -5506,7 +5651,7 @@ function renderCodexActivity() {
 
 function standaloneAgentPanel() {
   const status = codexPanelState.status;
-  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div><div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p class="subtle-note">Tool calls follow the backend’s permissions. Review each approval card before deciding.</p><div class="sim-ai-composer-actions"><button id="codex-stop" class="button secondary small sim-ai-stop" type="button" data-action="codex-interrupt" hidden>Stop AI</button><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></div></form></section></div><details class="panel native-history"><summary>Agent 端到端闭环评测与确定性 Next-Action 基准（10 项冻结测试）</summary><div class="panel-body"><div class="direct-actions"><button type="button" class="button primary small" data-action="codex-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '评测运行中…' : '运行 10 项 Agent 闭环安全评测'}</button></div><div id="codex-eval-output" style="margin-top:10px"></div></div></details>`;
+  return `<div class="codex-panel" data-agent-mode="standalone"><section class="panel codex-connection"><div class="panel-head"><h2>Codex connection</h2><span class="codex-head-chips"><span id="codex-perm-chip">${simAgentPermissionChip(codexPermissionMode())}</span><span id="codex-runtime-state">${chip(status?.state || 'disconnected')}</span></span></div><div class="panel-body"><p>Connect to the Codex app-server on this computer. It uses your existing Codex authentication and configuration.</p><form id="codex-connect-form" class="codex-connect-form"><div><label for="codex-profile">Codex profile · optional</label><input id="codex-profile" maxlength="128" autocomplete="off" value="${escape(codexPanelState.profile)}" placeholder="Configured default"></div><div><label for="codex-model">Model · optional</label><input id="codex-model" maxlength="128" autocomplete="off" value="${escape(codexPanelState.model)}" placeholder="Configured default"></div><button class="button primary" type="submit" ${status?.connected ? 'disabled' : ''}>Connect Codex</button></form><p class="subtle-note">The executable comes from this server’s <code>--codex-executable /absolute/path/to/codex</code> setting or local PATH. Opening this page does not start Codex.</p><div class="codex-connection-actions"><button class="button secondary small" data-action="codex-refresh">Refresh status</button><button class="button secondary small" data-action="codex-disconnect" ${status?.connected ? '' : 'disabled'}>Disconnect Agent</button></div><p class="subtle-note">Disconnect ends the Agent connection. It does not cancel or restart a simulation.</p></div></section><section class="panel codex-chat"><div class="panel-head codex-chat-heading"><div><h2>Conversation</h2><span id="codex-stream-state" class="subtle-note">No live event stream</span></div><div class="codex-session-controls"><label class="sr-only" for="codex-session">Conversation history</label><select id="codex-session"><option>No conversation yet</option></select><button class="button secondary small" data-action="codex-thread">New conversation</button></div></div>${!isPublicDemo() ? `<div id="codex-permission-slot" class="codex-permission-slot">${renderCodexPermissionBar()}</div>` : ''}<div id="codex-notices" class="codex-notices"></div><div id="codex-timeline" class="codex-timeline" role="log" aria-live="polite" aria-label="Agent messages and tool calls"></div><div id="codex-approvals" class="codex-approvals"></div><form id="codex-message-form" class="codex-composer"><label for="codex-message">Message Codex</label><textarea id="codex-message" maxlength="4000" rows="3" placeholder="Ask about your simulation workflow…" disabled>${escape(codexPanelState.draft)}</textarea><div><p id="codex-composer-hint" class="subtle-note">${escape(codexComposerHint(codexPermissionMode()))}</p><div class="sim-ai-composer-actions"><button id="codex-stop" class="button secondary small sim-ai-stop" type="button" data-action="codex-interrupt" hidden>Stop AI</button><button id="codex-send" class="button primary" type="submit" disabled>Send message</button></div></div></form></section></div><details class="panel native-history"><summary>Agent 端到端闭环评测与确定性 Next-Action 基准（10 项冻结测试）</summary><div class="panel-body"><div class="direct-actions"><button type="button" class="button primary small" data-action="codex-run-eval" ${codexPanelState.evalBusy ? 'disabled' : ''}>${codexPanelState.evalBusy ? '评测运行中…' : '运行 10 项 Agent 闭环安全评测'}</button></div><div id="codex-eval-output" style="margin-top:10px"></div></div></details>`;
 }
 
 function nativeChat() {
@@ -6450,12 +6595,67 @@ document.addEventListener('click', async event => {
     }
     return;
   }
+  if (action === 'codex-cancel-full-access') {
+    codexPanelState.permissionConfirmPending = false;
+    renderCodexActivity();
+    return;
+  }
+  if (action === 'codex-set-permission') {
+    if (isPublicDemo()) return;
+    const targetMode = button.dataset.mode;
+    if (!['safe', 'supervised', 'full_access'].includes(targetMode)) return;
+    if (codexPanelState.busy || button.disabled || codexActiveTurn() || codexPanelState.status?.recovery_required) return;
+    if (targetMode === codexPermissionMode()) {
+      if (codexPanelState.permissionConfirmPending) {
+        codexPanelState.permissionConfirmPending = false;
+        renderCodexActivity();
+      }
+      return;
+    }
+    if (targetMode === 'full_access') {
+      codexPanelState.permissionConfirmPending = true;
+      renderCodexActivity();
+      return;
+    }
+  }
+  if (action === 'codex-confirm-full-access') {
+    if (isPublicDemo() || codexPanelState.busy || button.disabled || codexActiveTurn() || codexPanelState.status?.recovery_required) return;
+  }
   if (codexPanelState.busy || button.disabled) return;
   codexPanelState.busy = true;
   codexPanelState.error = null;
   let approval = null;
   try {
-    if (action === 'codex-reconcile') {
+    if (action === 'codex-set-permission' || action === 'codex-confirm-full-access') {
+      if (isPublicDemo() || codexActiveTurn() || codexPanelState.status?.recovery_required) return;
+      const mode = action === 'codex-confirm-full-access' ? 'full_access' : button.dataset.mode;
+      if (!['safe', 'supervised', 'full_access'].includes(mode)) return;
+      renderCodexActivity();
+      const res = await api('/api/codex/permission', {
+        method: 'POST',
+        body: {
+          permission_mode: mode,
+          ...(mode === 'full_access' ? {confirmed_full_access: true} : {}),
+        },
+      });
+      setCodexStatus(res);
+      codexPanelState.permissionConfirmPending = false;
+      if (res.connected && !res.thread_id && location.hash === '#direct') {
+        const th = await api('/api/codex/thread', {method: 'POST'});
+        if (th?.thread_id) {
+          codexThread(th.thread_id);
+          codexPanelState.selectedThread = th.thread_id;
+        }
+      }
+      const effectiveMode = codexPermissionMode();
+      const modeToasts = {
+        full_access: '🚀 已开启「满血全权」模式：Codex 现在拥有完整本机 Shell 与免弹窗仿真提交能力！',
+        supervised: '⚡ 已切换至「满血受控」模式：开放本机 Shell/Python/Skill，高危操作人工审批。',
+        safe: '🔒 已切换至「安全托管」模式。',
+      };
+      toast(modeToasts[effectiveMode] || modeToasts.safe);
+    } else if (action === 'codex-reconcile') {
+      codexPanelState.permissionConfirmPending = false;
       const resolution = (button.dataset.reconnect === '1' || location.hash === '#direct')
         ? 'abort_and_reset_thread'
         : 'acknowledge_and_archive';
@@ -6503,6 +6703,7 @@ document.addEventListener('click', async event => {
     } else if (action === 'codex-disconnect') {
       closeCodexEvents();
       codexPanelState.settingsOpen = false;
+      codexPanelState.permissionConfirmPending = false;
       codexPanelState.modelsLoaded = false;
       codexPanelState.authAccount = null;
       renderCodexActivity();

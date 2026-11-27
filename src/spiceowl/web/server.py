@@ -466,12 +466,16 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 pass
 
         def codex_control(self, action, body):
-            fields = {'connect': ({'model', 'profile'}, set()), 'thread': (set(), set()),
+            fields = {
+                'connect': ({'model', 'profile', 'permission_mode', 'confirmed_full_access'}, set()),
+                'permission': ({'permission_mode', 'confirmed_full_access'}, {'permission_mode'}),
+                'thread': ({'permission_mode'}, set()),
                 'message': ({'thread_id', 'text', 'request_key', 'model', 'reasoning_effort'}, {'thread_id', 'text', 'request_key'}),
                 'approval': ({'approval_id', 'decision'}, {'approval_id', 'decision'}),
                 'interrupt': (set(), set()),
                 'recover': ({'resolution', 'note', 'confirmed_side_effects_checked'}, set()),
-                'disconnect': (set(), set())}
+                'disconnect': (set(), set()),
+            }
             if action not in fields:
                 raise DomainError('Unknown Codex client operation.', 'not_found')
             allowed, required = fields[action]
@@ -479,7 +483,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 raise DomainError('Use exactly the documented Codex client arguments.')
             bridge = controller.codex
             if action == 'connect': return bridge.connect(body)
-            if action == 'thread': return bridge.create_thread()
+            if action == 'permission': return bridge.set_permission_mode(**body)
+            if action == 'thread': return bridge.create_thread(**body)
             if action == 'message': return bridge.send_message(**body)
             if action == 'approval': return bridge.decide(**body)
             if action == 'interrupt': return bridge.interrupt()

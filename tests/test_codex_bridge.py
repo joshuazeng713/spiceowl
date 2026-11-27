@@ -47,9 +47,14 @@ for line in sys.stdin:
         'approvals_reviewer':'user','mcp_servers':{'private_server':{'secret':'do not persist'} }}})
     elif method=='thread/start':
         thread_seq+=1
-        cur_thread='thread-'+str(thread_seq) if scenario=='recover_new_thread' else 'thread-1'
-        reply(message,{'thread':{'id':cur_thread},'model':'fake-model','approvalPolicy':fixture.get('thread_policy','on-request'),
-            'approvalsReviewer':'user','sandbox':{'type':'readOnly'}})
+        cur_thread='thread-'+str(thread_seq) if scenario in ('recover_new_thread','multi_thread') else 'thread-1'
+        req_params=message.get('params') or {}
+        sandbox_map={'read-only':'readOnly','workspace-write':'workspaceWrite','danger-full-access':'dangerFullAccess'}
+        sandbox_type=sandbox_map.get(req_params.get('sandbox'),'readOnly')
+        default_policy=req_params.get('approvalPolicy') or 'on-request'
+        approval_policy=fixture['thread_policy'] if 'thread_policy' in fixture else default_policy
+        reply(message,{'thread':{'id':cur_thread},'model':'fake-model','approvalPolicy':approval_policy,
+            'approvalsReviewer':'user','sandbox':{'type':sandbox_type}})
     elif method=='turn/interrupt':
         reply(message,{})
         notice('turn/completed',{'threadId':cur_thread,'turn':{'id':cur_turn,'status':'interrupted'}})
@@ -94,6 +99,9 @@ for line in sys.stdin:
         elif scenario=='foreign_notification':
             notice('item/agentMessage/delta',{'threadId':'other-thread','turnId':'other-turn','delta':'wrong text'})
             complete()
+        elif scenario=='command_output':
+            notice('item/commandExecution/outputDelta',{'threadId':cur_thread,'turnId':cur_turn,'itemId':'cmd-1','delta':'line 1\n'})
+            complete()
     elif method is None and message.get('id','').startswith('server-'):
         if scenario=='tool_then_exit':os._exit(0)
         if scenario in ('two_tools','two_tools_premature','two_tools_with_read','two_native'):
@@ -130,7 +138,7 @@ class CodexBridgeTests(unittest.TestCase):
             bridge.close()
         self.temp.cleanup()
 
-    def bridge(self, scenario='normal', *, policy='read', dispatch=None, mode='standalone', definitions=None, **fixture):
+    def bridge(self, scenario='normal', *, policy='read', dispatch=None, mode='standalone', definitions=None, workspace_dir=None, **fixture):
         directory = self.root / ('session-' + str(len(self.bridges)))
         if mode == 'standalone':
             directory.mkdir()
@@ -139,6 +147,7 @@ class CodexBridgeTests(unittest.TestCase):
             self.dispatched.append((name, arguments, context))
             return {'value': arguments['value']}
         result = CodexBridge(directory, mode=mode, executable=self.exe, request_timeout=3,
+            workspace_dir=workspace_dir,
             dispatch_tool=dispatch or default_dispatch, tool_policy=policy if callable(policy) else lambda name, args: policy,
             tool_definitions=definitions or [{'name':'inspect_circuit','description':'Read a synthetic circuit.',
                 'inputSchema':{'type':'object','properties':{'value':{'type':'integer'}},'required':['value'],'additionalProperties':False}}])
@@ -671,6 +680,239 @@ class CodexBridgeTests(unittest.TestCase):
         bridge.send_message(new_thread,'clean retry on fresh thread','request-clean-2')
         self.wait(lambda:bridge.status()['state']=='complete')
         self.assertFalse(bridge.status()['recovery_required'])
+
+    def test_set_permission_mode_requires_confirmation_and_resets_thread(self):
+        bridge = self.bridge('multi_thread')
+        self.assertEqual('safe', bridge.status()['permission_mode'])
+        self.assertIsNone(bridge.status()['thread_permission_mode'])
+
+        with self.assertRaises(BridgeError) as caught:
+            bridge.set_permission_mode('full_access')
+        self.assertEqual('codex_full_access_confirmation_required', caught.exception.code)
+        self.assertEqual('safe', bridge.status()['permission_mode'])
+
+        with self.assertRaises(BridgeError):
+            bridge.set_permission_mode('full_access', confirmed_full_access='yes')
+        with self.assertRaises(BridgeError):
+            bridge.set_permission_mode('unknown_tier')
+
+        bridge.connect({})
+        first_thread = bridge.create_thread()
+        self.assertEqual('safe', first_thread['permission_mode'])
+        self.assertEqual('safe', bridge.status()['thread_permission_mode'])
+        self.assertEqual('thread-1', bridge.status()['thread_id'])
+
+        # Direct create_thread('full_access') without confirmation is refused without locking recovery
+        with self.assertRaises(BridgeError) as caught:
+            bridge.create_thread(permission_mode='full_access')
+        self.assertEqual('codex_full_access_confirmation_required', caught.exception.code)
+        self.assertFalse(bridge.status()['recovery_required'])
+
+        # Switching to full_access with confirmation resets the existing thread cleanly
+        st = bridge.set_permission_mode('full_access', confirmed_full_access=True)
+        self.assertEqual('full_access', st['permission_mode'])
+        self.assertIsNone(st['thread_id'])
+        self.assertIsNone(st['thread_permission_mode'])
+        self.assertEqual('connected', st['state'])
+        pm_events = [e for e in bridge.events()['events'] if e['method'] == 'bridge/permission_mode']
+        self.assertEqual({'permission_mode': 'full_access', 'thread_reset': True}, pm_events[-1]['params'])
+
+        second_thread = bridge.create_thread()
+        self.assertEqual('full_access', second_thread['permission_mode'])
+        self.assertEqual('thread-2', second_thread['thread_id'])
+        self.assertEqual('full_access', bridge.status()['thread_permission_mode'])
+
+        # Switching mode while a turn is active is blocked with codex_turn_busy
+        active_bridge = self.bridge('tool', policy='approval')
+        t_active = self.ready(active_bridge)
+        active_bridge.send_message(t_active, 'wait for approval', 'req-busy')
+        self.wait(lambda: active_bridge.status()['pending_approvals'])
+        with self.assertRaises(BridgeError) as caught:
+            active_bridge.set_permission_mode('supervised')
+        self.assertEqual('codex_turn_busy', caught.exception.code)
+
+    def test_legacy_journal_without_permission_mode_restores_as_safe(self):
+        bridge = self.bridge()
+        self.ready(bridge)
+        bridge.close()
+        journal_path = bridge.directory / 'codex-bridge.json'
+        saved = json.loads(journal_path.read_text())
+        saved.pop('permission_mode', None)
+        saved.pop('thread_permission_mode', None)
+        journal_path.write_text(json.dumps(saved))
+        restored = CodexBridge(bridge.directory, executable=self.exe)
+        self.bridges.append(restored)
+        self.assertEqual('safe', restored.status()['permission_mode'])
+        self.assertIsNone(restored.status()['thread_permission_mode'])
+
+    def test_full_access_mode_config_auto_dispatches_and_returns_tool_errors(self):
+        ws = self.root / 'workspace-full'
+        ws.mkdir()
+        # 1) Auto-dispatch policy='approval' dynamic tool & allow config approval_policy='never'
+        bridge = self.bridge('tool', policy='approval', workspace_dir=ws)
+        (bridge.directory / 'fixture.json').write_text(json.dumps({'scenario': 'tool', 'policy': 'never'}))
+        with self.assertRaises(BridgeError) as caught:
+            bridge.connect({'permission_mode': 'full_access'})
+        self.assertEqual('codex_full_access_confirmation_required', caught.exception.code)
+
+        bridge.connect({'permission_mode': 'full_access', 'confirmed_full_access': True})
+        created = bridge.create_thread()
+        self.assertEqual('full_access', created['permission_mode'])
+        self.assertEqual('full_access', bridge.status()['thread_permission_mode'])
+
+        bridge.send_message(created['thread_id'], 'run full access tool', 'req-full-1')
+        self.wait(lambda: bridge.status()['state'] == 'complete')
+        self.assertEqual([], bridge.status()['pending_approvals'])
+        self.assertEqual(1, len(self.dispatched))
+        self.assertEqual({'value': 7}, self.dispatched[0][1])
+
+        wire = self.wire(bridge)
+        thread_params = [m for m in wire if m.get('method') == 'thread/start'][0]['params']
+        self.assertEqual(str(ws.absolute()), thread_params['cwd'])
+        self.assertEqual('danger-full-access', thread_params['sandbox'])
+        self.assertEqual('never', thread_params['approvalPolicy'])
+        self.assertEqual('user', thread_params['approvalsReviewer'])
+        self.assertTrue(thread_params['config']['features.shell_tool'])
+        self.assertTrue(thread_params['config']['features.unified_exec'])
+        self.assertTrue(thread_params['config']['features.apply_patch_freeform'])
+        self.assertTrue(thread_params['config']['features.multi_agent'])
+        self.assertFalse(thread_params['config']['mcp_servers.private_server.enabled'])
+        saved = json.loads((bridge.directory / 'codex-bridge.json').read_text())
+        self.assertEqual('full_access_auto', next(iter(saved['calls'].values()))['policy'])
+
+        # 2) Tool exception in full_access returns structured error to Codex without recovery_required
+        def failing_dispatch(name, args, *, context):
+            raise RuntimeError('remote solver failed with sk-secret1234567890abcd')
+
+        err_bridge = self.bridge('tool', policy='approval', dispatch=failing_dispatch, workspace_dir=ws)
+        err_bridge.connect({'permission_mode': 'full_access', 'confirmed_full_access': True})
+        err_thread = err_bridge.create_thread()['thread_id']
+        err_bridge.send_message(err_thread, 'trigger error', 'req-full-err')
+        self.wait(lambda: err_bridge.status()['state'] == 'complete')
+        self.assertFalse(err_bridge.status()['recovery_required'])
+        answer = [m for m in self.wire(err_bridge) if m.get('id') == 'server-1'][0]['result']
+        self.assertFalse(answer['success'])
+        payload = json.loads(answer['contentItems'][0]['text'])
+        self.assertEqual('RuntimeError', payload['error']['code'])
+        self.assertIn('[redacted]', payload['error']['message'])
+        self.assertNotIn('sk-secret1234567890abcd', payload['error']['message'])
+
+    def test_supervised_mode_config_requires_approval_and_returns_tool_errors(self):
+        ws = self.root / 'workspace-sup'
+        ws.mkdir()
+
+        def failing_dispatch(name, args, *, context):
+            self.dispatched.append((name, args, context))
+            raise DomainError('remote host unreachable', 'ssh_unreachable')
+
+        bridge = self.bridge('tool', policy='approval', dispatch=failing_dispatch, workspace_dir=ws)
+        bridge.connect({'permission_mode': 'supervised'})
+        created = bridge.create_thread()
+        self.assertEqual('supervised', created['permission_mode'])
+        self.assertEqual('supervised', bridge.status()['thread_permission_mode'])
+
+        wire = self.wire(bridge)
+        thread_params = [m for m in wire if m.get('method') == 'thread/start'][0]['params']
+        self.assertEqual(str(ws.absolute()), thread_params['cwd'])
+        self.assertEqual('workspace-write', thread_params['sandbox'])
+        self.assertEqual('on-request', thread_params['approvalPolicy'])
+        self.assertEqual('user', thread_params['approvalsReviewer'])
+        self.assertTrue(thread_params['config']['features.shell_tool'])
+        self.assertTrue(thread_params['config']['features.unified_exec'])
+        self.assertTrue(thread_params['config']['features.apply_patch_freeform'])
+        self.assertTrue(thread_params['config']['features.skill_search'])
+        self.assertTrue(thread_params['config']['features.view_image'])
+        self.assertTrue(thread_params['config']['features.js_repl'])
+        self.assertFalse(thread_params['config']['features.multi_agent'])
+        self.assertEqual('disabled', thread_params['config']['web_search'])
+        self.assertFalse(thread_params['config']['mcp_servers.private_server.enabled'])
+
+        bridge.send_message(created['thread_id'], 'supervised action', 'req-sup-1')
+        pending = self.wait(lambda: bridge.status()['pending_approvals'])[0]
+        self.assertEqual('awaiting_approval', bridge.status()['state'])
+        self.assertEqual([], self.dispatched)
+
+        decision = bridge.decide(pending['approval_id'], 'approve')
+        self.assertEqual('resolved', decision['status'])
+        self.wait(lambda: bridge.status()['state'] == 'complete')
+        self.assertFalse(bridge.status()['recovery_required'])
+        answer = [m for m in self.wire(bridge) if m.get('id') == 'server-1'][0]['result']
+        self.assertFalse(answer['success'])
+        payload = json.loads(answer['contentItems'][0]['text'])
+        self.assertEqual('ssh_unreachable', payload['error']['code'])
+        self.assertEqual('remote host unreachable', payload['error']['message'])
+
+    def test_command_output_delta_is_forwarded_as_public_event(self):
+        bridge = self.bridge('command_output')
+        bridge.connect({'permission_mode': 'supervised'})
+        thread = bridge.create_thread()['thread_id']
+        bridge.send_message(thread, 'run command', 'req-cmd-1')
+        self.wait(lambda: bridge.status()['state'] == 'complete')
+        deltas = [e for e in bridge.events()['events'] if e['method'] == 'item/commandExecution/outputDelta']
+        self.assertEqual(1, len(deltas))
+        self.assertEqual('line 1\n', deltas[0]['params']['delta'])
+
+    def test_http_codex_permission_connect_and_thread_routes(self):
+        import http.client
+        from spiceowl.service import Controller
+        from spiceowl.web.server import make_server
+
+        app = Controller(self.root / 'http-state', agent_mode='standalone')
+        server = make_server(app, codex_executable=self.exe)
+        srv_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        srv_thread.start()
+        port = server.server_address[1]
+
+        def req(method, path, data=None, token=None):
+            conn = http.client.HTTPConnection('127.0.0.1', port, timeout=3)
+            try:
+                headers = {'Content-Type': 'application/json'}
+                if token:
+                    headers['X-SpiceOwl-Token'] = token
+                conn.request(method, path, json.dumps(data) if data is not None else None, headers)
+                resp = conn.getresponse()
+                return resp.status, json.loads(resp.read())
+            finally:
+                conn.close()
+
+        try:
+            csrf = req('GET', '/api/state')[1]['csrf_token']
+            (app.codex.directory / 'fixture.json').write_text(json.dumps({'scenario': 'multi_thread'}))
+
+            # Missing required permission_mode or extra unknown arg -> 400
+            self.assertEqual(400, req('POST', '/api/codex/permission', {}, token=csrf)[0])
+            self.assertEqual(400, req('POST', '/api/codex/permission', {'permission_mode': 'supervised', 'extra': 1}, token=csrf)[0])
+
+            # full_access without confirmation -> 400 with exact code
+            code, err = req('POST', '/api/codex/permission', {'permission_mode': 'full_access'}, token=csrf)
+            self.assertEqual(400, code)
+            self.assertEqual('codex_full_access_confirmation_required', err['error']['code'])
+
+            # Confirmed full_access succeeds via /api/codex/permission
+            code, st = req('POST', '/api/codex/permission', {'permission_mode': 'full_access', 'confirmed_full_access': True}, token=csrf)
+            self.assertEqual(202, code)
+            self.assertEqual('full_access', st['permission_mode'])
+
+            # Connect with supervised mode + create thread with permission_mode
+            code, st = req('POST', '/api/codex/connect', {'permission_mode': 'supervised'}, token=csrf)
+            self.assertEqual(202, code)
+            self.assertEqual('supervised', st['permission_mode'])
+
+            code, th = req('POST', '/api/codex/thread', {'permission_mode': 'supervised'}, token=csrf)
+            self.assertEqual(202, code)
+            self.assertEqual('supervised', th['permission_mode'])
+
+            # Switching permission resets thread over HTTP
+            code, st = req('POST', '/api/codex/permission', {'permission_mode': 'safe'}, token=csrf)
+            self.assertEqual(202, code)
+            self.assertEqual('safe', st['permission_mode'])
+            self.assertIsNone(st['thread_id'])
+            self.assertIsNone(st['thread_permission_mode'])
+        finally:
+            server.shutdown()
+            srv_thread.join()
+            server.server_close()
+            app.close()
 
 
 if __name__ == '__main__':

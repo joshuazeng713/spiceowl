@@ -52,6 +52,13 @@ from spiceowl.recovery.bounded import (
 RUN_SCHEMA = "spiceowl.direct-run.v1"
 SUBMISSIONS_SCHEMA = "spiceowl.direct-submissions.v1"
 RECOVERY_INDEX_SCHEMA = "spiceowl.recovery-report-index.v1"
+AI_REPORT_SCHEMA = "spiceowl.ai-sim-report.v1"
+SCOPE_REPORT_INDEX_SCHEMA = "spiceowl.scope-report-index.v1"
+MAX_AI_REPORT_HTML_BYTES = 2 * 1024 * 1024
+MAX_SCOPE_REPORT_HTML_BYTES = 4 * 1024 * 1024
+MAX_AI_REPORT_MARKDOWN_BYTES = 256 * 1024
+_HTML_TITLE_RE = re.compile(r"<(?:title|h1)\b[^>]*>(.*?)</(?:title|h1)>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", re.ASCII)
 _COMMIT = re.compile(r"[a-f0-9]{40}", re.ASCII)
 
@@ -206,6 +213,165 @@ def _atomic_write(path, value):
         temp.unlink(missing_ok=True)
 
 
+def _atomic_write_text(path, text: str) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _read_bounded_text(path: Path, max_bytes: int, *, err_code: str = "invalid_ai_report") -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(max_bytes + 1)
+    except OSError:
+        return None
+    if len(raw) > max_bytes:
+        raise DomainError(f"Report file '{path.name}' exceeds the {max_bytes} byte limit.", err_code)
+    text = raw.decode("utf-8", errors="replace")
+    return text if text.strip() else None
+
+
+def _file_mtime_iso(path: Path) -> str | None:
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except OSError:
+        return None
+
+
+def _extract_report_title(html: str | None, markdown: str | None, fallback: str) -> str:
+    if isinstance(html, str) and html:
+        m = _HTML_TITLE_RE.search(html[:32768])
+        if m:
+            plain = _HTML_TAG_RE.sub("", m.group(1))
+            plain = " ".join(plain.split())
+            plain = "".join(ch for ch in plain if ord(ch) >= 32 and ord(ch) != 127).strip()
+            if plain:
+                return plain[:200]
+    if isinstance(markdown, str) and markdown:
+        for line in markdown.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                heading = stripped.lstrip("#").strip()
+                heading = "".join(ch for ch in heading if ord(ch) >= 32 and ord(ch) != 127).strip()
+                if heading:
+                    return heading[:200]
+    return fallback[:200]
+
+
+def _extract_report_summary(markdown: str | None) -> str:
+    if isinstance(markdown, str) and markdown:
+        for line in markdown.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", "```", "---", "***", "|")):
+                continue
+            cleaned_line = "".join(ch for ch in stripped if ord(ch) >= 32 and ord(ch) != 127).strip()
+            if cleaned_line:
+                return cleaned_line[:240]
+    return ""
+
+
+def _validate_report_content(
+    *,
+    html: str | None,
+    markdown: str | None,
+    title: str | None,
+    summary: str | None,
+    source: str,
+    max_html_bytes: int,
+    fallback_title: str,
+    err_code: str = "invalid_ai_report",
+) -> tuple[str | None, str | None, str, str, str]:
+    clean_html: str | None = None
+    if html is not None:
+        if not isinstance(html, str):
+            raise DomainError("Report html must be a string or null.", err_code)
+        if "\x00" in html:
+            raise DomainError("Report html cannot contain null bytes.", err_code)
+        if html.strip():
+            if len(html.encode("utf-8")) > max_html_bytes:
+                raise DomainError(f"Report html exceeds the {max_html_bytes // (1024 * 1024)} MiB size limit.", err_code)
+            clean_html = html
+
+    clean_markdown: str | None = None
+    if markdown is not None:
+        if not isinstance(markdown, str):
+            raise DomainError("Report markdown must be a string or null.", err_code)
+        if "\x00" in markdown:
+            raise DomainError("Report markdown cannot contain null bytes.", err_code)
+        if markdown.strip():
+            if len(markdown.encode("utf-8")) > MAX_AI_REPORT_MARKDOWN_BYTES:
+                raise DomainError("Report markdown exceeds the 256 KiB size limit.", err_code)
+            clean_markdown = markdown
+
+    if clean_html is None and clean_markdown is None:
+        raise DomainError("Report requires non-empty html or markdown content.", err_code)
+
+    clean_title: str | None = None
+    if title is not None:
+        if not isinstance(title, str):
+            raise DomainError("title must be a string or null.", err_code)
+        stripped_title = title.strip()
+        if len(stripped_title) > 200 or any(ord(ch) < 32 or ord(ch) == 127 for ch in stripped_title):
+            raise DomainError("title must be a printable string up to 200 characters.", err_code)
+        clean_title = stripped_title or None
+    if clean_title is None:
+        clean_title = _extract_report_title(clean_html, clean_markdown, fallback_title)
+
+    clean_summary: str | None = None
+    if summary is not None:
+        if not isinstance(summary, str):
+            raise DomainError("summary must be a string or null.", err_code)
+        stripped_summary = summary.strip()
+        if len(stripped_summary) > 600 or any(
+            (ord(ch) < 32 and ch not in "\n\r\t") or ord(ch) == 127 for ch in stripped_summary
+        ):
+            raise DomainError("summary must be a printable string up to 600 characters.", err_code)
+        clean_summary = stripped_summary or None
+    if clean_summary is None:
+        clean_summary = _extract_report_summary(clean_markdown)
+
+    if not isinstance(source, str) or not source.strip():
+        raise DomainError("source must be a non-empty string.", err_code)
+    clean_source = source.strip()
+    if len(clean_source) > 64 or any(ord(ch) < 32 or ord(ch) == 127 for ch in clean_source):
+        raise DomainError("source must be a printable string up to 64 characters.", err_code)
+
+    return clean_html, clean_markdown, clean_title, clean_summary, clean_source
+
+
+def scope_key(scope: str, project: str, testbench: str | None = None) -> str:
+    """Compute a deterministic filesystem-safe key for a project/testbench scope report."""
+    if scope not in ("project", "testbench"):
+        raise DomainError("scope must be 'project' or 'testbench'.", "invalid_scope_report")
+    if not isinstance(project, str) or not project.strip():
+        raise DomainError("project must be a non-empty string.", "invalid_scope_report")
+    clean_proj = project.strip()
+    if len(clean_proj) > 160 or any(ord(ch) < 32 or ord(ch) == 127 for ch in clean_proj):
+        raise DomainError("project must be a printable string up to 160 characters.", "invalid_scope_report")
+    clean_tb: str | None = None
+    if scope == "testbench":
+        if not isinstance(testbench, str) or not testbench.strip():
+            raise DomainError("testbench must be a non-empty string when scope is 'testbench'.", "invalid_scope_report")
+        clean_tb = testbench.strip()
+        if len(clean_tb) > 160 or any(ord(ch) < 32 or ord(ch) == 127 for ch in clean_tb):
+            raise DomainError("testbench must be a printable string up to 160 characters.", "invalid_scope_report")
+    digest = hashlib.sha256(json.dumps([scope, clean_proj, clean_tb or ""]).encode()).hexdigest()[:24]
+    return f"{scope}-{digest}"
+
+
 def _read_json(path):
     path = Path(path)
     if path.is_symlink():
@@ -346,9 +512,33 @@ class DirectExecutionManager:
 
     def _enrich_record(self, record: dict, *, batch_info: dict | None = None) -> dict:
         rec = deepcopy(record)
+        rid = rec.get("run_id")
         needs_hints = not (rec.get("library_name") or rec.get("cell_name") or rec.get("project_name"))
-        head = self._read_netlist_head(rec["run_id"]) if needs_hints and rec.get("run_id") else ""
+        head = self._read_netlist_head(rid) if needs_hints and rid else ""
         rec["organization"] = build_run_organization(rec, netlist_head=head, batch_info=batch_info)
+        if isinstance(rid, str) and rid:
+            try:
+                run_dir = self.path(rid)
+                html_file = run_dir / "ai_report.html"
+                md_file = run_dir / "ai_report.md"
+                disk_html = html_file.is_file() and not html_file.is_symlink()
+                disk_md = md_file.is_file() and not md_file.is_symlink()
+                if disk_html or disk_md:
+                    existing_ai = _as_dict(rec.get("ai_report"))
+                    if not existing_ai.get("available") or (disk_html and not existing_ai.get("has_html")):
+                        mtime = _file_mtime_iso(html_file if disk_html else md_file) or rec.get("updated_at") or utcnow()
+                        rec["ai_report"] = {
+                            "available": True,
+                            "has_html": bool(disk_html or existing_ai.get("has_html")),
+                            "has_markdown": bool(disk_md or existing_ai.get("has_markdown")),
+                            "title": existing_ai.get("title") or f"AI 仿真分析报告 · {rid}",
+                            "summary": existing_ai.get("summary") or "",
+                            "generated_at": existing_ai.get("generated_at") or mtime,
+                            "updated_at": existing_ai.get("updated_at") or mtime,
+                            "source": existing_ai.get("source") or "agent",
+                        }
+            except DomainError:
+                pass
         return rec
 
     def read(self, run_id: str) -> dict:
@@ -427,7 +617,7 @@ class DirectExecutionManager:
         bmap = batch_map if isinstance(batch_map, dict) else {}
         runs = []
         for entry in sorted(self.root.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
+            if not entry.is_dir() or entry.name.startswith(".") or entry.name.startswith("_"):
                 continue
             run_file = entry / "run.json"
             if run_file.is_file() and not run_file.is_symlink():
@@ -977,6 +1167,363 @@ class DirectExecutionManager:
         if not report_path.is_file():
             raise DomainError("No collected report is available yet. Collect the terminal run first.", "report_unavailable")
         return deepcopy(_read_json(report_path))
+
+    def ai_report_html_path(self, run_id: str) -> str:
+        """Return the local filesystem path for a run's self-contained HTML report."""
+        return str(self.path(_validate_run_id(run_id)) / "ai_report.html")
+
+    def save_ai_report(
+        self,
+        run_id: str,
+        *,
+        html: str | None = None,
+        markdown: str | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        source: str = "agent",
+    ) -> dict:
+        """Persist an Agent-generated HTML and/or Markdown simulation report alongside a run record."""
+        run_id = _validate_run_id(run_id)
+        clean_html, clean_markdown, clean_title, clean_summary, clean_source = _validate_report_content(
+            html=html,
+            markdown=markdown,
+            title=title,
+            summary=summary,
+            source=source,
+            max_html_bytes=MAX_AI_REPORT_HTML_BYTES,
+            fallback_title=f"AI 仿真分析报告 · {run_id}",
+            err_code="invalid_ai_report",
+        )
+
+        run_dir = self.path(run_id)
+        html_file = run_dir / "ai_report.html"
+        md_file = run_dir / "ai_report.md"
+        meta_file = run_dir / "ai_report.json"
+
+        with _locked(run_dir / "run.lock"):
+            record = self.read(run_id)
+            prev_meta = {}
+            if meta_file.is_file() and not meta_file.is_symlink():
+                try:
+                    prev_meta = _as_dict(_read_json(meta_file))
+                except DomainError:
+                    prev_meta = {}
+            now = utcnow()
+            generated_at = prev_meta.get("generated_at") or now
+
+            if clean_html is not None:
+                _atomic_write_text(html_file, clean_html)
+            if clean_markdown is not None:
+                _atomic_write_text(md_file, clean_markdown)
+
+            has_html = clean_html is not None or (html_file.is_file() and not html_file.is_symlink())
+            has_markdown = clean_markdown is not None or (md_file.is_file() and not md_file.is_symlink())
+
+            ai_report_meta = {
+                "schema": AI_REPORT_SCHEMA,
+                "scope": "run",
+                "run_id": run_id,
+                "title": clean_title,
+                "summary": clean_summary,
+                "has_html": has_html,
+                "has_markdown": has_markdown,
+                "html_path": str(html_file),
+                "generated_at": generated_at,
+                "updated_at": now,
+                "source": clean_source,
+            }
+            _atomic_write(meta_file, ai_report_meta)
+            record["ai_report"] = {
+                "available": True,
+                "has_html": has_html,
+                "has_markdown": has_markdown,
+                "title": ai_report_meta["title"],
+                "summary": ai_report_meta["summary"],
+                "generated_at": ai_report_meta["generated_at"],
+                "updated_at": ai_report_meta["updated_at"],
+                "source": ai_report_meta["source"],
+            }
+            record["updated_at"] = now
+            _atomic_write(run_dir / "run.json", record)
+        return deepcopy(ai_report_meta)
+
+    def read_ai_report(self, run_id: str) -> dict | None:
+        """Read a persisted AI simulation report (merging direct disk edits to ai_report.html/md)."""
+        run_id = _validate_run_id(run_id)
+        run_dir = self.path(run_id)
+        meta_path = run_dir / "ai_report.json"
+        html_path = run_dir / "ai_report.html"
+        md_path = run_dir / "ai_report.md"
+
+        meta: dict = {}
+        if meta_path.is_file() and not meta_path.is_symlink():
+            meta = _as_dict(_read_json(meta_path))
+
+        html_text = _read_bounded_text(html_path, MAX_AI_REPORT_HTML_BYTES, err_code="invalid_ai_report")
+        md_text = _read_bounded_text(md_path, MAX_AI_REPORT_MARKDOWN_BYTES, err_code="invalid_ai_report")
+        if html_text is None and isinstance(meta.get("html"), str) and meta["html"].strip():
+            html_text = meta["html"]
+        if md_text is None and isinstance(meta.get("markdown"), str) and meta["markdown"].strip():
+            md_text = meta["markdown"]
+
+        if not meta and html_text is None and md_text is None:
+            return None
+
+        disk_mtime = _file_mtime_iso(html_path) or _file_mtime_iso(md_path)
+        generated_at = meta.get("generated_at") or disk_mtime or utcnow()
+        updated_at = meta.get("updated_at") or generated_at
+        if disk_mtime and disk_mtime > updated_at:
+            updated_at = disk_mtime
+
+        title = meta.get("title") or _extract_report_title(html_text, md_text, f"AI 仿真分析报告 · {run_id}")
+        summary = meta.get("summary") if isinstance(meta.get("summary"), str) else _extract_report_summary(md_text)
+
+        return {
+            "schema": meta.get("schema") or AI_REPORT_SCHEMA,
+            "scope": "run",
+            "run_id": run_id,
+            "title": title,
+            "summary": summary,
+            "has_html": html_text is not None,
+            "has_markdown": md_text is not None,
+            "html": html_text,
+            "markdown": md_text,
+            "html_path": str(html_path),
+            "generated_at": generated_at,
+            "updated_at": updated_at,
+            "source": meta.get("source") or "agent",
+        }
+
+    # --- Project-level & Testbench-level Scope Summary Reports ---
+
+    @staticmethod
+    def scope_key(scope: str, project: str, testbench: str | None = None) -> str:
+        """Compute deterministic storage key for a project or testbench summary report."""
+        return scope_key(scope, project, testbench)
+
+    def _scope_reports_dir(self) -> Path:
+        return self.root / "_scope_reports"
+
+    def _scope_reports_index_path(self) -> Path:
+        return self._scope_reports_dir() / "index.json"
+
+    def _resolve_scope_identity(
+        self,
+        scope: str,
+        project: str,
+        testbench: str | None = None,
+    ) -> tuple[str, str, str | None, str]:
+        key = scope_key(scope, project, testbench)
+        clean_proj = project.strip()
+        clean_tb = testbench.strip() if (scope == "testbench" and isinstance(testbench, str)) else None
+        return scope, clean_proj, clean_tb, key
+
+    def scope_report_html_path(self, *, scope: str, project: str, testbench: str | None = None) -> str:
+        """Return the local filesystem path for a Project or Testbench HTML report."""
+        _, _, _, key = self._resolve_scope_identity(scope, project, testbench)
+        return str(self._scope_reports_dir() / key / "report.html")
+
+    def save_scope_report(
+        self,
+        *,
+        scope: str,
+        project: str,
+        testbench: str | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        html: str | None = None,
+        markdown: str | None = None,
+        run_ids: list[str] | None = None,
+        source: str = "agent",
+    ) -> dict:
+        """Persist a Project-level or Testbench-level HTML/Markdown summary report."""
+        clean_scope, clean_proj, clean_tb, key = self._resolve_scope_identity(scope, project, testbench)
+        fallback_title = (
+            f"{clean_proj} / {clean_tb} 综合仿真报告"
+            if clean_scope == "testbench"
+            else f"{clean_proj} 项目综合仿真报告"
+        )
+        clean_html, clean_markdown, clean_title, clean_summary, clean_source = _validate_report_content(
+            html=html,
+            markdown=markdown,
+            title=title,
+            summary=summary,
+            source=source,
+            max_html_bytes=MAX_SCOPE_REPORT_HTML_BYTES,
+            fallback_title=fallback_title,
+            err_code="invalid_scope_report",
+        )
+
+        clean_run_ids: list[str] = []
+        if run_ids is not None:
+            if not isinstance(run_ids, list):
+                raise DomainError("run_ids must be a list of run ID strings.", "invalid_scope_report")
+            seen_rids: set[str] = set()
+            for item in run_ids[:500]:
+                if not isinstance(item, str) or not item.strip():
+                    raise DomainError("Each run_id in run_ids must be a non-empty string.", "invalid_scope_report")
+                rid = item.strip()[:128]
+                if rid not in seen_rids:
+                    seen_rids.add(rid)
+                    clean_run_ids.append(rid)
+
+        scope_root = self._scope_reports_dir()
+        entry_dir = scope_root / key
+        html_file = entry_dir / "report.html"
+        md_file = entry_dir / "report.md"
+        meta_file = entry_dir / "report.json"
+
+        with _locked(scope_root / "index.lock"):
+            entry_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            prev_meta = {}
+            if meta_file.is_file() and not meta_file.is_symlink():
+                try:
+                    prev_meta = _as_dict(_read_json(meta_file))
+                except DomainError:
+                    prev_meta = {}
+            now = utcnow()
+            generated_at = prev_meta.get("generated_at") or now
+
+            if clean_html is not None:
+                _atomic_write_text(html_file, clean_html)
+            if clean_markdown is not None:
+                _atomic_write_text(md_file, clean_markdown)
+
+            has_html = clean_html is not None or (html_file.is_file() and not html_file.is_symlink())
+            has_markdown = clean_markdown is not None or (md_file.is_file() and not md_file.is_symlink())
+
+            meta = {
+                "schema": AI_REPORT_SCHEMA,
+                "scope": clean_scope,
+                "scope_key": key,
+                "project": clean_proj,
+                "testbench": clean_tb,
+                "title": clean_title,
+                "summary": clean_summary,
+                "run_ids": clean_run_ids,
+                "run_count": len(clean_run_ids),
+                "has_html": has_html,
+                "has_markdown": has_markdown,
+                "html_path": str(html_file),
+                "generated_at": generated_at,
+                "updated_at": now,
+                "source": clean_source,
+            }
+            _atomic_write(meta_file, meta)
+
+            idx_path = self._scope_reports_index_path()
+            if idx_path.is_file() and not idx_path.is_symlink():
+                index = _as_dict(_read_json(idx_path))
+            else:
+                index = {"schema": SCOPE_REPORT_INDEX_SCHEMA, "reports": {}}
+            entries = index.get("reports")
+            if not isinstance(entries, dict):
+                entries = {}
+                index["reports"] = entries
+            entries[key] = deepcopy(meta)
+            index["schema"] = SCOPE_REPORT_INDEX_SCHEMA
+            _atomic_write(idx_path, index)
+        return deepcopy(meta)
+
+    def list_scope_reports(self) -> list[dict]:
+        """List persisted Project-level and Testbench-level report metadata sorted newest first."""
+        idx_path = self._scope_reports_index_path()
+        if not idx_path.exists() and not idx_path.is_symlink():
+            return []
+        index = _as_dict(_read_json(idx_path))
+        rows: list[dict] = []
+        for raw_row in _as_dict(index.get("reports")).values():
+            if not isinstance(raw_row, dict):
+                continue
+            row = deepcopy(raw_row)
+            row.pop("html", None)
+            row.pop("markdown", None)
+            key = row.get("scope_key")
+            if isinstance(key, str) and key:
+                entry_dir = self._scope_reports_dir() / key
+                html_file = entry_dir / "report.html"
+                md_file = entry_dir / "report.md"
+                row["has_html"] = bool(row.get("has_html") or (html_file.is_file() and not html_file.is_symlink()))
+                row["has_markdown"] = bool(row.get("has_markdown") or (md_file.is_file() and not md_file.is_symlink()))
+            rows.append(row)
+        rows.sort(key=lambda item: item.get("updated_at") or item.get("generated_at") or "", reverse=True)
+        return rows
+
+    def read_scope_report(
+        self,
+        *,
+        scope: str,
+        project: str,
+        testbench: str | None = None,
+    ) -> dict | None:
+        """Read a Project-level or Testbench-level report (merging direct disk edits to report.html/md)."""
+        clean_scope, clean_proj, clean_tb, key = self._resolve_scope_identity(scope, project, testbench)
+        entry_dir = self._scope_reports_dir() / key
+        meta_path = entry_dir / "report.json"
+        html_path = entry_dir / "report.html"
+        md_path = entry_dir / "report.md"
+
+        meta: dict = {}
+        if meta_path.is_file() and not meta_path.is_symlink():
+            meta = _as_dict(_read_json(meta_path))
+
+        html_text = _read_bounded_text(html_path, MAX_SCOPE_REPORT_HTML_BYTES, err_code="invalid_scope_report")
+        md_text = _read_bounded_text(md_path, MAX_AI_REPORT_MARKDOWN_BYTES, err_code="invalid_scope_report")
+        if html_text is None and isinstance(meta.get("html"), str) and meta["html"].strip():
+            html_text = meta["html"]
+        if md_text is None and isinstance(meta.get("markdown"), str) and meta["markdown"].strip():
+            md_text = meta["markdown"]
+
+        if not meta and html_text is None and md_text is None:
+            return None
+
+        disk_mtime = _file_mtime_iso(html_path) or _file_mtime_iso(md_path)
+        generated_at = meta.get("generated_at") or disk_mtime or utcnow()
+        updated_at = meta.get("updated_at") or generated_at
+        if disk_mtime and disk_mtime > updated_at:
+            updated_at = disk_mtime
+
+        fallback_title = (
+            f"{clean_proj} / {clean_tb} 综合仿真报告"
+            if clean_scope == "testbench"
+            else f"{clean_proj} 项目综合仿真报告"
+        )
+        title = meta.get("title") or _extract_report_title(html_text, md_text, fallback_title)
+        summary = meta.get("summary") if isinstance(meta.get("summary"), str) else _extract_report_summary(md_text)
+        run_ids = list(meta.get("run_ids") or []) if isinstance(meta.get("run_ids"), list) else []
+
+        return {
+            "schema": meta.get("schema") or AI_REPORT_SCHEMA,
+            "scope": clean_scope,
+            "scope_key": key,
+            "project": meta.get("project") or clean_proj,
+            "testbench": meta.get("testbench") if clean_scope == "testbench" else None,
+            "title": title,
+            "summary": summary,
+            "run_ids": run_ids,
+            "run_count": len(run_ids),
+            "has_html": html_text is not None,
+            "has_markdown": md_text is not None,
+            "html": html_text,
+            "markdown": md_text,
+            "html_path": str(html_path),
+            "generated_at": generated_at,
+            "updated_at": updated_at,
+            "source": meta.get("source") or "agent",
+        }
+
+    def mark_completion_handoff(self, run_id: str, handoff: dict) -> dict:
+        """Persist completion handoff receipt metadata onto run.json."""
+        run_id = _validate_run_id(run_id)
+        if not isinstance(handoff, dict):
+            raise DomainError("Completion handoff payload must be a JSON object.", "invalid_direct_plan")
+        run_dir = self.path(run_id)
+        with _locked(run_dir / "run.lock"):
+            record = self.read(run_id)
+            record["completion_handoff"] = deepcopy(handoff)
+            record["updated_at"] = utcnow()
+            _atomic_write(run_dir / "run.json", record)
+            return deepcopy(record)
 
     def monitor(self, *, interval_seconds=30, max_backoff_seconds=300) -> RuntimeMonitor:
         """Create a RuntimeMonitor bound directly to this manager."""
@@ -1585,16 +2132,60 @@ class DirectRecoverySupervisor:
     the monitor loop.
     """
 
-    def __init__(self, manager: DirectExecutionManager, *, interval_seconds=30, max_backoff_seconds=300,
-                 handoff_manager=None, agent_pusher=None):
+    def __init__(
+        self,
+        manager: DirectExecutionManager,
+        *,
+        interval_seconds=4,
+        max_backoff_seconds=120,
+        handoff_manager=None,
+        agent_pusher=None,
+        on_run_update=None,
+    ):
         self.manager = manager
         self.root = manager.root
         self.handoff_manager = handoff_manager
         self.agent_pusher = agent_pusher
+        self.on_run_update = on_run_update
         self._stop = threading.Event()
         self._timers: list[threading.Timer] = []
+        self._handoff_inflight: set[str] = set()
         self._lock = threading.Lock()
         self.monitor = RuntimeMonitor(self, interval_seconds=interval_seconds, max_backoff_seconds=max_backoff_seconds)
+
+    def _notify_update(self, run_record: dict) -> None:
+        cb = self.on_run_update
+        if not callable(cb) or not isinstance(run_record, dict):
+            return
+        try:
+            cb(deepcopy(run_record))
+        except Exception:
+            pass
+
+    def watch_launched_run(self, run_record: dict) -> bool:
+        """Arm RuntimeMonitor with auto-collect for a freshly launched or active uncollected run."""
+        if not isinstance(run_record, dict):
+            return False
+        run_id = run_record.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return False
+        watchable_states = (
+            "submitted",
+            "running_observed",
+            "launch_outcome_unknown",
+            "reconcile_required",
+            "simulator_complete_pending_measurements",
+        )
+        if run_record.get("state") not in watchable_states:
+            return False
+        if run_record.get("collection_phase") == "complete":
+            return False
+        try:
+            self.monitor.watch(run_id, allow_collect=True)
+            self.monitor.start()
+            return True
+        except (ValueError, DomainError):
+            return False
 
     def _handoff_anomaly(self, anomaly_type: str, run_record: dict, summary: str = "", evidence: dict | None = None) -> None:
         if self.handoff_manager is None:
@@ -1666,9 +2257,240 @@ class DirectRecoverySupervisor:
         return self.manager.read(run_id)
 
     def status(self, run_id: str) -> dict:
+        prev_state = None
+        prev_raw_state = None
+        try:
+            prior = self.manager.read(run_id)
+            prev_state = prior.get("state")
+            prev_raw_state = prior.get("raw_remote_state")
+        except DomainError:
+            pass
         result = self.manager.status(run_id)
+        if result.get("state") != prev_state or result.get("raw_remote_state") != prev_raw_state:
+            self._notify_update(result)
         self._check_queue_timeout(result)
         return result
+
+    def push_completion_report(
+        self,
+        run_id: str,
+        *,
+        force: bool = False,
+        custom_prompt: str | None = None,
+    ) -> dict:
+        """Push a structured completion report prompt to the connected Agent and persist receipt."""
+        from spiceowl.watch_handoff import build_completion_report_prompt
+
+        clean_custom: str | None = None
+        if custom_prompt is not None:
+            if not isinstance(custom_prompt, str):
+                raise DomainError("custom_prompt must be a string or null.", "invalid_ai_report")
+            stripped_custom = custom_prompt.strip()
+            if len(stripped_custom) > 2000:
+                raise DomainError("custom_prompt exceeds 2000 characters.", "invalid_ai_report")
+            clean_custom = stripped_custom or None
+
+        record = self.manager.read(run_id)
+        if not force and clean_custom is None:
+            existing = _as_dict(record.get("completion_handoff"))
+            if existing.get("pushed") is True:
+                return deepcopy(existing)
+        if self.agent_pusher is None:
+            return {
+                "pushed": False,
+                "status": "no_agent_connected",
+                "note": "当前未配置 Codex Agent 桥接。",
+            }
+
+        rep = None
+        try:
+            rep = self.manager.report(run_id)
+        except DomainError:
+            rep = None
+        wf = None
+        try:
+            wf = self.manager.waveform_index(run_id, allow_remote=False)
+        except DomainError:
+            wf = None
+
+        html_path = self.manager.ai_report_html_path(run_id)
+        prompt = build_completion_report_prompt(
+            record,
+            rep,
+            wf,
+            html_path=html_path,
+            custom_prompt=clean_custom,
+        )
+        req_key = f"sim-report-{run_id[:64]}"
+        if force or clean_custom is not None:
+            req_key = f"{req_key}-{uuid.uuid4().hex[:6]}"
+
+        try:
+            raw_res = _as_dict(
+                self.agent_pusher(
+                    event={"run_id": run_id, "kind": "simulation_completed"},
+                    prompt=prompt,
+                    request_key=req_key,
+                    policy={},
+                )
+            )
+        except DomainError as exc:
+            status_code = "agent_busy" if exc.code == "codex_turn_busy" else "push_error"
+            raw_res = {"pushed": False, "thread_id": None, "status": status_code, "note": str(exc)}
+        except Exception as exc:
+            raw_res = {"pushed": False, "thread_id": None, "status": "push_error", "note": str(exc)}
+
+        pushed = bool(raw_res.get("pushed"))
+        now = utcnow()
+        handoff_receipt = {
+            "pushed": pushed,
+            "status": str(raw_res.get("status") or ("pushed" if pushed else "unknown")),
+            "thread_id": raw_res.get("thread_id"),
+            "note": str(raw_res.get("note") or ""),
+            "request_key": req_key,
+            "attempted_at": now,
+            "pushed_at": now if pushed else None,
+            "force": bool(force or clean_custom is not None),
+        }
+        updated_record = self.manager.mark_completion_handoff(run_id, handoff_receipt)
+        self._notify_update(updated_record)
+        return deepcopy(handoff_receipt)
+
+    def push_scope_report(
+        self,
+        *,
+        scope: str,
+        project: str,
+        testbench: str | None = None,
+        custom_prompt: str | None = None,
+    ) -> dict:
+        """Gather matching runs for a Project or Testbench and push a multi-run HTML report task to Agent."""
+        from spiceowl.watch_handoff import build_scope_report_prompt
+
+        clean_scope, clean_proj, clean_tb, key = self.manager._resolve_scope_identity(scope, project, testbench)
+        clean_custom: str | None = None
+        if custom_prompt is not None:
+            if not isinstance(custom_prompt, str):
+                raise DomainError("custom_prompt must be a string or null.", "invalid_scope_report")
+            stripped_custom = custom_prompt.strip()
+            if len(stripped_custom) > 2000:
+                raise DomainError("custom_prompt exceeds 2000 characters.", "invalid_scope_report")
+            clean_custom = stripped_custom or None
+
+        matched_runs: list[dict] = []
+        for r in self.manager.list():
+            org = _as_dict(r.get("organization"))
+            r_proj = org.get("project") or r.get("project_name") or "未归类项目"
+            r_tb = org.get("testbench") or r.get("cell_name")
+            if r_proj != clean_proj:
+                continue
+            if clean_scope == "testbench" and r_tb != clean_tb:
+                continue
+            matched_runs.append(r)
+
+        run_ids = [str(r["run_id"]) for r in matched_runs if r.get("run_id")]
+        html_path = self.manager.scope_report_html_path(scope=clean_scope, project=clean_proj, testbench=clean_tb)
+
+        if self.agent_pusher is None:
+            return {
+                "pushed": False,
+                "status": "no_agent_connected",
+                "note": "当前未配置 Codex Agent 桥接。",
+                "scope": clean_scope,
+                "scope_key": key,
+                "project": clean_proj,
+                "testbench": clean_tb,
+                "run_ids": run_ids,
+                "run_count": len(run_ids),
+                "html_path": html_path,
+            }
+
+        prompt = build_scope_report_prompt(
+            clean_scope,
+            project=clean_proj,
+            testbench=clean_tb,
+            runs=matched_runs,
+            custom_prompt=clean_custom,
+            html_path=html_path,
+        )
+        req_key = f"scope-report-{key}-{uuid.uuid4().hex[:6]}"
+        try:
+            raw_res = _as_dict(
+                self.agent_pusher(
+                    event={
+                        "kind": "scope_report_requested",
+                        "scope": clean_scope,
+                        "scope_key": key,
+                        "project": clean_proj,
+                        "testbench": clean_tb,
+                        "run_ids": run_ids,
+                    },
+                    prompt=prompt,
+                    request_key=req_key,
+                    policy={},
+                )
+            )
+        except DomainError as exc:
+            status_code = "agent_busy" if exc.code == "codex_turn_busy" else "push_error"
+            raw_res = {"pushed": False, "thread_id": None, "status": status_code, "note": str(exc)}
+        except Exception as exc:
+            raw_res = {"pushed": False, "thread_id": None, "status": "push_error", "note": str(exc)}
+
+        pushed = bool(raw_res.get("pushed"))
+        now = utcnow()
+        return {
+            "pushed": pushed,
+            "status": str(raw_res.get("status") or ("pushed" if pushed else "unknown")),
+            "thread_id": raw_res.get("thread_id"),
+            "note": str(raw_res.get("note") or ""),
+            "request_key": req_key,
+            "scope": clean_scope,
+            "scope_key": key,
+            "project": clean_proj,
+            "testbench": clean_tb,
+            "run_ids": run_ids,
+            "run_count": len(run_ids),
+            "html_path": html_path,
+            "attempted_at": now,
+            "pushed_at": now if pushed else None,
+        }
+
+    def _schedule_completion_handoff(self, run_record: dict) -> None:
+        if self._stop.is_set() or self.agent_pusher is None or not isinstance(run_record, dict):
+            return
+        run_id = run_record.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return
+        if _as_dict(run_record.get("completion_handoff")).get("pushed") is True:
+            return
+        with self._lock:
+            if self._stop.is_set() or run_id in self._handoff_inflight:
+                return
+            self._handoff_inflight.add(run_id)
+
+        def _worker() -> None:
+            try:
+                for attempt in range(61):
+                    if self._stop.is_set():
+                        return
+                    try:
+                        receipt = self.push_completion_report(run_id, force=False)
+                    except Exception:
+                        return
+                    if receipt.get("pushed") or receipt.get("status") != "agent_busy":
+                        return
+                    if attempt >= 60 or self._stop.wait(2.0):
+                        return
+            finally:
+                with self._lock:
+                    self._handoff_inflight.discard(run_id)
+
+        thread = threading.Thread(
+            target=_worker,
+            name=f"completion-handoff-{run_id[:24]}",
+            daemon=True,
+        )
+        thread.start()
 
     def collect(self, run_id: str) -> dict:
         result = self.manager.collect(run_id)
@@ -1704,6 +2526,8 @@ class DirectRecoverySupervisor:
                 evidence={"failure_class": fclass, "reason": cls.get("reason")},
             )
         self._schedule_recovery_if_enabled(result)
+        self._notify_update(result)
+        self._schedule_completion_handoff(result)
         return result
 
     def _schedule_recovery_if_enabled(self, run_record: dict) -> None:
@@ -1741,7 +2565,43 @@ class DirectRecoverySupervisor:
                 worker.start()
 
     def resume(self) -> dict:
-        return self.manager.resume_authorized_watches(self.monitor)
+        res = self.manager.resume_authorized_watches(self.monitor)
+        resumed_list = list(res.get("resumed") or [])
+        resumed_set = set(resumed_list)
+        newly_armed = False
+        for r in self.manager.list():
+            rid = r.get("run_id")
+            if not isinstance(rid, str) or not rid or rid in resumed_set:
+                continue
+            state = r.get("state")
+            is_dispatched = bool(r.get("dispatch_claimed")) and (
+                bool(r.get("remote_directory")) or state in ("submitted", "running_observed")
+            )
+            if not is_dispatched:
+                continue
+            needs_watch = (
+                state in ("submitted", "running_observed")
+                or (
+                    state in ("simulator_complete_pending_measurements", "simulator_failed", "job_setup_failed")
+                    and r.get("collection_phase") != "complete"
+                )
+            )
+            if not needs_watch:
+                continue
+            try:
+                self.monitor.watch(rid, allow_collect=True)
+                resumed_list.append(rid)
+                resumed_set.add(rid)
+                newly_armed = True
+            except (ValueError, DomainError):
+                continue
+        if newly_armed:
+            try:
+                self.monitor.start()
+            except ValueError:
+                pass
+        res["resumed"] = resumed_list
+        return res
 
     def stop(self, timeout=1) -> bool:
         self._stop.set()

@@ -31,11 +31,12 @@ let hostSelectionRevision = 0, planningBusy = false;
 let live = {loaded: false, loading: false, enabled: false, projectId: '', runtime: null, error: null, busy: false, receipt: null};
 let liveDraft = {configuration: '', source_commit: '', run_id: ''};
 let directState = {
-  loaded: false, loading: false, busy: false, runs: [], monitor: null,
+  loaded: false, loading: false, busy: false, runs: [], scopeReports: [], monitor: null,
   activeTab: '',
   agentLinkedRunId: '',
   quickLaunchNote: null, quickLaunchError: null,
-  selectedId: null, detail: null, report: null, lookup: null, error: null,
+  selectedId: null, detail: null, report: null, aiReport: null, lookup: null, error: null,
+  directPollTimer: null, directPollInFlight: false, pendingRefresh: false,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
   recoveryQuery: '', recoveryOutcome: '',
   watchEvents: [], watchPolicy: null, watchAgentConnected: false, watchAgentState: 'disconnected',
@@ -56,6 +57,18 @@ let overviewState = {
   status: '',
   query: '',
   selectedRunId: '',
+};
+let reportModalState = {
+  open: false,
+  loading: false,
+  generating: false,
+  scope: 'run',
+  runId: '',
+  project: '',
+  testbench: '',
+  report: null,
+  customPrompt: '',
+  error: null,
 };
 let batchDraft = {
   batch_id: '', title: '', kind: 'pvt', corners: 'tt, ss, ff',
@@ -963,17 +976,99 @@ function renderLocalEdaOnboardingPanel() {
   return html;
 }
 
+function clearDirectLivePoll() {
+  if (directState.directPollTimer !== null) {
+    if (typeof clearInterval === 'function') clearInterval(directState.directPollTimer);
+    directState.directPollTimer = null;
+  }
+}
+
+function hasActiveDirectRuns() {
+  return (directState.runs || []).some(r =>
+    r && (
+      ['submitted', 'running_observed', 'launch_outcome_unknown'].includes(r.state)
+      || (r.state === 'simulator_complete_pending_measurements' && r.collection_phase !== 'complete')
+    )
+  );
+}
+
+async function pollDirectRunsSilently() {
+  if (isPublicDemo()) {
+    clearDirectLivePoll();
+    return;
+  }
+  const curHash = typeof location === 'object' && location ? (location.hash || '') : '';
+  if (!['#overview', '#direct', '#hosts', ''].includes(curHash)) {
+    clearDirectLivePoll();
+    return;
+  }
+  if (document.hidden || directState.loading || directState.busy || directState.directPollInFlight) return;
+  directState.directPollInFlight = true;
+  try {
+    const data = await api('/api/direct/runs');
+    directState.runs = Array.isArray(data.runs) ? data.runs : [];
+    directState.scopeReports = Array.isArray(data.scope_reports) ? data.scope_reports : [];
+    directState.monitor = data.monitor || null;
+    directState.error = null;
+    if ($('#direct-count')) $('#direct-count').textContent = directState.runs.length;
+    if (curHash === '#overview' && overviewState.selectedRunId && directState.runs.some(r => r.run_id === overviewState.selectedRunId)) {
+      directState.selectedId = overviewState.selectedRunId;
+      const detail = await api(`/api/direct/runs/${encodeURIComponent(overviewState.selectedRunId)}`);
+      directState.detail = detail.run;
+      directState.report = detail.report || null;
+      directState.aiReport = detail.ai_report || null;
+      directState.wfIndex = detail.waveforms || null;
+    }
+    renderSidebarRecentRuns();
+    const activeTag = String(document.activeElement?.tagName || '').toUpperCase();
+    const editingField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag);
+    if (!editingField && ['#overview', '#direct'].includes(curHash)) {
+      render();
+    }
+  } catch { /* silent background poll */ }
+  finally {
+    directState.directPollInFlight = false;
+    syncDirectLivePoll();
+  }
+}
+
+function syncDirectLivePoll() {
+  if (isPublicDemo() || typeof setInterval !== 'function') {
+    clearDirectLivePoll();
+    return;
+  }
+  const curHash = typeof location === 'object' && location ? (location.hash || '') : '';
+  const activePage = ['#overview', '#direct', '#hosts', ''].includes(curHash);
+  if (activePage && hasActiveDirectRuns()) {
+    if (directState.directPollTimer === null) {
+      const handle = setInterval(() => {
+        void pollDirectRunsSilently();
+      }, 4000);
+      directState.directPollTimer = handle !== undefined ? handle : 0;
+    }
+  } else {
+    clearDirectLivePoll();
+  }
+}
+
 async function refreshDirect() {
-  if (directState.loading) return;
+  if (directState.loading) {
+    directState.pendingRefresh = true;
+    return;
+  }
   directState.loading = true;
+  directState.pendingRefresh = false;
   let shouldAutoPlotWf = false;
   try {
     const data = await api('/api/direct/runs');
     directState.runs = Array.isArray(data.runs) ? data.runs : [];
+    directState.scopeReports = Array.isArray(data.scope_reports) ? data.scope_reports : [];
     directState.monitor = data.monitor || null;
     directState.error = null;
     if ($('#direct-count')) $('#direct-count').textContent = directState.runs.length;
-    if (!directState.selectedId || !directState.runs.some(r => r.run_id === directState.selectedId)) {
+    if (location.hash === '#overview' && overviewState.selectedRunId && directState.runs.some(r => r.run_id === overviewState.selectedRunId)) {
+      directState.selectedId = overviewState.selectedRunId;
+    } else if (!directState.selectedId || !directState.runs.some(r => r.run_id === directState.selectedId)) {
       const wfRun = directState.runs.find(r => r.run_id === 'demo-psfbin-500c');
       directState.selectedId = (directState.activeTab === 'waveforms' && wfRun) ? wfRun.run_id : (directState.runs[0]?.run_id || null);
     }
@@ -982,6 +1077,7 @@ async function refreshDirect() {
       const detail = await api(`/api/direct/runs/${encodeURIComponent(directState.selectedId)}`);
       directState.detail = detail.run;
       directState.report = detail.report || null;
+      directState.aiReport = detail.ai_report || null;
       directState.wfIndex = detail.waveforms || null;
       syncWaveformSelection(prevRunId !== directState.selectedId);
       if (directState.activeTab === 'waveforms' && directState.wfIndex?.datasets?.length && !directState.wfQuery) {
@@ -990,6 +1086,7 @@ async function refreshDirect() {
     } else {
       directState.detail = null;
       directState.report = null;
+      directState.aiReport = null;
       directState.wfIndex = null;
       syncWaveformSelection(true);
     }
@@ -1040,7 +1137,12 @@ async function refreshDirect() {
     directState.loaded = true;
     directState.loading = false;
     renderSidebarRecentRuns();
+    syncDirectLivePoll();
     if (location.hash === '#direct' || location.hash === '#overview') render();
+    if (directState.pendingRefresh) {
+      directState.pendingRefresh = false;
+      void refreshDirect();
+    }
   }
   if (shouldAutoPlotWf && location.hash === '#direct') {
     await runWaveformQuery();
@@ -1195,8 +1297,30 @@ function renderMarkdownHtml(text) {
     listTag = '';
     listItems = [];
   };
+  const parseTableRow = rawLine => {
+    const trimmed = String(rawLine || '').trim();
+    if (!trimmed.includes('|')) return null;
+    let body = trimmed;
+    if (body.startsWith('|')) body = body.slice(1);
+    if (body.endsWith('|')) body = body.slice(0, -1);
+    const cells = body.split('|').map(c => c.trim());
+    return cells.length >= 2 ? cells : null;
+  };
+  const parseTableAligns = rawLine => {
+    const cells = parseTableRow(rawLine);
+    if (!cells) return null;
+    if (!cells.every(c => /^:?-{1,}:?$/.test(c))) return null;
+    return cells.map(c => {
+      const left = c.startsWith(':');
+      const right = c.endsWith(':');
+      if (left && right) return 'center';
+      if (right) return 'right';
+      return 'left';
+    });
+  };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (/^\s*```/.test(line)) {
       flushPara();
       flushList();
@@ -1216,6 +1340,29 @@ function renderMarkdownHtml(text) {
     if (!line.trim()) {
       flushPara();
       flushList();
+      continue;
+    }
+    const headerCells = parseTableRow(line);
+    const aligns = headerCells && (i + 1 < lines.length) ? parseTableAligns(lines[i + 1]) : null;
+    if (headerCells && aligns && aligns.length >= 2) {
+      flushPara();
+      flushList();
+      const colCount = Math.max(headerCells.length, aligns.length);
+      const bodyRows = [];
+      let j = i + 2;
+      while (j < lines.length) {
+        const nextLine = lines[j];
+        if (!nextLine.trim() || /^\s*```/.test(nextLine)) break;
+        const rowCells = parseTableRow(nextLine);
+        if (!rowCells) break;
+        bodyRows.push(rowCells);
+        j++;
+      }
+      const alignAttr = idx => (aligns[idx] && aligns[idx] !== 'left' ? ` style="text-align:${aligns[idx]}"` : '');
+      const thHtml = Array.from({length: colCount}, (_, idx) => `<th${alignAttr(idx)}>${renderMarkdownInline(headerCells[idx] ?? '')}</th>`).join('');
+      const trHtml = bodyRows.map(row => `<tr>${Array.from({length: colCount}, (_, idx) => `<td${alignAttr(idx)}>${renderMarkdownInline(row[idx] ?? '')}</td>`).join('')}</tr>`).join('');
+      parts.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${thHtml}</tr></thead>${trHtml ? `<tbody>${trHtml}</tbody>` : ''}</table></div>`);
+      i = j - 1;
       continue;
     }
     const listM = /^\s*(?:([-*])|\d+\.)\s+(.+)$/.exec(line);
@@ -3975,6 +4122,284 @@ function renderStatusSummaryPills(counts) {
   return pills.join('');
 }
 
+const escapeAttr = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+function findScopeReportMeta(scope, project, testbench = '') {
+  return (directState.scopeReports || []).find(item =>
+    item
+    && item.scope === scope
+    && String(item.project || '') === String(project || '')
+    && (scope === 'project' || String(item.testbench || '') === String(testbench || ''))
+  ) || null;
+}
+
+function reportDownloadFilename(st = reportModalState) {
+  const safeSlug = s => String(s || '').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'spiceowl';
+  if (st.scope === 'run') return `${safeSlug(st.runId || 'simulation')}-report.html`;
+  if (st.scope === 'testbench') return `${safeSlug(`${st.project}-${st.testbench}` || 'testbench')}-report.html`;
+  return `${safeSlug(st.project || 'project')}-report.html`;
+}
+
+function buildStandaloneReportHtml(st = reportModalState) {
+  const rep = st.report;
+  if (!rep) return '';
+  if (rep.html && String(rep.html).trim()) return String(rep.html);
+  if (!rep.markdown || !String(rep.markdown).trim()) return '';
+  const scopeLabel = st.scope === 'project' ? '项目总报告' : st.scope === 'testbench' ? 'TB 综合报告' : '单次仿真报告';
+  const titleText = rep.title || (st.scope === 'run' ? st.runId : st.scope === 'testbench' ? `${st.project} / ${st.testbench}` : st.project) || 'SpiceOwl 仿真报告';
+  const subtitle = st.scope === 'run'
+    ? `Run ID: ${st.runId}${st.project ? ` · ${st.project}${st.testbench ? '/' + st.testbench : ''}` : ''}`
+    : st.scope === 'testbench'
+    ? `${st.project} / ${st.testbench}`
+    : `${st.project}`;
+  const generatedAt = rep.generated_at ? ` · 生成于 ${formatHistoryTime(rep.generated_at)}` : '';
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escape(titleText)} · SpiceOwl</title>
+<style>
+  body { margin:0; padding:32px 20px; background:#f4f7f5; color:#182620; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; line-height:1.65; }
+  main { max-width:960px; margin:0 auto; background:#fff; border:1px solid #d4e3db; border-radius:12px; padding:28px 32px; box-shadow:0 4px 16px rgba(18,42,32,.06); }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; background:#e6f4ec; color:#15583d; font-size:12px; font-weight:600; }
+  h1 { margin:10px 0 6px; font-size:22px; color:#123c2b; }
+  .meta { margin:0 0 20px; font-size:12.5px; color:#52665e; border-bottom:1px solid #e3ece7; padding-bottom:14px; }
+  .sim-ai-heading { margin:18px 0 8px; font-size:16px; color:#154935; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; background:#eff4f1; padding:1px 5px; border-radius:4px; }
+  pre { background:#f5f8f6; border:1px solid #d9e5df; border-radius:8px; padding:12px 14px; overflow:auto; }
+  pre code { background:none; padding:0; }
+  .md-table-wrap { overflow-x:auto; margin:12px 0; border:1px solid #d5e2db; border-radius:8px; }
+  .md-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .md-table th, .md-table td { padding:8px 12px; border-bottom:1px solid #e6eee9; text-align:left; }
+  .md-table thead th { background:#f2f8f5; color:#184a36; font-weight:600; }
+  .md-table tbody tr:last-child td { border-bottom:0; }
+</style>
+</head>
+<body>
+<main>
+  <span class="badge">${escape(scopeLabel)}</span>
+  <h1>${escape(titleText)}</h1>
+  <p class="meta">${escape(subtitle)}${escape(generatedAt)}</p>
+  ${renderMarkdownHtml(rep.markdown)}
+</main>
+</body>
+</html>`;
+}
+
+function renderReportViewerModalHtml() {
+  if (!reportModalState.open) return '';
+  const st = reportModalState;
+  const rep = st.report;
+  const scopeLabel = st.scope === 'project' ? '项目总报告' : st.scope === 'testbench' ? 'TB 综合报告' : '单次仿真报告';
+  const defaultTitle = st.scope === 'run'
+    ? (st.runId || '仿真报告')
+    : st.scope === 'testbench'
+    ? `${st.testbench || 'Testbench'} 综合报告`
+    : `${st.project || '项目'} 总报告`;
+  const modalTitle = rep?.title || defaultTitle;
+  const subtitleParts = [];
+  if (st.scope === 'run') {
+    if (st.runId) subtitleParts.push(`Run ID: ${st.runId}`);
+    if (st.project) subtitleParts.push(`${st.project}${st.testbench ? ` / ${st.testbench}` : ''}`);
+  } else if (st.scope === 'testbench') {
+    subtitleParts.push(`${st.project} / ${st.testbench}`);
+  } else {
+    subtitleParts.push(st.project);
+  }
+  if (Array.isArray(rep?.run_ids) && rep.run_ids.length) {
+    subtitleParts.push(`汇总 ${rep.run_ids.length} 次仿真`);
+  }
+  if (rep?.generated_at) {
+    subtitleParts.push(`更新于 ${formatHistoryTime(rep.generated_at)}`);
+  }
+  const hasHtml = Boolean(rep?.html && String(rep.html).trim());
+  const hasMarkdown = Boolean(rep?.markdown && String(rep.markdown).trim());
+  const hasDownloadable = hasHtml || hasMarkdown;
+  const emptyCtaLabel = st.scope === 'project'
+    ? '✨ 让 AI 总结本项目全部仿真'
+    : st.scope === 'testbench'
+    ? '✨ 让 AI 总结本 TB 全部仿真'
+    : '✨ 立即让 AI 生成图文仿真报告';
+
+  let bodyHtml = '';
+  if (st.loading) {
+    bodyHtml = `<div class="report-empty-state"><p>正在读取仿真报告…</p></div>`;
+  } else if (hasHtml) {
+    bodyHtml = `<iframe class="report-html-frame" title="${escapeAttr(modalTitle)}" sandbox="allow-scripts" srcdoc="${escapeAttr(rep.html)}"></iframe>`;
+  } else if (hasMarkdown) {
+    bodyHtml = `<div class="report-md-scroll"><div class="ov-ai-report-body">${renderMarkdownHtml(rep.markdown)}</div></div>`;
+  } else {
+    const emptyDesc = st.scope === 'project'
+      ? `AI 将汇总项目「${st.project}」下所有 Testbench 与仿真结果，生成带图表、规格对比表与设计结论的独立交互式 HTML 总报告，并支持随时导出离线网页。`
+      : st.scope === 'testbench'
+      ? `AI 将汇总「${st.project} / ${st.testbench}」下的全部历史仿真与多工况对比，生成带波形图、参数指标表与诊断结论的交互式 HTML 综合报告。`
+      : `AI 将结合本次仿真的真实波形、日志与测量结果，生成带交互式图表、指标对比表与工程诊断结论的 HTML 仿真报告（支持离线下载与随时按需求编辑重做）。`;
+    bodyHtml = `<div class="report-empty-state">
+      <h3>还没有已归档的${escape(scopeLabel)}</h3>
+      <p>${escape(emptyDesc)}</p>
+      <div class="direct-actions" style="justify-content:center">
+        <button type="button" class="button primary" data-action="report-generate" ${st.generating ? 'disabled' : ''}>${st.generating ? '正在推送给 AI…' : emptyCtaLabel}</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="report-modal-backdrop" role="dialog" aria-modal="true" aria-label="${escapeAttr(modalTitle)}">
+    <div class="report-modal-dialog">
+      <header class="report-modal-head">
+        <div class="report-modal-title">
+          <span class="report-scope-badge">${escape(scopeLabel)}</span>
+          <div class="report-modal-headings">
+            <h2>${escape(modalTitle)}</h2>
+            <p class="report-modal-sub">${escape(subtitleParts.join(' · '))}</p>
+          </div>
+        </div>
+        <div class="report-modal-actions">
+          <button type="button" class="button secondary small" data-action="report-download-html" ${hasDownloadable ? '' : 'disabled'}>⬇ 下载 HTML</button>
+          <button type="button" class="button secondary small" data-action="report-open-tab" ${hasDownloadable ? '' : 'disabled'}>↗ 新标签打开</button>
+          <button type="button" class="button secondary small" data-action="report-refresh" ${st.loading ? 'disabled' : ''}>↻ 刷新</button>
+          <button type="button" class="button secondary small" data-action="report-close">关闭</button>
+        </div>
+      </header>
+      <form id="report-agent-form" class="report-agent-bar">
+        <input id="report-custom-prompt" type="text" value="${escape(st.customPrompt)}" placeholder="让 AI 按你的要求修改/重做报告，例如：补充 VOP/VON 瞬态波形图、增加功耗与增益对比表…">
+        <button type="submit" class="button primary small" data-action="report-generate" ${st.generating ? 'disabled' : ''}>${st.generating ? '推送中…' : '✨ 让 AI 生成/更新网页报告'}</button>
+      </form>
+      ${st.error ? `<p class="error-text report-modal-error" role="alert">${escape(st.error)}</p>` : ''}
+      <div class="report-modal-body">${bodyHtml}</div>
+    </div>
+  </div>`;
+}
+
+function renderReportViewerModal() {
+  const html = renderReportViewerModalHtml();
+  let root = $('#report-modal-root');
+  if (!root && html && typeof document.createElement === 'function' && document.body?.appendChild) {
+    root = document.createElement('div');
+    root.id = 'report-modal-root';
+    document.body.appendChild(root);
+  }
+  if (root) {
+    root.innerHTML = html;
+  }
+  return html;
+}
+
+function closeReportModal() {
+  reportModalState.open = false;
+  reportModalState.loading = false;
+  reportModalState.generating = false;
+  reportModalState.error = null;
+  renderReportViewerModal();
+}
+
+async function fetchReportModalData() {
+  if (isPublicDemo() || !reportModalState.open) return;
+  const targetScope = reportModalState.scope;
+  const targetRunId = reportModalState.runId;
+  const targetProject = reportModalState.project;
+  const targetTb = reportModalState.testbench;
+  reportModalState.loading = true;
+  reportModalState.error = null;
+  renderReportViewerModal();
+  try {
+    let rep = null;
+    if (targetScope === 'run') {
+      const res = await api(`/api/direct/runs/${encodeURIComponent(targetRunId)}/ai-report`);
+      rep = res?.ai_report || null;
+    } else {
+      const q = new URLSearchParams({scope: targetScope, project: targetProject});
+      if (targetScope === 'testbench' && targetTb) q.set('testbench', targetTb);
+      const res = await api(`/api/direct/scope-reports/read?${q.toString()}`);
+      rep = res?.report || null;
+    }
+    if (!reportModalState.open || reportModalState.scope !== targetScope || reportModalState.runId !== targetRunId || reportModalState.project !== targetProject || reportModalState.testbench !== targetTb) {
+      return;
+    }
+    reportModalState.report = (rep && (rep.html || rep.markdown || rep.summary)) ? rep : null;
+  } catch (error) {
+    if (!reportModalState.open) return;
+    if (error?.status === 404) {
+      reportModalState.report = null;
+      reportModalState.error = null;
+    } else {
+      reportModalState.error = error.message || '读取仿真报告失败。';
+    }
+  } finally {
+    if (reportModalState.open && reportModalState.scope === targetScope && reportModalState.runId === targetRunId && reportModalState.project === targetProject && reportModalState.testbench === targetTb) {
+      reportModalState.loading = false;
+      renderReportViewerModal();
+    }
+  }
+}
+
+async function openReportModal({scope = 'run', runId = '', project = '', testbench = ''} = {}) {
+  if (isPublicDemo()) return;
+  const sameTarget = reportModalState.open
+    && reportModalState.scope === scope
+    && reportModalState.runId === (runId || '')
+    && reportModalState.project === (project || '')
+    && reportModalState.testbench === (testbench || '');
+  reportModalState.open = true;
+  reportModalState.scope = scope;
+  reportModalState.runId = runId || '';
+  reportModalState.project = project || '';
+  reportModalState.testbench = testbench || '';
+  reportModalState.report = null;
+  reportModalState.error = null;
+  if (!sameTarget) reportModalState.customPrompt = '';
+  await fetchReportModalData();
+}
+
+async function triggerReportModalGenerate() {
+  if (isPublicDemo() || !reportModalState.open || reportModalState.generating) return;
+  reportModalState.generating = true;
+  reportModalState.error = null;
+  renderReportViewerModal();
+  try {
+    const customPrompt = String(reportModalState.customPrompt || '').trim();
+    let res = null;
+    if (reportModalState.scope === 'run') {
+      const body = {force: true};
+      if (customPrompt) body.custom_prompt = customPrompt;
+      res = await api(`/api/direct/runs/${encodeURIComponent(reportModalState.runId)}/ai-report`, {
+        method: 'POST',
+        body,
+      });
+    } else {
+      const body = {
+        scope: reportModalState.scope,
+        project: reportModalState.project,
+      };
+      if (reportModalState.scope === 'testbench') body.testbench = reportModalState.testbench;
+      if (customPrompt) body.custom_prompt = customPrompt;
+      res = await api('/api/direct/scope-reports/generate', {
+        method: 'POST',
+        body,
+      });
+    }
+    const pushed = Boolean(res?.handoff?.pushed ?? res?.pushed);
+    if (pushed) {
+      toast('✨ 已推送给 AI，正在编辑生成交互式 HTML 仿真报告…');
+      if (isStandaloneAgent()) {
+        if (codexPanelState.status?.connected) openCodexEvents();
+        else void refreshCodexStatus();
+      }
+      void refreshDirect();
+    } else {
+      const msg = res?.handoff?.note || res?.note || '请先连接本机 Codex Agent 再生成仿真报告。';
+      reportModalState.error = msg;
+      toast(msg);
+    }
+  } catch (error) {
+    reportModalState.error = error.message || '推送 AI 生成报告失败。';
+    toast(reportModalState.error);
+  } finally {
+    reportModalState.generating = false;
+    renderReportViewerModal();
+  }
+}
+
 function renderOverviewRunDetailPanel(run) {
   if (!run) return '';
   const org = resolveRunOrganization(run);
@@ -3995,11 +4420,47 @@ function renderOverviewRunDetailPanel(run) {
   const canDelete = !isActiveRemote && !directState.busy;
   const recPolicy = run.recovery_policy || {};
   const report = directState.detail?.run_id === run.run_id ? directState.report : null;
+  const aiRep = (directState.detail?.run_id === run.run_id ? directState.aiReport : null)
+    || (directState.detail?.run?.run_id === run.run_id ? directState.detail?.ai_report : null)
+    || (run.ai_report && typeof run.ai_report === 'object' ? run.ai_report : null);
+  const hasAiReportMarkdown = Boolean(aiRep?.markdown && String(aiRep.markdown).trim());
+  const hasAiReportHtml = Boolean(aiRep?.has_html || (aiRep?.html && String(aiRep.html).trim()) || run.ai_report?.has_html);
+  const hasAnyAiReport = Boolean(hasAiReportMarkdown || hasAiReportHtml || run.ai_report?.available);
+  const canGenerateAiReport = ['simulator_complete_pending_measurements', 'simulator_failed', 'job_setup_failed'].includes(run.state);
+  const isAutoWatchActive = ['submitted', 'running_observed'].includes(run.state);
   const cpus = run.limits?.cpu_count ? `${run.limits.cpu_count} 核` : '—';
   const memBytes = run.limits?.memory_bytes;
   const memText = Number.isFinite(memBytes) && memBytes > 0 ? `${(memBytes / 2**30).toFixed(memBytes % 2**30 === 0 ? 0 : 1)} GiB` : '—';
+  const autoWatchBar = isAutoWatchActive
+    ? `<div class="ov-auto-watch-bar"><span class="ov-pulse-dot" aria-hidden="true">●</span><span>后台每 4 秒自动巡检远端状态 · 仿真完成后将自动收集结果并推送给 AI 生成仿真报告</span></div>`
+    : '';
   const preparedHint = ['prepared', 'stage_incomplete'].includes(run.state)
     ? `<p class="ov-prepared-hint">💡 该任务目前仅在本地冻结了网表与配置，<strong>尚未上传到远端服务器，也没有占用远端算力</strong>。你可以直接点击「🚀 立即上传并启动」，或点击「✧ 载入工作台 / 交给 Agent」重新对接 AI 检查修改；如果不再需要，直接点「🗑 删除记录」清理即可。</p>`
+    : '';
+  let aiHandoffHint = '';
+  if (!hasAiReportMarkdown && !hasAiReportHtml && canGenerateAiReport) {
+    if (run.completion_handoff?.pushed === true) {
+      aiHandoffHint = `<p class="ov-prepared-hint ov-ai-handoff-hint">✨ 已自动推送给 AI 正在撰写仿真报告（稍候自动显示，也可去「仿真配置与执行」对话查看）</p>`;
+    } else if (run.completion_handoff?.status === 'agent_disconnected') {
+      aiHandoffHint = `<p class="subtle-note ov-ai-handoff-note">提示：连接本机 Codex 后点「✨ 让 AI 生成仿真报告」即可一键生成。</p>`;
+    } else if (aiRep?.summary) {
+      aiHandoffHint = `<p class="ov-prepared-hint ov-ai-handoff-hint">✨ AI 仿真报告摘要：${escape(aiRep.summary)}</p>`;
+    }
+  }
+  const aiReportCard = (hasAiReportMarkdown || hasAiReportHtml)
+    ? `<section class="ov-ai-report-card">
+        <div class="ov-ai-report-head">
+          <div class="ov-ai-report-title">
+            <strong>✨ AI 仿真报告${aiRep?.title ? ` · ${escape(aiRep.title)}` : ''}</strong>
+            ${aiRep?.generated_at ? `<span class="ov-ai-report-time">${escape(formatHistoryTime(aiRep.generated_at))}</span>` : ''}
+          </div>
+          <div class="ov-row-actions">
+            <button type="button" class="button primary small" data-action="overview-open-run-report" data-id="${escape(run.run_id)}">📊 打开交互式网页报告</button>
+            <button type="button" class="button secondary small" data-action="overview-generate-ai-report" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>重新生成报告</button>
+          </div>
+        </div>
+        <div class="ov-ai-report-body">${hasAiReportMarkdown ? renderMarkdownHtml(aiRep.markdown) : `<p>${escape(aiRep?.summary || '已生成交互式 HTML 仿真报告，点击上方「📊 打开交互式网页报告」即可查看图表、下载离线 HTML 或让 AI 继续编辑。')}</p>`}</div>
+      </section>`
     : '';
   return `<section class="panel direct-panel ov-detail-panel" data-overview-run-detail="${escape(run.run_id)}">
     <div class="section-title">
@@ -4011,7 +4472,9 @@ function renderOverviewRunDetailPanel(run) {
       <button type="button" class="button secondary small" data-action="overview-close-run">收起详情</button>
     </div>
     <p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试 · 主机 <strong>${escape(run.host_id)}</strong> · 后端 <strong>${escape(String(run.backend || '').toUpperCase())}</strong> · 仿真器 <strong>${escape(run.simulator)}</strong> · 资源 <strong>${cpus} / ${memText}</strong>${run.scheduler?.job_id ? ` · Job ID <code>${escape(run.scheduler.job_id)}</code>` : ''}<br>网表冻结摘要 <code>${escape((run.manifest_sha256 || '').slice(0, 16))}…</code> · 创建于 ${escape(formatHistoryTime(run.created_at))} · 最近观察 ${escape(run.observed_at ? formatHistoryTime(run.observed_at) : '尚未联网')}</p>
+    ${autoWatchBar}
     ${preparedHint}
+    ${aiHandoffHint}
     ${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「查询状态」与远端对账。</p>' : ''}
     ${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}
     ${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}
@@ -4020,9 +4483,12 @@ function renderOverviewRunDetailPanel(run) {
       ${canLaunch ? `<button type="button" class="button primary small" data-action="direct-launch" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>🚀 立即启动仿真</button>` : ''}
       ${canStatus ? `<button type="button" class="button secondary small" data-action="direct-status" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>↻ 查询状态 (Status)</button>` : ''}
       ${canCollect ? `<button type="button" class="button primary small" data-action="direct-collect" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>📥 收集报告与结果 (Collect)</button>` : ''}
+      <button type="button" class="button secondary small ov-report-btn ${hasAnyAiReport ? 'has-report' : ''}" data-action="overview-open-run-report" data-id="${escape(run.run_id)}">${hasAnyAiReport ? '<span class="ov-report-dot" aria-hidden="true"></span>' : ''}📊 查看仿真报告</button>
+      ${!hasAiReportMarkdown && !hasAiReportHtml && canGenerateAiReport ? `<button type="button" class="button ${canCollect ? 'secondary' : 'primary'} small" data-action="overview-generate-ai-report" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>✨ 让 AI 生成仿真报告</button>` : ''}
       <button type="button" class="button secondary small" data-action="overview-handoff-agent" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>✧ 载入工作台 / 交给 Agent</button>
       <button type="button" class="button secondary small ov-btn-danger" data-action="overview-delete-run" data-id="${escape(run.run_id)}" ${canDelete ? '' : 'disabled'} title="${canDelete ? '删除此本地归档记录' : '运行中或待对账任务请先取消/对账后再删除'}">🗑 删除记录</button>
     </div>
+    ${aiReportCard}
     <details class="host-form-details">
       <summary>进阶控制：分步上传 (Stage) / 后台盯守 (Watch) / 取消作业 / 有界自动恢复</summary>
       <div class="direct-check-row">
@@ -4144,6 +4610,7 @@ function liveOverview() {
               <div class="ov-single-title">
                 <code>${escape(r.run_id)}</code>
                 ${chip(item.status.label, item.status.color)}
+                ${r.ai_report?.available ? chip('✨ AI 报告', 'green') : ''}
                 ${r.scheduler?.job_id ? `<span class="ov-meta-tag">Job ${escape(r.scheduler.job_id)}</span>` : ''}
                 ${r.attempt_number > 1 ? `<span class="ov-meta-tag">第 #${r.attempt_number} 次尝试</span>` : ''}
               </div>
@@ -4159,7 +4626,10 @@ function liveOverview() {
                 <span>${escape(formatHistoryTime(r.updated_at || r.created_at))}</span>
               </div>
             </div>
-            <button type="button" class="button secondary small" data-action="overview-open-run" data-id="${escape(r.run_id)}">查看 / 控制 →</button>
+            <div class="ov-row-actions">
+              <button type="button" class="button secondary small ov-report-btn ${r.ai_report?.available ? 'has-report' : ''}" data-action="overview-open-run-report" data-id="${escape(r.run_id)}">${r.ai_report?.available ? '<span class="ov-report-dot" aria-hidden="true"></span>' : ''}📊 仿真报告</button>
+              <button type="button" class="button secondary small" data-action="overview-open-run" data-id="${escape(r.run_id)}">查看 / 控制 →</button>
+            </div>
           </div>`;
         }
         const kindBadge = sub.kind === 'batch'
@@ -4174,12 +4644,12 @@ function liveOverview() {
           const caseNote = item.org.caseLabel ? `<small class="ov-case-label">${escape(item.org.caseLabel)}</small>` : '';
           return `<tr>
             <td><code>${escape(r.run_id)}</code>${caseNote}</td>
-            <td>${chip(item.status.label, item.status.color)}</td>
+            <td>${chip(item.status.label, item.status.color)}${r.ai_report?.available ? ` ${chip('✨ AI 报告', 'green')}` : ''}</td>
             <td>${escape(r.host_id || '—')} <small class="muted">${escape(String(r.backend || '').toUpperCase())}</small></td>
             <td>${escape(r.simulator || '—')} · ${cpus} / ${formatMem(r)}</td>
             <td>${escape(formatCollection(r))}</td>
             <td>${escape(formatHistoryTime(r.updated_at || r.created_at))}</td>
-            <td><button type="button" class="button secondary small" data-action="overview-open-run" data-id="${escape(r.run_id)}">查看 →</button></td>
+            <td><div class="ov-row-actions"><button type="button" class="button secondary small ov-report-btn ${r.ai_report?.available ? 'has-report' : ''}" data-action="overview-open-run-report" data-id="${escape(r.run_id)}">${r.ai_report?.available ? '<span class="ov-report-dot" aria-hidden="true"></span>' : ''}📊 仿真报告</button><button type="button" class="button secondary small" data-action="overview-open-run" data-id="${escape(r.run_id)}">查看 →</button></div></td>
           </tr>`;
         }).join('');
         return `<details class="ov-sub-card" data-submission-group="${escape(sub.groupId)}" ${openByDefault}>
@@ -4200,6 +4670,7 @@ function liveOverview() {
         </details>`;
       }).join('');
 
+      const tbRep = findScopeReportMeta('testbench', pNode.project, tbNode.testbench);
       return `<div class="ov-tb-group" data-tb-name="${escape(tbNode.testbench)}">
         <div class="ov-tb-head">
           <div class="ov-tb-title">
@@ -4208,12 +4679,16 @@ function liveOverview() {
             ${tbNode.view ? `<span class="ov-meta-tag">${escape(tbNode.view)}</span>` : ''}
             <span class="subtle-note">${tbNode.submissions.length} 次提交 · ${tbNode.runCount} 次仿真</span>
           </div>
-          <div class="ov-pill-row">${renderStatusSummaryPills(tbNode.counts)}</div>
+          <div class="ov-pill-row">
+            ${renderStatusSummaryPills(tbNode.counts)}
+            <button type="button" class="button secondary small ov-report-btn ${tbRep ? 'has-report' : ''}" data-action="overview-open-scope-report" data-scope="testbench" data-project="${escape(pNode.project)}" data-testbench="${escape(tbNode.testbench)}" title="${tbRep ? '查看或更新本 TB 综合报告' : '让 AI 总结本 TB 全部仿真'}">${tbRep ? '<span class="ov-report-dot" aria-hidden="true"></span>' : ''}📊 TB 综合报告</button>
+          </div>
         </div>
         <div class="ov-sub-list">${subHtml}</div>
       </div>`;
     }).join('');
 
+    const projRep = findScopeReportMeta('project', pNode.project);
     return `<details class="panel ov-project-card" data-project-name="${escape(pNode.project)}" open>
       <summary class="ov-project-head">
         <div class="ov-project-title">
@@ -4222,7 +4697,10 @@ function liveOverview() {
           <span class="ov-meta-tag">${pNode.testbenches.length} 个 TB</span>
           <span class="ov-meta-tag">${pNode.submissionCount} 次提交 · ${pNode.runCount} 次仿真</span>
         </div>
-        <div class="ov-pill-row">${renderStatusSummaryPills(pNode.counts)}</div>
+        <div class="ov-pill-row">
+          ${renderStatusSummaryPills(pNode.counts)}
+          <button type="button" class="button secondary small ov-report-btn ${projRep ? 'has-report' : ''}" data-action="overview-open-scope-report" data-scope="project" data-project="${escape(pNode.project)}" title="${projRep ? '查看或更新本项目总报告' : '让 AI 总结本项目全部仿真'}">${projRep ? '<span class="ov-report-dot" aria-hidden="true"></span>' : ''}📊 项目总报告</button>
+        </div>
       </summary>
       <div class="ov-project-body">${tbHtml}</div>
     </details>`;
@@ -4896,7 +5374,7 @@ function closeCodexEvents() {
 }
 
 function openCodexEvents() {
-  if (!isStandaloneAgent() || !['#agents', '#direct'].includes(location.hash) || codexPanelState.stream
+  if (!isStandaloneAgent() || !['#agents', '#direct', '#overview'].includes(location.hash) || codexPanelState.stream
       || (!codexPanelState.status?.connected && (!codexPanelState.status?.cursor
         || codexPanelState.cursor >= codexPanelState.status.cursor))) return;
   const sseBase = isConnectorLive() ? connectorState.baseUrl : '';
@@ -5122,6 +5600,33 @@ function applyAgentUiPatch(patch) {
     hostLiveState.loaded = false;
     void refreshDirect();
     toast(`🚀 AI 已提交并启动仿真 ${data.run_id || ''}${data.host_id ? ' @ ' + data.host_id : ''}`.trim());
+    return true;
+  }
+  if (kind === 'direct_run_updated') {
+    hostLiveState.loaded = false;
+    void refreshDirect();
+    if (data.ai_report_ready) {
+      toast(`✨ AI 已自动生成 ${data.run_id || ''} 的仿真报告（可在「仿真总览」查看）`);
+      if (reportModalState.open && reportModalState.scope === 'run' && reportModalState.runId === data.run_id) {
+        void fetchReportModalData();
+      }
+    } else if (data.state === 'simulator_complete_pending_measurements' && data.collection_phase === 'complete') {
+      toast(`✅ 仿真 ${data.run_id || ''} 已完成并自动收集结果，正推送给 AI 生成报告…`);
+    }
+    return true;
+  }
+  if (kind === 'direct_scope_report_updated') {
+    void refreshDirect();
+    const scopeLabel = `${data.project || ''}${data.testbench ? '/' + data.testbench : ''}`;
+    toast(`✨ AI 已更新 ${scopeLabel} 的综合仿真报告`);
+    if (
+      reportModalState.open
+      && reportModalState.scope === data.scope
+      && String(reportModalState.project || '') === String(data.project || '')
+      && (data.scope === 'project' || String(reportModalState.testbench || '') === String(data.testbench || ''))
+    ) {
+      void fetchReportModalData();
+    }
     return true;
   }
   return false;
@@ -5395,8 +5900,8 @@ async function refreshCodexStatus() {
       codexPanelState.recoveryConfirmed = false;
       codexPanelState.recoveryAutoLoadedKey = null;
     }
-    if (codexPanelState.status?.connected && location.hash === '#direct') {
-      if (!codexPanelState.modelsLoaded) void loadCodexCatalogAndAuth();
+    if (codexPanelState.status?.connected && ['#direct', '#overview'].includes(location.hash)) {
+      if (location.hash === '#direct' && !codexPanelState.modelsLoaded) void loadCodexCatalogAndAuth();
       void syncAgentUiPatches();
     }
   } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
@@ -5718,13 +6223,17 @@ function render() {
   routeEpoch++;
   sessionView = null;
   const page = location.hash.slice(1) || 'quickstart';
-  if (!['agents', 'direct'].includes(page) || !isStandaloneAgent()) closeCodexEvents();
+  if (!['agents', 'direct', 'overview'].includes(page) || !isStandaloneAgent()) closeCodexEvents();
   const run = currentRun();
   $('#location').textContent = isPublicDemo() && page === 'local' ? '连接器安装说明' : page === 'quickstart' ? '首页与连接' : page === 'direct' ? (isPublicDemo() ? '仿真配置与波形' : '仿真配置与执行') : page === 'live' ? 'CircuitGit 网关' : page === 'connections' ? '故障沙箱' : page === 'hosts' ? '服务器池资源' : page === 'agents' ? 'AI 助手' : run ? run.label : '仿真总览';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === page || (a.dataset.nav === 'overview' && page.startsWith('run/'))));
   $('#main').innerHTML = isPublicDemo() && page === 'local' ? publicLocalPage() : page === 'quickstart' ? quickstartPage() : page === 'direct' ? directPage() : page === 'live' ? livePage() : page === 'connections' ? connections() : page === 'hosts' ? hosts() : page === 'agents' ? nativeChat() : page.startsWith('run/') ? runDetail(run) : overview();
   if (page === 'overview' && !isPublicDemo()) {
     if (!directState.loaded && !directState.loading) refreshDirect();
+    if (isStandaloneAgent()) {
+      if (!codexPanelState.loaded && !codexPanelState.loading) refreshCodexStatus();
+      else if (codexPanelState.status?.connected) openCodexEvents();
+    }
   }
   if (page === 'quickstart' && !isPublicDemo()) {
     if (!wizardState.loaded && !wizardState.loading) refreshWizard();
@@ -5766,6 +6275,7 @@ function render() {
       else openCodexEvents();
     }
   }
+  syncDirectLivePoll();
 }
 
 function renderSession() {
@@ -5808,7 +6318,15 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const action = button.dataset.action, id = button.dataset.id;
-  if (action.startsWith('live-') || action.startsWith('codex-') || action.startsWith('direct-') || action.startsWith('wizard-')) return;
+  if (
+    action.startsWith('live-')
+    || action.startsWith('codex-')
+    || action.startsWith('direct-')
+    || action.startsWith('wizard-')
+    || action.startsWith('report-')
+    || action === 'overview-open-run-report'
+    || action === 'overview-open-scope-report'
+  ) return;
   if (action === 'public-run-eval') {
     if (!isPublicDemo() || codexPanelState.evalBusy) return;
     codexPanelState.evalBusy = true; render();
@@ -5886,6 +6404,7 @@ document.addEventListener('click', async event => {
   }
   if (action === 'connector-disconnect') {
     disconnectConnector();
+    closeReportModal();
     $('#connector-dialog')?.close();
     await refresh();
     render();
@@ -5930,7 +6449,9 @@ document.addEventListener('click', async event => {
       draftQuestion = 'Explain this run and suggest the next read-only check.';
       demoPendingRequests.clear();
       directState.loaded = false; directState.wfQuery = null; directState.wfCycles = null;
-      directState.selectedId = null; directState.selectedBatchId = null; directState.activeTab = 'waveforms';
+      directState.selectedId = null; directState.selectedBatchId = null; directState.aiReport = null; directState.scopeReports = []; directState.activeTab = 'waveforms';
+      clearDirectLivePoll();
+      closeReportModal();
       codexPanelState.evalReport = null; wizardState.tutorialStep = 1;
       $('#connection-dialog').close();
       await refresh();
@@ -6025,6 +6546,32 @@ document.addEventListener('click', async event => {
         toast(`🚀 任务 ${id} 已上传并成功启动！`);
       } catch (error) {
         directState.error = error.message;
+        toast(error.message);
+      } finally {
+        directState.busy = false;
+        await refreshDirect();
+      }
+      return;
+    }
+    if (action === 'overview-generate-ai-report') {
+      if (!id || directState.busy || isPublicDemo()) return;
+      directState.busy = true;
+      render();
+      try {
+        const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/ai-report`, {
+          method: 'POST',
+          body: {force: true},
+        });
+        if (res?.handoff?.pushed) {
+          toast('✨ 已推送给 AI，正在自动生成并存档仿真报告…');
+          if (isStandaloneAgent()) {
+            if (codexPanelState.status?.connected) openCodexEvents();
+            else void refreshCodexStatus();
+          }
+        } else {
+          toast(res?.handoff?.note || '请先连接本机 Codex Agent 再生成仿真报告。');
+        }
+      } catch (error) {
         toast(error.message);
       } finally {
         directState.busy = false;
@@ -7078,6 +7625,10 @@ document.addEventListener('change', event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'report-custom-prompt') {
+    reportModalState.customPrompt = event.target.value;
+    return;
+  }
   if (event.target.id === 'overview-filter-query') {
     overviewState.query = event.target.value;
     render();
@@ -7097,6 +7648,11 @@ document.addEventListener('input', event => {
 });
 
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && reportModalState.open) {
+    event.preventDefault();
+    closeReportModal();
+    return;
+  }
   if (event.target.id === 'lib-mgr-path' && event.key === 'Enter') {
     event.preventDefault();
     void browseLibrarySsh(libMgrState.path || '~');
@@ -7135,6 +7691,79 @@ document.addEventListener('drop', event => {
   event.preventDefault();
   dz.classList.remove('is-dragover');
   if (event.dataTransfer?.files?.length) void handleLibraryLocalFiles(event.dataTransfer.files);
+});
+
+// Interactive HTML Simulation Report Viewer Modal interactions
+document.addEventListener('click', event => {
+  if (reportModalState.open && event.target?.classList?.contains('report-modal-backdrop')) {
+    closeReportModal();
+    return;
+  }
+  const btn = event.target.closest?.('button[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+  if (action === 'overview-open-run-report') {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = btn.dataset.id || '';
+    if (!id) return;
+    const run = (directState.runs || []).find(r => r.run_id === id) || (directState.detail?.run_id === id ? directState.detail : null);
+    const org = run ? resolveRunOrganization(run) : {project: '', testbench: ''};
+    void openReportModal({scope: 'run', runId: id, project: org.project || '', testbench: org.testbench || ''});
+    return;
+  }
+  if (action === 'overview-open-scope-report') {
+    event.preventDefault();
+    event.stopPropagation();
+    const scope = btn.dataset.scope === 'testbench' ? 'testbench' : 'project';
+    const project = btn.dataset.project || '';
+    const testbench = btn.dataset.testbench || '';
+    if (!project) return;
+    void openReportModal({scope, project, testbench});
+    return;
+  }
+  if (action === 'report-close') {
+    closeReportModal();
+    return;
+  }
+  if (action === 'report-refresh') {
+    void fetchReportModalData();
+    return;
+  }
+  if (action === 'report-generate') {
+    event.preventDefault();
+    void triggerReportModalGenerate();
+    return;
+  }
+  if (action === 'report-download-html') {
+    const htmlDoc = buildStandaloneReportHtml(reportModalState);
+    if (!htmlDoc) { toast('当前暂无可下载的报告内容。'); return; }
+    const blob = new Blob([htmlDoc], {type: 'text/html;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = reportDownloadFilename(reportModalState);
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`⬇ 已导出离线 HTML 仿真报告：${a.download}`);
+    return;
+  }
+  if (action === 'report-open-tab') {
+    const htmlDoc = buildStandaloneReportHtml(reportModalState);
+    if (!htmlDoc) { toast('当前暂无可打开的报告内容。'); return; }
+    const blob = new Blob([htmlDoc], {type: 'text/html;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return;
+  }
+});
+
+document.addEventListener('submit', event => {
+  if (event.target.id === 'report-agent-form') {
+    event.preventDefault();
+    void triggerReportModalGenerate();
+  }
 });
 
 // Shared CircuitGit -> SpiceOwl postMessage handoff interface (spiceowl.circuitgit-entry.v1)

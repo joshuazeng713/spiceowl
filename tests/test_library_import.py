@@ -901,6 +901,225 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
             finally:
                 ctrl.close()
 
+    def test_auto_watch_completion_handoff_and_interactive_html_reports(self):
+        import http.client
+        import threading
+        import time
+        from unittest.mock import patch
+        from urllib.parse import urlencode
+        from spiceowl.direct import DirectExecutionManager, DirectRecoverySupervisor
+        from spiceowl.service import Controller
+        from spiceowl.skills import BUILTIN_SKILLS, get_skill, list_skills
+        from spiceowl.standalone_agent import build_standalone_dispatcher
+        from spiceowl.watch_handoff import WatchHandoffManager
+        from spiceowl.web.server import make_server
+
+        # 1. Canonical spiceowl-sim-report SKILL.md stays byte-identical to BUILTIN_SKILLS
+        report_skill_file = Path(__file__).resolve().parents[1] / "skills" / "spiceowl-sim-report" / "SKILL.md"
+        self.assertTrue(report_skill_file.is_file())
+        self.assertEqual(report_skill_file.read_text(encoding="utf-8"), BUILTIN_SKILLS["spiceowl-sim-report"]["content"])
+        self.assertEqual(get_skill("spiceowl-sim-report")["content"], report_skill_file.read_text(encoding="utf-8"))
+        self.assertTrue(any(s["name"] == "spiceowl-sim-report" for s in list_skills()["skills"]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctrl = Controller(root / "state", agent_mode="standalone")
+            try:
+                ctrl.hosts.register({
+                    "schema": "spiceowl.host.v1",
+                    "host_id": "eda-node-01",
+                    "label": "EDA Node 01",
+                    "ssh_target": "eda-node-01",
+                    "expected_host": "eda-node-01",
+                    "expected_user": "researcher",
+                    "tools": [{"kind": "spectre", "executable": "/opt/cadence/bin/spectre"}],
+                })
+                dm = DirectExecutionManager(ctrl.store.directory, hosts=ctrl.hosts)
+                hm = WatchHandoffManager(ctrl.store.directory)
+                launched = []
+                patches = []
+                disp = build_standalone_dispatcher(
+                    ctrl,
+                    direct_manager=dm,
+                    handoff_manager=hm,
+                    ui_patch_sink=lambda k, p: patches.append((k, p)) or len(patches),
+                    on_run_launched=lambda rec: launched.append(rec.get("run_id")),
+                )
+
+                # 2. Zero-approval policy for save_ai_report and save_scope_report even with overnight OFF
+                self.assertEqual(disp.policy("spiceowl_direct_control", {"operation": "save_ai_report", "arguments": {"run_id": "r1"}}), "read")
+                self.assertEqual(disp.policy("spiceowl_direct_control", {"operation": "save_scope_report", "arguments": {"scope": "testbench"}}), "read")
+                self.assertEqual(disp.policy("spiceowl_direct_read", {"operation": "skill", "arguments": {"name": "spiceowl-sim-report"}}), "read")
+
+                # 3. Single-call submit triggers on_run_launched hook
+                with patch("spiceowl.direct.transport.stage_and_launch", side_effect=lambda plan: {
+                    "state": "running",
+                    "accepted": {"dispatch_claimed": True, "accepted_at": "2026-11-27T04:00:00Z"},
+                    "result": None,
+                    "manifest_sha256": plan["manifest_sha256"],
+                    "remote_directory": "/tmp/run-watch-01",
+                }):
+                    sub = disp.dispatch("spiceowl_direct_control", {
+                        "operation": "submit",
+                        "arguments": {
+                            "host_id": "eda-node-01",
+                            "simulator": "spectre",
+                            "netlist_text": "simulator lang=spectre\nR0 (a 0) resistor r=1k\n",
+                            "project_name": "analog_lib",
+                            "cell_name": "tb_amp",
+                        },
+                    }, context={"turn_id": "turn-watch-1"})
+                run_id = sub["run_id"]
+                self.assertIn(run_id, launched)
+
+                # 4. Run-level HTML/MD save & direct disk edit detection
+                saved = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "save_ai_report",
+                    "arguments": {
+                        "run_id": run_id,
+                        "title": "tb_amp 瞬态仿真报告",
+                        "summary": "增益 7.38x，功耗 2.59 mW",
+                        "html": "<!doctype html><html><body><h1>Initial Report</h1></body></html>",
+                        "markdown": "| 指标 | 数值 |\n|---|---:|\n| 增益 | 7.38x |",
+                    },
+                })
+                self.assertTrue(saved["has_html"])
+                self.assertTrue(any(k == "direct_run_updated" and p.get("ai_report_ready") for k, p in patches))
+
+                # Agent editing ai_report.html directly on disk must be read back immediately
+                html_path = Path(dm.ai_report_html_path(run_id))
+                html_path.write_text("<!doctype html><html><body><h1>Disk Updated Plot</h1><svg></svg></body></html>", encoding="utf-8")
+                disk_read = dm.read_ai_report(run_id)
+                self.assertIn("Disk Updated Plot", disk_read["html"])
+
+                # 5. Testbench & Project scope reports + dm.list() skips _scope_reports
+                tb_saved = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "save_scope_report",
+                    "arguments": {
+                        "scope": "testbench",
+                        "project": "analog_lib",
+                        "testbench": "tb_amp",
+                        "title": "tb_amp 综合对比报告",
+                        "summary": "汇总 1 次仿真",
+                        "html": "<!doctype html><html><body><h1>TB Rollup</h1></body></html>",
+                        "run_ids": [run_id],
+                    },
+                })
+                self.assertEqual(tb_saved["scope"], "testbench")
+                self.assertTrue(any(k == "direct_scope_report_updated" and p.get("testbench") == "tb_amp" for k, p in patches))
+                proj_saved = dm.save_scope_report(
+                    scope="project",
+                    project="analog_lib",
+                    title="analog_lib 项目总报告",
+                    html="<!doctype html><html><body><h1>Project Rollup</h1></body></html>",
+                    run_ids=[run_id],
+                )
+                self.assertEqual(proj_saved["scope"], "project")
+                self.assertEqual(len(dm.list_scope_reports()), 2)
+                self.assertEqual([r["run_id"] for r in dm.list()], [run_id])
+
+                # 6. Supervisor auto-push completion report with busy retry, idempotency, and custom_prompt
+                push_calls = []
+
+                def fake_pusher(*, event, prompt, request_key=None, policy=None):
+                    push_calls.append((event.get("kind"), prompt, request_key))
+                    if len(push_calls) == 1:
+                        return {"pushed": False, "status": "agent_busy", "note": "busy"}
+                    return {"pushed": True, "status": "pushed", "thread_id": "th-1", "note": "ok"}
+
+                updates = []
+                sup = DirectRecoverySupervisor(
+                    dm,
+                    interval_seconds=4,
+                    handoff_manager=hm,
+                    agent_pusher=fake_pusher,
+                    on_run_update=lambda rec: updates.append(rec.get("run_id")),
+                )
+                # First direct push returns busy; second succeeds; third without force is deduped
+                r1 = sup.push_completion_report(run_id, force=False)
+                self.assertFalse(r1["pushed"])
+                r2 = sup.push_completion_report(run_id, force=False)
+                self.assertTrue(r2["pushed"])
+                self.assertIn("spiceowl-sim-report", push_calls[-1][1])
+                r3 = sup.push_completion_report(run_id, force=False)
+                self.assertTrue(r3["pushed"])
+                self.assertEqual(len(push_calls), 2)
+                r4 = sup.push_completion_report(run_id, force=True, custom_prompt="请补充相位裕度曲线图")
+                self.assertTrue(r4["pushed"])
+                self.assertIn("请补充相位裕度曲线图", push_calls[-1][1])
+                r_scope = sup.push_scope_report(scope="testbench", project="analog_lib", testbench="tb_amp", custom_prompt="对比温度漂移")
+                self.assertTrue(r_scope["pushed"])
+                self.assertIn("对比温度漂移", push_calls[-1][1])
+                sup.stop()
+
+                # 7. End-to-end Web API HTTP routes for run & scope HTML reports
+                srv = make_server(ctrl, port=0, enable_direct_exec=True)
+                port = srv.server_address[1]
+                t_srv = threading.Thread(target=srv.serve_forever, daemon=True)
+                t_srv.start()
+                try:
+                    conn0 = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    conn0.request("GET", "/api/state")
+                    token = json.loads(conn0.getresponse().read().decode("utf-8"))["csrf_token"]
+                    conn0.close()
+                    def req_raw(method: str, path: str, body: dict | None = None):
+                        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                        headers = {"X-SpiceOwl-Token": token}
+                        raw = None
+                        if body is not None:
+                            headers["Content-Type"] = "application/json"
+                            raw = json.dumps(body).encode("utf-8")
+                        conn.request(method, path, body=raw, headers=headers)
+                        resp = conn.getresponse()
+                        payload = resp.read()
+                        resp_headers = dict(resp.getheaders())
+                        conn.close()
+                        return resp.status, payload, resp_headers
+
+                    st, raw_runs, _ = req_raw("GET", "/api/direct/runs")
+                    self.assertEqual(st, 200)
+                    runs_json = json.loads(raw_runs.decode("utf-8"))
+                    self.assertEqual(len(runs_json["scope_reports"]), 2)
+
+                    st, raw_rep, _ = req_raw("GET", f"/api/direct/runs/{run_id}/ai-report")
+                    self.assertEqual(st, 200)
+                    self.assertIn("Disk Updated Plot", json.loads(raw_rep.decode("utf-8"))["ai_report"]["html"])
+
+                    st, raw_html, hdrs = req_raw("GET", f"/api/direct/runs/{run_id}/ai-report.html?download=1")
+                    self.assertEqual(st, 200)
+                    self.assertIn("attachment", hdrs.get("Content-Disposition", ""))
+                    self.assertIn(b"Disk Updated Plot", raw_html)
+
+                    st, raw_put, _ = req_raw("PUT", f"/api/direct/runs/{run_id}/ai-report", {
+                        "title": "PUT Updated",
+                        "html": "<!doctype html><html><body><h1>PUT HTML</h1></body></html>",
+                    })
+                    self.assertEqual(st, 200)
+                    self.assertEqual(json.loads(raw_put.decode("utf-8"))["ai_report"]["title"], "PUT Updated")
+
+                    qs = urlencode({"scope": "testbench", "project": "analog_lib", "testbench": "tb_amp"})
+                    st, raw_scope, _ = req_raw("GET", f"/api/direct/scope-reports/read?{qs}")
+                    self.assertEqual(st, 200)
+                    self.assertIn("TB Rollup", json.loads(raw_scope.decode("utf-8"))["report"]["html"])
+
+                    st, raw_scope_html, hdrs2 = req_raw("GET", f"/api/direct/scope-reports/html?{qs}&download=1")
+                    self.assertEqual(st, 200)
+                    self.assertIn("attachment", hdrs2.get("Content-Disposition", ""))
+                    self.assertIn(b"TB Rollup", raw_scope_html)
+
+                    st, raw_gen, _ = req_raw("POST", "/api/direct/scope-reports/generate", {
+                        "scope": "project",
+                        "project": "analog_lib",
+                        "custom_prompt": "总结全部指标",
+                    })
+                    self.assertEqual(st, 202)
+                    self.assertIn("handoff", json.loads(raw_gen.decode("utf-8")))
+                finally:
+                    srv.shutdown()
+                    srv.server_close()
+            finally:
+                ctrl.close()
+
 
 if __name__ == "__main__":
     unittest.main()

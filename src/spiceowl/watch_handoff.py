@@ -726,29 +726,291 @@ class WatchHandoffManager:
         )
 
 
+def build_completion_report_prompt(
+    run_record: dict,
+    report: dict | None = None,
+    waveform_index: dict | None = None,
+    *,
+    html_path: str | None = None,
+    custom_prompt: str | None = None,
+) -> str:
+    """Build a concise, secret-free Chinese handoff prompt when a direct simulation completes."""
+    rec = run_record if isinstance(run_record, dict) else {}
+    run_id = str(rec.get("run_id") or "unknown")
+    org = rec.get("organization") if isinstance(rec.get("organization"), dict) else {}
+    project = org.get("project") or rec.get("project_name") or "未归类项目"
+    library = org.get("library") or rec.get("library_name") or "-"
+    testbench = org.get("testbench") or rec.get("cell_name") or "-"
+    view = org.get("view") or rec.get("view_name") or "-"
+
+    host_id = rec.get("host_id") or "unknown"
+    backend = rec.get("backend") or "unknown"
+    simulator = rec.get("simulator") or "unknown"
+    state = rec.get("state") or "unknown"
+    raw_remote_state = rec.get("raw_remote_state") or rec.get("remote_state") or "unknown"
+    exit_code = rec.get("simulator_exit_code")
+    exit_str = str(exit_code) if exit_code is not None else "null"
+
+    limits = rec.get("limits") if isinstance(rec.get("limits"), dict) else {}
+    cpu_count = limits.get("cpu_count")
+    cpu_str = f"{cpu_count} 核" if isinstance(cpu_count, int) and not isinstance(cpu_count, bool) else "-"
+    mem_bytes = limits.get("memory_bytes")
+    if isinstance(mem_bytes, (int, float)) and not isinstance(mem_bytes, bool) and mem_bytes > 0:
+        mem_str = f"{mem_bytes / (1024 ** 3):.2f} GiB"
+    else:
+        mem_str = "-"
+
+    lines = [
+        f"[SpiceOwl 仿真完成自动汇报 · {run_id}]",
+        f"任务 ID: {run_id} | 项目: {project} | Library: {library} | Testbench: {testbench} | View: {view}",
+        f"执行环境: host={host_id} | backend={backend} | simulator={simulator} | 资源配额: CPU={cpu_str}, 内存={mem_str}",
+        f"终态信息: state={state} | raw_remote_state={raw_remote_state} | simulator_exit_code={exit_str}",
+    ]
+
+    if isinstance(report, dict) and report:
+        exec_st = (
+            report["execution_status"].get("status", "unknown")
+            if isinstance(report.get("execution_status"), dict)
+            else "unknown"
+        )
+        meas_st = (
+            report["measurement_validity"].get("status", "unknown")
+            if isinstance(report.get("measurement_validity"), dict)
+            else "unknown"
+        )
+        perf_st = (
+            report["functional_performance"].get("status", "unknown")
+            if isinstance(report.get("functional_performance"), dict)
+            else "unknown"
+        )
+        qual_st = (
+            report["operating_qualification"].get("status", "unknown")
+            if isinstance(report.get("operating_qualification"), dict)
+            else "unknown"
+        )
+        dep_st = (
+            report["dependency_provenance"].get("status", "unknown")
+            if isinstance(report.get("dependency_provenance"), dict)
+            else "unknown"
+        )
+        lines.append(
+            "五维评估摘要: "
+            f"execution_status={exec_st}, measurement_validity={meas_st}, "
+            f"functional_performance={perf_st}, operating_qualification={qual_st}, "
+            f"dependency_provenance={dep_st}"
+        )
+
+        diag_block = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
+        obs_ctx = diag_block.get("observed_context") if isinstance(diag_block.get("observed_context"), dict) else {}
+        warn_sum = obs_ctx.get("warning_summary") if isinstance(obs_ctx.get("warning_summary"), dict) else {}
+        cov = obs_ctx.get("diagnostic_coverage") if isinstance(obs_ctx.get("diagnostic_coverage"), dict) else {}
+        err_cnt = warn_sum.get("reported_errors")
+        if err_cnt is None:
+            err_cnt = cov.get("observed_errors")
+        warn_cnt = warn_sum.get("reported_warnings")
+        if warn_cnt is None:
+            warn_cnt = cov.get("observed_warnings")
+        notice_cnt = warn_sum.get("reported_notices")
+        if notice_cnt is None:
+            notice_cnt = cov.get("observed_notices")
+        diag_items = diag_block.get("diagnostics") if isinstance(diag_block.get("diagnostics"), list) else []
+        diag_classes = []
+        for item in diag_items[:6]:
+            if isinstance(item, dict):
+                code = item.get("code") or item.get("category")
+                if code:
+                    diag_classes.append(str(code))
+        diag_parts = []
+        if err_cnt is not None or warn_cnt is not None or notice_cnt is not None:
+            diag_parts.append(
+                f"errors={err_cnt if err_cnt is not None else '-'}, "
+                f"warnings={warn_cnt if warn_cnt is not None else '-'}, "
+                f"notices={notice_cnt if notice_cnt is not None else '-'}"
+            )
+        if diag_classes:
+            diag_parts.append("诊断类别=" + ", ".join(diag_classes))
+        if diag_parts:
+            lines.append("日志诊断与告警摘要: " + " | ".join(diag_parts))
+
+    datasets = (
+        waveform_index.get("datasets")
+        if isinstance(waveform_index, dict) and isinstance(waveform_index.get("datasets"), list)
+        else []
+    )
+    if datasets:
+        lines.append(f"已回收波形数据集（共 {len(datasets)} 个，展示前 {min(len(datasets), 4)} 个）:")
+        for ds in datasets[:4]:
+            if not isinstance(ds, dict):
+                continue
+            ds_name = str(ds.get("dataset") or ds.get("name") or "unknown")
+            ds_fmt = str(ds.get("format") or "unknown")
+            sweep = ds.get("sweep") if isinstance(ds.get("sweep"), dict) else {}
+            sample_cnt = sweep.get("count")
+            raw_sigs = ds.get("signals") if isinstance(ds.get("signals"), list) else []
+            sig_names: list[str] = []
+            for sig in raw_sigs[:16]:
+                if isinstance(sig, dict) and sig.get("name"):
+                    sig_names.append(str(sig["name"]))
+                elif isinstance(sig, str) and sig:
+                    sig_names.append(sig)
+            total_sigs = ds.get("signal_count")
+            if not isinstance(total_sigs, int) or isinstance(total_sigs, bool):
+                total_sigs = len(raw_sigs)
+            sig_preview = ", ".join(sig_names) if sig_names else "(无信号名)"
+            more = f" 等共 {total_sigs} 个" if total_sigs > len(sig_names) else ""
+            cnt_label = f", samples={sample_cnt}" if sample_cnt is not None else ""
+            lines.append(f"  - {ds_name} ({ds_fmt}{cnt_label}): {sig_preview}{more}")
+        if len(datasets) > 4:
+            lines.append(f"  - ... 其余 {len(datasets) - 4} 个数据集可通过 waveform_index 查询")
+
+    if isinstance(html_path, str) and html_path.strip():
+        lines.append(f"HTML 报告存档路径 (html_path): {html_path.strip()}")
+
+    if isinstance(custom_prompt, str) and custom_prompt.strip():
+        lines.append(f"用户附加分析要求: {custom_prompt.strip()}")
+
+    run_id_json = json.dumps(run_id, ensure_ascii=False)
+    lines.extend([
+        "",
+        "请遵循 `spiceowl-sim-report` Skill 规范，按以下步骤核实仿真结果并生成图文并茂的自包含中文 HTML 仿真报告：",
+        "1. 调用 `spiceowl_direct_read`（`report`、`waveform_index`、`waveform_measure`、`waveform_query`、`log_tail` 等）核实完整仿真结果与关键信号实测指标（严禁编造未观测数据）。",
+        "2. 生成一份**自包含、视觉精美的交互式 HTML 仿真报告**（`<!doctype html>...`，包含：KPI 核心指标卡片、结构化测量与收敛/告警表格、基于 `results.raw` 实测数据生成的内联 SVG 或 base64 PNG 波形图、异常或瓶颈诊断、下一步设计或仿真建议；请勿只输出干巴巴的纯 Markdown 文本！）。",
+        f'3. 务必调用 `spiceowl_direct_control(operation="save_ai_report", arguments={{"run_id": {run_id_json}, "title": "...", "summary": "...", "html": "<!doctype html>...", "markdown": "..."}})` 将完整 HTML 报告（及简明 Markdown 摘要）永久存档到「仿真总览」的任务详情卡片中；若具备本地执行权限，也可用 Python/matplotlib 从 `results.raw` 绘制高清图表并生成离线 HTML 写入上述 `html_path` 后再调用 `save_ai_report` 注册元数据。',
+    ])
+    return "\n".join(lines)
+
+
+def build_scope_report_prompt(
+    scope: str,
+    *,
+    project: str,
+    testbench: str | None = None,
+    runs: list[dict],
+    custom_prompt: str | None = None,
+    html_path: str | None = None,
+) -> str:
+    """Build a structured Chinese prompt to synthesize a Project-level or Testbench-level HTML report."""
+    scope_clean = "testbench" if scope == "testbench" else "project"
+    proj_label = str(project or "未归类项目")
+    tb_label = str(testbench) if (scope_clean == "testbench" and testbench) else None
+    run_list = [r for r in (runs or []) if isinstance(r, dict)]
+    run_ids = [str(r["run_id"]) for r in run_list if r.get("run_id")]
+
+    if scope_clean == "testbench":
+        header = f"[SpiceOwl Testbench 综合仿真报告 · {proj_label} / {tb_label or '-'}]"
+        scope_desc = f"报告范围: Testbench 级（项目={proj_label} | Testbench={tb_label or '-'} | 关联任务数={len(run_list)}）"
+    else:
+        tb_names = sorted({
+            str((r.get("organization") or {}).get("testbench") or r.get("cell_name") or "-")
+            for r in run_list
+        })
+        header = f"[SpiceOwl 项目级综合仿真报告 · {proj_label}]"
+        scope_desc = (
+            f"报告范围: Project 级（项目={proj_label} | 涵盖 Testbench 数={len(tb_names)} | 关联任务数={len(run_list)}）"
+        )
+
+    lines = [header, scope_desc]
+    if run_list:
+        lines.append(f"纳入汇总的仿真任务清单（展示前 {min(len(run_list), 40)} 条）：")
+        for r in run_list[:40]:
+            rid = str(r.get("run_id") or "unknown")
+            org = r.get("organization") if isinstance(r.get("organization"), dict) else {}
+            r_tb = org.get("testbench") or r.get("cell_name") or "-"
+            r_state = r.get("state") or "unknown"
+            r_raw = r.get("raw_remote_state") or r.get("remote_state") or "-"
+            r_host = r.get("host_id") or "unknown"
+            r_sim = r.get("simulator") or "unknown"
+            r_created = r.get("created_at") or "-"
+            limits = r.get("limits") if isinstance(r.get("limits"), dict) else {}
+            cpu = limits.get("cpu_count")
+            mem_b = limits.get("memory_bytes")
+            mem_s = (
+                f"{mem_b / (1024 ** 3):.1f}GiB"
+                if isinstance(mem_b, (int, float)) and not isinstance(mem_b, bool) and mem_b > 0
+                else "-"
+            )
+            cpu_s = f"{cpu}C" if isinstance(cpu, int) and not isinstance(cpu, bool) else "-"
+            coll = r.get("collection") if isinstance(r.get("collection"), dict) else {}
+            coll_phase = r.get("collection_phase") or ("complete" if coll else "uncollected")
+            ai_rep = r.get("ai_report") if isinstance(r.get("ai_report"), dict) else {}
+            rep_hint = ai_rep.get("summary") or ai_rep.get("title") or ""
+            rep_part = f" | 已有报告摘要: {str(rep_hint)[:120]}" if rep_hint else ""
+            coll_dir = coll.get("directory")
+            coll_part = f" | collected={coll_dir}" if isinstance(coll_dir, str) and coll_dir else ""
+            lines.append(
+                f"  - {rid} [TB={r_tb}] | state={r_state}({r_raw}) | host={r_host} | sim={r_sim} | "
+                f"limits={cpu_s}/{mem_s} | collection={coll_phase} | created={r_created}{rep_part}{coll_part}"
+            )
+        if len(run_list) > 40:
+            lines.append(f"  - ... 其余 {len(run_list) - 40} 个任务可通过 `spiceowl_direct_read(operation='list')` 查阅")
+    else:
+        lines.append("当前该范围内暂无已记录的仿真任务，请先核实任务归属后给出说明。")
+
+    if isinstance(html_path, str) and html_path.strip():
+        lines.append(f"HTML 综合报告存档路径 (html_path): {html_path.strip()}")
+
+    if isinstance(custom_prompt, str) and custom_prompt.strip():
+        lines.append(f"用户附加分析要求: {custom_prompt.strip()}")
+
+    scope_json = json.dumps(scope_clean, ensure_ascii=False)
+    proj_json = json.dumps(proj_label, ensure_ascii=False)
+    tb_json = json.dumps(tb_label, ensure_ascii=False)
+    rids_preview = json.dumps(run_ids[:32], ensure_ascii=False)
+
+    lines.extend([
+        "",
+        "请遵循 `spiceowl-sim-report` Skill 规范，综合上述全部相关任务，生成一份图文并茂的中文 **HTML 综合仿真报告**：",
+        "1. 调用 `spiceowl_direct_read`（`report`、`ai_report`、`waveform_index`、`waveform_measure`、`log_tail` 等）核实各任务的真实仿真数据、收敛状态与测量指标（严禁编造未观测数据）。",
+        "2. 编制一份**自包含、视觉精美的交互式 HTML 综合仿真报告**（`<!doctype html>...`，包含：总览 KPI 卡片、多任务/多参数/多 Corner 横向对比表格、内联 SVG 或 base64 PNG 趋势/对比图表、跨任务瓶颈与一致性结论、明确的下一步设计/验证建议）。",
+        f'3. 务必调用 `spiceowl_direct_control(operation="save_scope_report", arguments={{"scope": {scope_json}, "project": {proj_json}, "testbench": {tb_json}, "title": "...", "summary": "...", "html": "<!doctype html>...", "markdown": "...", "run_ids": {rids_preview}}})` 将综合报告永久存档到「仿真总览」对应范围的报告卡片中（若具备本地执行权限，亦可先用 Python/matplotlib 生成含真实对比图表的完整 HTML 写入上述 `html_path` 再调用 `save_scope_report` 注册）。',
+    ])
+    return "\n".join(lines)
+
+
 def build_codex_bridge_pusher(codex_bridge):
     """Create a safe callback that wakes the user's connected CodexBridge thread."""
 
     def _push(*, event: dict, prompt: str, request_key: str, policy: dict) -> dict:
+        kind = event.get("kind") if isinstance(event, dict) else None
+        is_completion = kind == "simulation_completed"
+        is_scope_report = kind == "scope_report_requested"
         if codex_bridge is None:
             return {"pushed": False, "thread_id": None, "status": "no_agent_connected", "note": "当前未配置 Codex Agent 桥接。"}
         st = codex_bridge.status()
         if not st.get("connected"):
-            return {"pushed": False, "thread_id": None, "status": "agent_disconnected", "note": "用户的 Codex Agent 当前未连接；异常已记录在网页收件箱，连接后可一键推送或自动认领。"}
+            if is_completion:
+                note = "用户的 Codex Agent 当前未连接；仿真结果已保留，连接后可在任务详情页一键触发 AI 仿真报告。"
+            elif is_scope_report:
+                note = "用户的 Codex Agent 当前未连接；连接后即可一键生成综合 HTML 仿真报告。"
+            else:
+                note = "用户的 Codex Agent 当前未连接；异常已记录在网页收件箱，连接后可一键推送或自动认领。"
+            return {"pushed": False, "thread_id": None, "status": "agent_disconnected", "note": note}
         if st.get("recovery_required"):
             return {"pushed": False, "thread_id": st.get("thread_id"), "status": "agent_recovery_required", "note": "Agent 会话存在未核对的中断回合，暂不自动推送以免覆盖上下文。"}
-        if st.get("state") in ("running", "waiting_approval"):
-            return {"pushed": False, "thread_id": st.get("thread_id"), "status": "agent_busy", "note": f"Agent 当前状态为 {st.get('state')}，异常已排队留在网页值守列表等待推送。"}
+        if st.get("state") in ("starting", "running", "awaiting_approval", "waiting_approval"):
+            if is_completion:
+                note = f"Agent 当前状态为 {st.get('state')}，仿真完成汇报将在当前回合结束后自动重试推送。"
+            elif is_scope_report:
+                note = f"Agent 当前状态为 {st.get('state')}，请等待当前回合完成后再触发综合报告生成。"
+            else:
+                note = f"Agent 当前状态为 {st.get('state')}，异常已排队留在网页值守列表等待推送。"
+            return {"pushed": False, "thread_id": st.get("thread_id"), "status": "agent_busy", "note": note}
         thread_id = st.get("thread_id")
         if not thread_id:
             created = codex_bridge.create_thread()
             thread_id = created.get("thread_id")
         codex_bridge.send_message(thread_id, prompt, request_key)
+        if is_completion:
+            note = f"已将仿真完成摘要自动推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在核实结果并生成 HTML 仿真报告。"
+        elif is_scope_report:
+            note = f"已将综合仿真报告任务推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在汇总分析并生成 HTML 综合报告。"
+        else:
+            note = f"已将异常事件自动推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在根据 SpiceOwl 工具排查。"
         return {
             "pushed": True,
             "thread_id": thread_id,
             "status": "pushed",
-            "note": f"已将异常事件自动推送至用户接入的 Agent 会话（thread={thread_id}），Agent 正在根据 SpiceOwl 工具排查。",
+            "note": note,
         }
 
     return _push

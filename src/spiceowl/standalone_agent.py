@@ -145,7 +145,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                                 circuitgit_client_config=None, circuitgit_sdk_path=None,
                                 direct_manager=None, handoff_manager=None,
                                 ui_patch_sink=None, ssh_dir=None,
-                                active_source_box=None):
+                                active_source_box=None, on_run_launched=None):
     from spiceowl.read_api import open_read_views
     ssh_cfg = (Path(ssh_dir) / 'config') if ssh_dir else (Path.home() / '.ssh' / 'config')
 
@@ -305,6 +305,8 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         log_watcher = IncrementalLogWatcher(direct_manager.data_dir / 'log_cursors')
 
         def _overnight_policy_override(name, arguments):
+            if name == 'spiceowl_direct_control' and isinstance(arguments, dict) and arguments.get('operation') in ('save_ai_report', 'save_scope_report'):
+                return 'read'
             policy = watch_mgr.get_policy()
             if not policy.get('enabled'):
                 return None
@@ -345,6 +347,20 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     return direct_manager.lookup_submission(params['key'])
                 if op == 'report':
                     return direct_manager.report(params['run_id'])
+                if op == 'ai_report':
+                    return {'run_id': params['run_id'], 'ai_report': direct_manager.read_ai_report(params['run_id'])}
+                if op == 'scope_reports':
+                    if params:
+                        raise DomainError('scope_reports takes empty arguments.', 'invalid_tool_arguments')
+                    return {'reports': direct_manager.list_scope_reports()}
+                if op == 'scope_report':
+                    return {
+                        'report': direct_manager.read_scope_report(
+                            scope=params['scope'],
+                            project=params['project'],
+                            testbench=params.get('testbench'),
+                        ),
+                    }
                 if op == 'waveform_index':
                     return direct_manager.waveform_index(params['run_id'], allow_remote=False)
                 if op == 'waveform_query':
@@ -513,6 +529,11 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 if op == 'submit':
                     prep_params, recheck_resources = _normalize_prepare_params(params, context, op_name='submit', allow_recheck=True)
                     result = direct_manager.submit(recheck_resources=recheck_resources, **prep_params)
+                    if callable(on_run_launched):
+                        try:
+                            on_run_launched(result)
+                        except Exception:
+                            pass
                     if callable(ui_patch_sink):
                         ui_patch_sink('direct_run_submitted', {
                             'run_id': result.get('run_id'),
@@ -529,6 +550,11 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                         params['run_id'],
                         recheck_resources=bool(params.get('recheck_resources', False)),
                     )
+                    if callable(on_run_launched):
+                        try:
+                            on_run_launched(result)
+                        except Exception:
+                            pass
                     if callable(ui_patch_sink):
                         ui_patch_sink('direct_run_submitted', {
                             'run_id': result.get('run_id'),
@@ -540,7 +566,13 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 if op == 'stage':
                     return direct_manager.stage(params['run_id'])
                 if op == 'launch':
-                    return direct_manager.launch(params['run_id'], recheck_resources=params.get('recheck_resources'))
+                    result = direct_manager.launch(params['run_id'], recheck_resources=params.get('recheck_resources'))
+                    if callable(on_run_launched):
+                        try:
+                            on_run_launched(result)
+                        except Exception:
+                            pass
+                    return result
                 if op == 'status':
                     return direct_manager.status(params['run_id'])
                 if op == 'cancel':
@@ -553,6 +585,43 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     return direct_manager.collect(params['run_id'])
                 if op == 'delete':
                     return direct_manager.delete(params['run_id'])
+                if op == 'save_ai_report':
+                    saved = direct_manager.save_ai_report(
+                        params['run_id'],
+                        markdown=params.get('markdown'),
+                        html=params.get('html'),
+                        title=params.get('title'),
+                        summary=params.get('summary'),
+                        source=params.get('source', 'agent'),
+                    )
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_run_updated', {
+                            'run_id': params['run_id'],
+                            'ai_report_ready': True,
+                            'has_html': bool(saved.get('has_html')),
+                            'title': saved.get('title'),
+                        })
+                    return saved
+                if op == 'save_scope_report':
+                    saved = direct_manager.save_scope_report(
+                        scope=params['scope'],
+                        project=params['project'],
+                        testbench=params.get('testbench'),
+                        title=params.get('title'),
+                        summary=params.get('summary'),
+                        html=params.get('html'),
+                        markdown=params.get('markdown'),
+                        run_ids=params.get('run_ids'),
+                        source=params.get('source', 'agent'),
+                    )
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_scope_report_updated', {
+                            'scope': params['scope'],
+                            'project': params['project'],
+                            'testbench': params.get('testbench'),
+                            'title': saved.get('title'),
+                        })
+                    return saved
                 if op == 'watch_record_decision':
                     return watch_mgr.record_agent_decision(
                         params['event_id'],

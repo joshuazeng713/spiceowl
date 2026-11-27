@@ -258,8 +258,31 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 meta["host_id"] = payload.get("host_id")
                 meta["state"] = payload.get("state")
                 meta["simulator"] = payload.get("simulator")
+            elif kind == "direct_run_updated" and isinstance(payload, dict):
+                meta["run_id"] = payload.get("run_id")
+                meta["state"] = payload.get("state")
+                meta["raw_remote_state"] = payload.get("raw_remote_state")
+                meta["collection_phase"] = payload.get("collection_phase")
+                meta["ai_report_ready"] = payload.get("ai_report_ready")
+                meta["has_html"] = payload.get("has_html")
+                meta["title"] = payload.get("title")
+            elif kind == "direct_scope_report_updated" and isinstance(payload, dict):
+                meta["scope"] = payload.get("scope")
+                meta["project"] = payload.get("project")
+                meta["testbench"] = payload.get("testbench")
+                meta["title"] = payload.get("title")
             bridge_obj.emit_ui_patch(meta)
         return rev
+
+    supervisor_ref = {"supervisor": None}
+
+    def on_run_launched(run_record: dict) -> None:
+        sup = supervisor_ref.get("supervisor")
+        if sup is not None and isinstance(run_record, dict):
+            try:
+                sup.watch_launched_run(run_record)
+            except Exception:
+                pass
 
     definitions, dispatcher = [], None
     if controller.agent_mode == 'standalone':
@@ -270,7 +293,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             direct_manager=direct_manager if enable_direct_exec else None,
             handoff_manager=handoff_manager,
             ui_patch_sink=record_ui_patch, ssh_dir=ssh_dir,
-            active_source_box=workspace_source_box)
+            active_source_box=workspace_source_box,
+            on_run_launched=on_run_launched)
         definitions = [{key: row[key] for key in ('name', 'description', 'inputSchema')}
                        for row in dispatcher.definitions()]
     controller.codex = CodexBridge(controller.store.directory / 'codex', mode=controller.agent_mode,
@@ -279,8 +303,21 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
         executable=codex_executable, model=codex_model)
     agent_pusher = build_codex_bridge_pusher(controller.codex)
     direct_supervisor = DirectRecoverySupervisor(
-        direct_manager, handoff_manager=handoff_manager, agent_pusher=agent_pusher,
+        direct_manager,
+        interval_seconds=4,
+        max_backoff_seconds=120,
+        handoff_manager=handoff_manager,
+        agent_pusher=agent_pusher,
+        on_run_update=lambda rec: record_ui_patch("direct_run_updated", {
+            "run_id": rec.get("run_id"),
+            "state": rec.get("state"),
+            "raw_remote_state": rec.get("raw_remote_state"),
+            "collection_phase": rec.get("collection_phase"),
+            "ai_report_ready": bool((rec.get("ai_report") or {}).get("available")),
+            "has_html": bool((rec.get("ai_report") or {}).get("has_html")),
+        }),
     )
+    supervisor_ref["supervisor"] = direct_supervisor
     direct_monitor = direct_supervisor.monitor
     direct_supervisor.resume()
 
@@ -348,7 +385,15 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 return origin
             return None
 
-        def send_content(self, status, body, content_type="application/json; charset=utf-8", *, csp=None):
+        def _report_html_csp(self):
+            ancestors = " ".join(["'self'", *sorted(extra_origins)])
+            return (
+                "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+                "img-src data:; font-src data:; connect-src 'none'; object-src 'none'; "
+                f"base-uri 'none'; frame-ancestors {ancestors}; form-action 'none'"
+            )
+
+        def send_content(self, status, body, content_type="application/json; charset=utf-8", *, csp=None, extra_headers=None):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -356,6 +401,9 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy", csp or "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+            if isinstance(extra_headers, dict):
+                for hkey, hval in extra_headers.items():
+                    self.send_header(hkey, hval)
             cors_origin = self._cors_origin()
             if cors_origin is not None:
                 self.send_header("Access-Control-Allow-Origin", cors_origin)
@@ -393,7 +441,11 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             # Cross-origin web app MUST present the paired session token for EVERY API call (including GET & SSE).
             if is_web_origin:
                 supplied = self.headers.get("X-SpiceOwl-Token", "")
-                if not supplied and path == "/api/codex/events" and self.command == "GET":
+                if not supplied and self.command == "GET" and (
+                    path == "/api/codex/events"
+                    or path.endswith("/ai-report.html")
+                    or path == "/api/direct/scope-reports/html"
+                ):
                     q = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
                     supplied = (q.get("token") or [""])[0]
                 if not secrets.compare_digest(supplied, token):
@@ -502,7 +554,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 self.send_response(204)
                 self.send_header("Access-Control-Allow-Origin", cors_origin)
                 self.send_header("Access-Control-Allow-Private-Network", "true")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type, X-SpiceOwl-Token")
                 self.send_header("Access-Control-Max-Age", "600")
                 self.send_header("Vary", "Origin, Access-Control-Request-Private-Network")
@@ -697,7 +749,87 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     "runs": runs_list,
                     "monitor": direct_monitor.snapshot(),
                     "recovery_reports": direct_manager.list_recovery_reports(),
+                    "scope_reports": direct_manager.list_scope_reports(),
                 })
+            if path == "/api/direct/scope-reports" and self.command == "GET":
+                if url.query:
+                    raise DomainError("Scope reports list does not accept query parameters.")
+                return self.reply({"reports": direct_manager.list_scope_reports()})
+            if path == "/api/direct/scope-reports/read" and self.command == "GET":
+                query = parse_qs(url.query, keep_blank_values=True)
+                if set(query) - {"scope", "project", "testbench"} or not {"scope", "project"} <= set(query):
+                    raise DomainError("Scope report read requires scope, project, and optional testbench.")
+                scope = (query.get("scope") or [""])[0]
+                project = (query.get("project") or [""])[0]
+                testbench = (query.get("testbench") or [None])[0]
+                if testbench == "":
+                    testbench = None
+                return self.reply({
+                    "report": direct_manager.read_scope_report(
+                        scope=scope, project=project, testbench=testbench,
+                    ),
+                })
+            if path == "/api/direct/scope-reports/html" and self.command == "GET":
+                query = parse_qs(url.query, keep_blank_values=True)
+                if set(query) - {"scope", "project", "testbench", "download", "token"} or not {"scope", "project"} <= set(query):
+                    raise DomainError("Scope report HTML read requires scope, project, and optional testbench/download.")
+                scope = (query.get("scope") or [""])[0]
+                project = (query.get("project") or [""])[0]
+                testbench = (query.get("testbench") or [None])[0]
+                if testbench == "":
+                    testbench = None
+                rep = direct_manager.read_scope_report(scope=scope, project=project, testbench=testbench)
+                html_text = rep.get("html") if isinstance(rep, dict) else None
+                if not isinstance(html_text, str) or not html_text.strip():
+                    raise DomainError("No saved HTML scope report is available.", "not_found")
+                download = (query.get("download") or ["0"])[0] in ("1", "true", "yes")
+                slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{project}-{testbench}" if testbench else project).strip("-") or "scope"
+                extra = {"Content-Disposition": f'attachment; filename="{slug}-report.html"'} if download else None
+                return self.send_content(
+                    200,
+                    html_text.encode("utf-8"),
+                    "text/html; charset=utf-8",
+                    csp=self._report_html_csp(),
+                    extra_headers=extra,
+                )
+            if path == "/api/direct/scope-reports/generate" and self.command == "POST":
+                req = self.body()
+                allowed = {"scope", "project", "testbench", "custom_prompt"}
+                if set(req) - allowed or not {"scope", "project"} <= set(req):
+                    raise DomainError("Scope report generation requires scope, project, and optional testbench/custom_prompt.")
+                custom_prompt = req.get("custom_prompt")
+                if custom_prompt is not None and (not isinstance(custom_prompt, str) or len(custom_prompt) > 2000):
+                    raise DomainError("custom_prompt must be a string of at most 2000 characters.")
+                handoff = direct_supervisor.push_scope_report(
+                    scope=req["scope"],
+                    project=req["project"],
+                    testbench=req.get("testbench"),
+                    custom_prompt=custom_prompt,
+                )
+                return self.reply({"handoff": handoff}, 202)
+            if path == "/api/direct/scope-reports/save" and self.command == "POST":
+                req = self.body(max_bytes=4 * 1024 * 1024 + 65536)
+                allowed = {"scope", "project", "testbench", "title", "summary", "html", "markdown", "run_ids", "source"}
+                if set(req) - allowed or not {"scope", "project"} <= set(req):
+                    raise DomainError("Scope report save requires scope, project, and supported report fields only.")
+                saved = direct_manager.save_scope_report(
+                    scope=req["scope"],
+                    project=req["project"],
+                    testbench=req.get("testbench"),
+                    title=req.get("title"),
+                    summary=req.get("summary"),
+                    html=req.get("html"),
+                    markdown=req.get("markdown"),
+                    run_ids=req.get("run_ids"),
+                    source=req.get("source") or "user",
+                )
+                record_ui_patch("direct_scope_report_updated", {
+                    "scope": req["scope"],
+                    "project": req["project"],
+                    "testbench": req.get("testbench"),
+                    "title": saved.get("title"),
+                })
+                return self.reply({"report": saved})
             if path == "/api/direct/prepare" and self.command == "POST":
                 if url.query:
                     raise DomainError("Direct prepare does not accept query parameters.")
@@ -711,6 +843,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 payload = self.body(max_bytes=2 * 1024 * 1024 + 65536)
                 prep_kwargs, recheck_resources = _prepare_kwargs_from_payload(payload, allow_recheck=True)
                 run = direct_manager.submit(recheck_resources=recheck_resources, **prep_kwargs)
+                on_run_launched(run)
                 return self.reply({"run": run}, 202)
             if path == "/api/library/ssh-browse" and self.command == "POST":
                 from pathlib import Path as _Path
@@ -1100,13 +1233,55 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         wf = direct_manager.waveform_index(run_id, allow_remote=False)
                     except DomainError:
                         wf = None
-                    return self.reply({"run": run, "report": rep, "waveforms": wf, "monitor": direct_monitor.snapshot(run_id)})
+                    try:
+                        ai_rep = direct_manager.read_ai_report(run_id)
+                    except DomainError:
+                        ai_rep = None
+                    return self.reply({"run": run, "report": rep, "waveforms": wf, "ai_report": ai_rep, "monitor": direct_monitor.snapshot(run_id)})
                 if len(sub) == 1 and self.command == "DELETE":
                     try:
                         direct_monitor.unwatch(run_id)
                     except (DomainError, KeyError, ValueError):
                         pass
                     return self.reply(direct_manager.delete(run_id))
+                if len(sub) == 2 and sub[1] == "ai-report" and self.command == "GET":
+                    return self.reply({"run_id": run_id, "ai_report": direct_manager.read_ai_report(run_id)})
+                if len(sub) == 2 and sub[1] == "ai-report.html" and self.command == "GET":
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    if set(query) - {"download", "token"}:
+                        raise DomainError("AI report HTML accepts only optional download query parameter.")
+                    ai_rep = direct_manager.read_ai_report(run_id)
+                    html_text = ai_rep.get("html") if isinstance(ai_rep, dict) else None
+                    if not isinstance(html_text, str) or not html_text.strip():
+                        raise DomainError("No saved HTML AI report is available for this run.", "not_found")
+                    download = (query.get("download") or ["0"])[0] in ("1", "true", "yes")
+                    extra = {"Content-Disposition": f'attachment; filename="{run_id}-report.html"'} if download else None
+                    return self.send_content(
+                        200,
+                        html_text.encode("utf-8"),
+                        "text/html; charset=utf-8",
+                        csp=self._report_html_csp(),
+                        extra_headers=extra,
+                    )
+                if len(sub) == 2 and sub[1] == "ai-report" and self.command == "PUT":
+                    req = self.body(max_bytes=4 * 1024 * 1024 + 65536)
+                    if set(req) - {"title", "summary", "html", "markdown", "source"}:
+                        raise DomainError("AI report save accepts title, summary, html, markdown, and source only.")
+                    saved = direct_manager.save_ai_report(
+                        run_id,
+                        title=req.get("title"),
+                        summary=req.get("summary"),
+                        html=req.get("html"),
+                        markdown=req.get("markdown"),
+                        source=req.get("source") or "user",
+                    )
+                    record_ui_patch("direct_run_updated", {
+                        "run_id": run_id,
+                        "ai_report_ready": True,
+                        "has_html": bool(saved.get("has_html")),
+                        "title": saved.get("title"),
+                    })
+                    return self.reply({"run_id": run_id, "ai_report": saved, "run": direct_manager.read(run_id)})
                 if len(sub) == 2 and sub[1] == "inputs" and self.command == "GET":
                     res = direct_manager.read_inputs(run_id)
                     run_rec = res.get("run") if isinstance(res.get("run"), dict) else {}
@@ -1215,7 +1390,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     raise DomainError("This endpoint does not exist.", "not_found")
                 if len(sub) == 2 and self.command == "POST":
                     op = sub[1]
-                    req = self.body()
+                    req = self.body(max_bytes=4 * 1024 * 1024 + 65536 if op == "ai-report" else 16384)
                     if op == "stage":
                         if req:
                             raise DomainError("Stage takes an empty object.")
@@ -1223,14 +1398,15 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     if op == "stage-and-launch":
                         if set(req) - {"recheck_resources"} or ("recheck_resources" in req and type(req["recheck_resources"]) is not bool):
                             raise DomainError("Stage and launch accepts an empty object or boolean recheck_resources.")
-                        return self.reply(
-                            {"run": direct_manager.stage_and_launch(run_id, recheck_resources=bool(req.get("recheck_resources", False)))},
-                            202,
-                        )
+                        run = direct_manager.stage_and_launch(run_id, recheck_resources=bool(req.get("recheck_resources", False)))
+                        on_run_launched(run)
+                        return self.reply({"run": run}, 202)
                     if op == "launch":
                         if set(req) - {"recheck_resources"} or ("recheck_resources" in req and type(req["recheck_resources"]) is not bool):
                             raise DomainError("Launch accepts an empty object or boolean recheck_resources.")
-                        return self.reply({"run": direct_manager.launch(run_id, recheck_resources=req.get("recheck_resources"))}, 202)
+                        run = direct_manager.launch(run_id, recheck_resources=req.get("recheck_resources"))
+                        on_run_launched(run)
+                        return self.reply({"run": run}, 202)
                     if op == "status":
                         if req:
                             raise DomainError("Status check takes an empty object.")
@@ -1248,6 +1424,49 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         except DomainError:
                             rep = None
                         return self.reply({"run": collected, "report": rep}, 202)
+                    if op == "ai-report":
+                        if req.get("action") == "save":
+                            if set(req) - {"action", "title", "summary", "html", "markdown", "source"}:
+                                raise DomainError("AI report save accepts action, title, summary, html, markdown, and source only.")
+                            saved = direct_manager.save_ai_report(
+                                run_id,
+                                title=req.get("title"),
+                                summary=req.get("summary"),
+                                html=req.get("html"),
+                                markdown=req.get("markdown"),
+                                source=req.get("source") or "user",
+                            )
+                            record_ui_patch("direct_run_updated", {
+                                "run_id": run_id,
+                                "ai_report_ready": True,
+                                "has_html": bool(saved.get("has_html")),
+                                "title": saved.get("title"),
+                            })
+                            return self.reply({"run_id": run_id, "ai_report": saved, "run": direct_manager.read(run_id)})
+                        if set(req) - {"force", "custom_prompt"} or ("force" in req and type(req["force"]) is not bool):
+                            raise DomainError("AI report request accepts optional boolean force and custom_prompt.")
+                        custom_prompt = req.get("custom_prompt")
+                        if custom_prompt is not None and (not isinstance(custom_prompt, str) or len(custom_prompt) > 2000):
+                            raise DomainError("custom_prompt must be a string of at most 2000 characters.")
+                        run_cur = direct_manager.read(run_id)
+                        if run_cur.get("collection_phase") != "complete" and (
+                            run_cur.get("raw_remote_state") in {"completed", "failed", "timed_out", "cancelled", "preflight_failed"}
+                            or run_cur.get("state") in {
+                                "completed", "simulator_complete_pending_measurements", "failed",
+                                "timed_out", "cancelled", "cancelled_confirmed", "preflight_failed",
+                                "oom_killed", "failed_verified", "failed_unverified",
+                            }
+                        ):
+                            try:
+                                direct_manager.collect(run_id)
+                            except DomainError:
+                                pass
+                        handoff = direct_supervisor.push_completion_report(
+                            run_id,
+                            force=bool(req.get("force", True)),
+                            custom_prompt=custom_prompt,
+                        )
+                        return self.reply({"run_id": run_id, "handoff": handoff, "run": direct_manager.read(run_id)}, 202)
                     if op == "watch":
                         if set(req) - {"allow_collect"} or ("allow_collect" in req and type(req["allow_collect"]) is not bool):
                             raise DomainError("Watch accepts an empty object or boolean allow_collect.")
@@ -1375,7 +1594,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             except Exception:
                 self.reply({"error": {"code": "internal_error", "message": "The local operation failed. Stored history is preserved."}}, 500)
 
-        do_GET = do_POST = do_PATCH = do_DELETE = do_OPTIONS = handle_request
+        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = handle_request
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     original_close = server.server_close

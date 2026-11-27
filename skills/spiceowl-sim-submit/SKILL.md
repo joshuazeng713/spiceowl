@@ -62,10 +62,25 @@ description: Fast, standardized Virtuoso-free simulation submission SOP for Spic
   - 同回合提交的多个任务自动共享同一提交组（`submission_group_id = turn:<turn_id>`），在「仿真总览」按 Project/TB 整洁归档。
 - 若已有 `prepared` 状态的任务，使用 `spiceowl_direct_control(operation="stage_and_launch", arguments={"run_id": "<run_id>"})` 一键上传并启动。
 
-### Step 5：简明汇报与按需后处理技能
-- 提交后简明汇报 `run_id`、目标主机（`host_id`）、项目/TB（`project` / `testbench`）及当前状态（`state`），并提示用户在网页「仿真总览（`overview`）」跟踪进度。
-- 仿真完成并 `collect` 后，按需调用内置后处理技能：
-  - 波形读取/周期分析/模拟指标：`spiceowl_direct_read`（`waveform_index`、`waveform_query`、`waveform_cycles`、`waveform_measure`、`report`）；
+### Step 5：自动监控、自动拉取与自动汇报归档（Auto-Watch → Auto-Collect → Auto-Report）
+- 提交后简明汇报 `run_id`、目标主机（`host_id`）、项目/TB（`project` / `testbench`）及当前状态（`state`），并提示用户在网页「仿真总览（`overview`）」实时查看进度。
+- **自动监控与自动回收**：仿真提交后，SpiceOwl 后台每数秒自动轮询远端状态，任务进入终态后自动执行 `collect` 拉取结果，并向 Agent 推送 `[SpiceOwl 仿真完成自动汇报 · <run_id>]` 通知（提交后无需手动循环轮询）。
+- **自动撰写并归档交互式 HTML AI 工程报告**：收到 `[SpiceOwl 仿真完成自动汇报 · <run_id>]` 通知后，读取 `spiceowl_direct_read(operation="report")` 并按需调用 `waveform_index`/`waveform_query`/`waveform_measure` 提取真实波形与指标，遵循 `spiceowl-sim-report` 技能规范生成自包含交互式 HTML 工程报告（含 KPI 卡片、Spec 表格与真实内联 SVG/base64 PNG 波形图，零外部 CDN），调用零审批工具归档至总览任务卡片：
+  ```json
+  {
+    "operation": "save_ai_report",
+    "arguments": {
+      "run_id": "<run_id>",
+      "title": "<简短报告标题>",
+      "summary": "<一句话工程结论>",
+      "html": "<!doctype html><html lang=\"zh-CN\">...</html>",
+      "markdown": "## 仿真结论与关键指标"
+    }
+  }
+  ```
+  如需汇总同一 Testbench 或整个 Project 下多次仿真，调用零审批工具 `spiceowl_direct_control(operation="save_scope_report", ...)`；详细排版与图表规范见 `spiceowl_direct_read(operation="skill", arguments={"name": "spiceowl-sim-report"})`。后续随时可通过 `spiceowl_direct_read(operation="ai_report" | "scope_reports" | "scope_report", ...)` 回读已归档报告。
+- **按需后处理技能**：
+  - 波形读取/周期分析/模拟指标：`spiceowl_direct_read`（`waveform_index`、`waveform_query`、`waveform_cycles`、`waveform_measure`、`report`、`ai_report`）；
   - 确定性 ADC / 频谱 / 线性度 / 时域分析：`spiceowl_adctools`（`coherent_fft`、`sine_fit4`、`histogram_linearity`、`tran_metrics`、`ac_metrics`、`dc_op_metrics` 等）；
   - PVT / Monte Carlo 批量扫描：`spiceowl_direct_control`（`batch_prepare`、`batch_dispatch`、`batch_refresh`、`batch_cancel`）与 `spiceowl_direct_read`（`batch_list`、`batch_inspect`、`batch_report`）。
 

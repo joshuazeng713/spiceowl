@@ -19,8 +19,17 @@ body.spice-theme{
   backdrop-filter:blur(10px);
 }
 .spice-theme .site-header a{color:#1b3b37;text-decoration:none}
-.spice-theme .site-header nav{gap:24px;font-size:14px;align-items:center}
+.spice-theme .site-header nav{gap:18px;font-size:14px;align-items:center}
 .spice-theme .site-header nav a:hover{color:#157461;text-decoration:none}
+.spice-theme .site-header nav a.nav-repo{
+  padding:6px 12px;
+  border-radius:8px;
+  border:1px solid #c3dbd1;
+  background:#ffffff;
+  color:#153934;
+  font-weight:600;
+}
+.spice-theme .site-header nav a.nav-repo:hover{border-color:#157461;color:#115d4e;background:#f3fbf7}
 .spice-theme .site-header nav a.nav-cta{
   padding:7px 14px;
   border-radius:8px;
@@ -45,7 +54,9 @@ body.spice-theme{
   border-color:#d5e4dd;
   font-size:14px;
 }
+.spice-theme .site-footer .footer-links{display:flex;gap:22px;flex-wrap:wrap;align-items:center}
 .spice-theme .site-footer a{color:#157461;font-weight:650}
+.spice-theme .site-footer a:hover{text-decoration:underline}
 
 .skip-link{position:fixed!important;top:-100px!important;left:18px;z-index:100}
 .skip-link:focus{top:10px!important}
@@ -277,9 +288,6 @@ body.spice-theme{
 .so-film-toggle:hover{background:var(--accent-dark);border-color:var(--accent-dark)}
 .so-film-toggle[aria-expanded=true]{background:#edf7f3;color:#115d4e;box-shadow:none}
 .so-play-dot{font-size:12px}
-.so-film-links{display:flex;gap:14px;flex-wrap:wrap;font-size:13px}
-.so-film-links a{color:#157461;font-weight:600}
-.so-film-links a:hover{text-decoration:underline}
 .so-film-drawer{margin-top:20px;padding-top:20px;border-top:1px solid #e1ede8}
 .so-film-drawer .so-demo-stage{border-radius:12px;overflow:hidden;border:1px solid #cde0d8}
 
@@ -609,10 +617,6 @@ body.spice-theme{
 }
 
 .so-frame-foot{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  gap:14px;
   padding:14px 18px 16px;
   background:#fbfdfc;
   border-top:1px solid #e4f0ea;
@@ -623,14 +627,6 @@ body.spice-theme{
   color:var(--muted);
 }
 .so-frame-foot p strong{color:#153632;font-weight:680}
-.so-dl-slot{flex:none;padding-top:2px}
-.so-dl-link{
-  font-size:12.5px;
-  font-weight:650;
-  color:#157461;
-  white-space:nowrap;
-}
-.so-dl-link:hover{text-decoration:underline}
 
 /* Chapter 09 Finale Treatment */
 .so-chapter-finale{
@@ -699,8 +695,9 @@ body.spice-theme{
     font-size:12.5px;
     flex:none;
   }
-  .spice-theme .site-header nav a:not(.nav-cta){display:none}
-  .spice-theme .site-header nav a.nav-cta{display:inline-flex;padding:7px 12px;font-size:12.5px;white-space:nowrap}
+  .spice-theme .site-header nav a:not(.nav-cta):not(.nav-repo){display:none}
+  .spice-theme .site-header nav a.nav-repo{display:inline-flex;padding:6px 10px;font-size:12px;white-space:nowrap}
+  .spice-theme .site-header nav a.nav-cta{display:inline-flex;padding:7px 11px;font-size:12px;white-space:nowrap}
   .spice-theme .static-label{display:none}
   .guide.spice{padding:0 16px 24px;width:100%;max-width:100%;overflow-x:clip}
   .spice-theme .site-footer{padding:20px 16px 30px;flex-direction:column;gap:10px}

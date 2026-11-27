@@ -8,13 +8,13 @@
 <p align="center">An open-source, web-first AI Agent simulation workbench for analog &amp; mixed-signal IC engineers.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/direct-execution.md">Direct Execution &amp; Recovery</a> · <a href="docs/cross-platform.md">Cross-Platform &amp; CI</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open SpiceOwl Web Workbench</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>Watch Product Film &amp; 10-Chapter Demos</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">Product Showcase</a> · <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">Download HD Videos</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open SpiceOwl Web Workbench</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>Watch Product Film &amp; Workflow Demos</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">Product Showcase</a> · <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">Download HD Videos</a></p>
 
 SpiceOwl is a web-first simulation management workbench natively supporting **macOS, Linux, and Windows**. [`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/) is the **single formal user interface** — no second local website or daily terminal commands. When you want to connect your own SSH/LSF/Slurm EDA cluster or your local Codex Agent, install the headless **SpiceOwl Connector** once (macOS: double-click `Install SpiceOwl Connector.command`; Windows: double-click `Install SpiceOwl Connector.bat`; registers `spiceowl://` without admin privileges and stays silently on `127.0.0.1:8765`), then click **"Connect local connector"** inside the web workbench.
 
-## Product Launch Film & 10-Chapter Video Walkthrough
+## Product Launch Film & End-to-End Video Walkthrough
 
-> **Watch the full voiced product launch film (`10:45`, HD 1600×812 with Chinese voiceover + original soundtrack) or jump straight into any of the 10 real-cluster workflow chapters interactively on the [Product Showcase Page](https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos).**
+> **Watch the full voiced product launch film (`10:45`, HD 1600×812 with Chinese voiceover + original soundtrack) or explore each workflow stage interactively on the [Product Showcase Page](https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos).**
 
 <p align="center">
   <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos">
@@ -25,10 +25,10 @@ SpiceOwl is a web-first simulation management workbench natively supporting **ma
 <p align="center">
   <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>▶ Watch Full Launch Film Inline (10:45)</strong></a> ·
   <a href="https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/SpiceOwl_Launch_Film.mp4">Direct MP4 (59.8 MB)</a> ·
-  <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">All 11 Release Assets</a>
+  <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">All Release Assets</a>
 </p>
 
-| # | Chapter | Duration | What It Demonstrates | Watch |
+| # | Stage | Duration | What It Demonstrates | Watch |
 | :---: | --- | :---: | --- | --- |
 | **01** | **30-Second Zero-Config Local Connect** | `0:34` | Double-click `spiceowl://` Connector once, silent `127.0.0.1:8765` pairing & local Agent bridge | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-01) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/01_initial_connect.mp4) |
 | **02** | **1-Minute EDA Cluster Onboarding** | `0:41` | Visual SSH Wizard with `ProxyJump` reuse, automatic legacy `ssh-rsa` fallback & 5-point live probe | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-02) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/02_connect_servers.mp4) |
@@ -53,11 +53,11 @@ SpiceOwl is a web-first simulation management workbench natively supporting **ma
 
 ## Product showcase
 
-**[Explore SpiceOwl Product Philosophy & 9-Chapter Video Walkthrough](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+**[Explore SpiceOwl Product Philosophy & End-to-End Video Walkthrough](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
 
 - Starts with SpiceOwl's end-to-end collaboration architecture and a compact expandable bar for the **10:45 Full Product Launch Film**.
-- Walks through all **9 chapters** in a side-by-side editorial layout: **left column** explains the capability boundary and design philosophy, while **right column** streams the real-cluster hands-on demonstration video on demand (zero video bandwidth consumed until clicked).
-- Chapter 04 includes an interactive dual-path switcher pairing **04a (AI Fuzzy Search)** and **04b (Read-Only Web Library Manager)**, culminating in Chapter 09's scientific redlines and self-evolving `night_watch.py` rule demo.
+- Walks through the complete simulation workflow in a side-by-side editorial layout: **left column** explains the capability boundary and design philosophy, while **right column** streams the real-cluster hands-on demonstration video on demand (zero video bandwidth consumed until clicked).
+- The circuit-opening stage includes an interactive dual-path switcher pairing **AI Fuzzy Search (04a)** and **Read-Only Web Library Manager (04b)**, culminating in the scientific redlines and self-evolving `night_watch.py` rule demo.
 
 **Optional design integration:** [CircuitGit — AI-native local circuit design and Git version management](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html). Its showcase explains how a design workbench can embed SpiceOwl's tools alongside local circuit editing, Git history, and testbench CI without starting a second Agent.
 

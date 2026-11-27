@@ -1,29 +1,37 @@
-/* SpiceOwl 9-chapter editorial walkthrough & on-demand click-to-play video controller. Zero external IO until clicked. */
+/* SpiceOwl end-to-end editorial walkthrough & on-demand click-to-play video controller. Zero external IO until clicked. */
 const root = document.getElementById('product-guide');
 const byId = id => document.getElementById(id);
 const RELEASE_VIDEO_BASE = 'https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/';
-const RELEASE_TAG_URL = 'https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1';
+const REPO_URL = 'https://github.com/spiceowl-dev/spiceowl';
 
 const CH4_PATHS = {
   '04a': {
     file: '04a_agent_open_workspace.mp4',
     poster: './demo-poster-04a.webp',
-    title: '第 04a 节：一句话让 AI 打开远端电路',
-    aria: '播放第 04a 节操作演示：一句话让 AI 打开远端电路 (0分45秒)',
-    alt: '第 04a 节演示预览：一句话打开远端电路，彻底告别卡顿的 Virtuoso',
+    title: '04a · 一句话让 AI 打开远端电路',
+    aria: '播放实操演示：一句话让 AI 打开远端电路 (0分45秒)',
+    alt: '实操演示预览：一句话打开远端电路，彻底告别卡顿的 Virtuoso',
     howtoLabel: '具体操作方法（方式 A · AI 驱动）：',
     howtoText: '将对话权限切至「满血全权」→ 用自然语言说出电路关键词 → 观察 AI 检索远端 cds.lib 并将完整 Spectre 网表与 Maestro 配置自动填满右侧工作台。',
   },
   '04b': {
     file: '04b_manual_library_manager.mp4',
     poster: './demo-poster-04b.webp',
-    title: '第 04b 节：网页只读远程 Library Manager',
-    aria: '播放第 04b 节操作演示：网页只读远程 Library Manager (0分42秒)',
-    alt: '第 04b 节演示预览：想自己挑电路？网页里也有轻快只读的 Library Manager',
+    title: '04b · 网页只读远程 Library Manager',
+    aria: '播放实操演示：网页只读远程 Library Manager (0分42秒)',
+    alt: '实操演示预览：想自己挑电路？网页里也有轻快只读的 Library Manager',
     howtoLabel: '具体操作方法（方式 B · 网页只读库管理）：',
     howtoText: '打开远程 Library Manager 自动解析工程内全部 cds.lib 电路库 → 查看标注的 schematic 与 Maestro 视图 → 一键「从 Schematic 导出并导入」。',
   },
 };
+
+function hydrateRepoLinks() {
+  document.querySelectorAll('[data-github-link]').forEach(link => {
+    link.href = REPO_URL;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  });
+}
 
 function announce(message) {
   const status = byId('demo-live-status');
@@ -93,40 +101,12 @@ function renderPoster(stage, meta) {
   stage.replaceChildren(btn);
 }
 
-function setDownloadLink(slot, file, text = '下载 MP4 ↗') {
-  if (!slot || !file) return;
-  const link = document.createElement('a');
-  link.className = 'so-dl-link';
-  link.href = RELEASE_VIDEO_BASE + file;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  link.textContent = text;
-  slot.replaceChildren(link);
-}
-
 function initFullFilmBanner() {
   const toggleBtn = byId('film-toggle-btn');
   const toggleLabel = byId('film-toggle-label');
   const drawer = byId('film-drawer');
   const stage = byId('film-stage');
-  const links = byId('film-links');
   if (!toggleBtn || !drawer || !stage) return;
-
-  if (links) {
-    const dl = document.createElement('a');
-    dl.href = RELEASE_VIDEO_BASE + stage.dataset.videoFile;
-    dl.target = '_blank';
-    dl.rel = 'noopener noreferrer';
-    dl.textContent = '下载完整 MP4 (59.8 MB)';
-
-    const all = document.createElement('a');
-    all.href = RELEASE_TAG_URL;
-    all.target = '_blank';
-    all.rel = 'noopener noreferrer';
-    all.textContent = '全部 11 个视频 Release ↗';
-
-    links.replaceChildren(dl, all);
-  }
 
   const openFilm = (autoplay = true) => {
     drawer.hidden = false;
@@ -162,7 +142,6 @@ function initChapter04Tabs() {
   const stage = byId('ch4-stage');
   const panel = byId('panel-04');
   const howto = byId('ch4-howto');
-  const dlSlot = byId('ch4-dl-slot');
   if (!tabs.length || !stage) return null;
 
   const activate = (key, focusTab = false) => {
@@ -189,8 +168,7 @@ function initChapter04Tabs() {
       strong.textContent = meta.howtoLabel;
       howto.replaceChildren(strong, document.createTextNode(meta.howtoText));
     }
-    setDownloadLink(dlSlot, meta.file);
-    announce('已切换第 04 节演示：' + meta.title);
+    announce('已切换电路打开演示：' + meta.title);
   };
 
   tabs.forEach((tab, index) => {
@@ -216,9 +194,6 @@ function initChapterFrames() {
     const stage = chapter.querySelector('.so-demo-stage');
     const posterBtn = stage?.querySelector('.so-poster-btn');
     const playChip = chapter.querySelector('[data-play-trigger]');
-    const dlSlot = chapter.querySelector('.so-dl-slot');
-
-    if (dlSlot?.dataset.dlFile) setDownloadLink(dlSlot, dlSlot.dataset.dlFile);
 
     posterBtn?.addEventListener('click', () => mountVideo(stage, true));
     playChip?.addEventListener('click', () => mountVideo(stage, true));
@@ -268,6 +243,7 @@ function initHashNavigation(activateCh4) {
   window.addEventListener('hashchange', () => handleHash(true));
 }
 
+hydrateRepoLinks();
 if (root) {
   initFullFilmBanner();
   initChapterFrames();

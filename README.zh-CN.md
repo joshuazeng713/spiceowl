@@ -8,13 +8,13 @@
 <p align="center">专为模拟 / 混合信号 IC 工程师打造的开源、Web 优先 AI Agent 仿真工作台。</p>
 <p align="center"><a href="README.md">English</a> · 简体中文 · <a href="docs/direct-execution.md">直连执行与有界恢复</a> · <a href="docs/cross-platform.md">跨平台与自动测试</a> · <a href="docs/architecture.md">架构设计</a> · <a href="docs/roadmap.md">开发路线</a> · <a href="CONTRIBUTING.md">参与贡献</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>打开 SpiceOwl 正式网页工作台</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>观看完整宣传片与 10 节实录</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">产品展示页</a> · <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">下载高清视频</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>打开 SpiceOwl 正式网页工作台</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>观看完整宣传片与全流程实录</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">产品展示页</a> · <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">下载高清视频</a></p>
 
 SpiceOwl 原生支持 **macOS、Linux 与 Windows**，采用 **Web 优先** 架构：**[`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/) 就是唯一的正式产品界面**，日常无需命令行或切换第二套本地网址。需要连接自己的 SSH/LSF/Slurm EDA 集群或本机 Codex Agent 时，只需双击安装一次无界面 **SpiceOwl Connector**（macOS 双击 `Install SpiceOwl Connector.command`，Windows 双击 `Install SpiceOwl Connector.bat`，免管理员权限注册 `spiceowl://` 协议并在 `127.0.0.1:8765` 静默待命），从此全部操作在浏览器内一键直连完成。
 
-## 产品宣传片与 10 节全流程实战视频
+## 产品宣传片与全流程实战视频
 
-> **观看带自然 AI 语音解说 + 原创环境配乐的完整产品宣传片（`10:45`，1600×812 HD），或前往[产品展示页视频剧场](https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos)按章节直接在线播放。**
+> **观看带自然 AI 语音解说 + 原创环境配乐的完整产品宣传片（`10:45`，1600×812 HD），或前往[产品导览页](https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos)按工作流环节在线播放。**
 
 <p align="center">
   <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos">
@@ -25,20 +25,20 @@ SpiceOwl 原生支持 **macOS、Linux 与 Windows**，采用 **Web 优先** 架�
 <p align="center">
   <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>▶ 在线观看完整宣传片 (10:45)</strong></a> ·
   <a href="https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/SpiceOwl_Launch_Film.mp4">直链下载 MP4 (59.8 MB)</a> ·
-  <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">查看全部 11 个高清视频</a>
+  <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">查看全部高清视频</a>
 </p>
 
-| 章节 | 主题 | 时长 | 核心演示内容 | 观看 |
+| 环节 | 主题 | 时长 | 核心演示内容 | 观看 |
 | :---: | --- | :---: | --- | --- |
 | **01** | **30 秒零配置连接本机** | `0:34` | 双击安装一次无界面 `spiceowl://` Connector，浏览器 `127.0.0.1` 静默配对并打通本机 Agent | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-01) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/01_initial_connect.mp4) |
-| **02** | **1 分钟纳管整套 EDA 集群** | `0:41` | 可视化 SSH 向导自动识别旧版跳板机 RSA 兼容，新增节点自动复用跳板机与账号，5 项全绿校验 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-02) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/02_connect_servers.mp4) |
+| **02** | **1 分钟管理整套 EDA 集群** | `0:41` | 可视化 SSH 向导自动识别旧版跳板机 RSA 兼容，新增节点自动复用跳板机与账号，5 项全绿校验 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-02) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/02_connect_servers.mp4) |
 | **03** | **集群算力与 FlexLM License 洞察** | `0:40` | 512 核 CPU/内存/活跃 EDA 进程 + 多台 FlexLM 许可席位一屏透明，自动推荐最空闲节点给 AI | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-03) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/03_resource_monitor.mp4) |
 | **04a** | **一句话让 AI 打开远端电路** | `0:45` | 脱离卡顿 Virtuoso GUI，满血全权模式模糊检索 `cds.lib` 并隔离导出网表与 Maestro，零占 ADE 许可 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-04a) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/04a_agent_open_workspace.mp4) |
 | **04b** | **网页只读远程 Library Manager** | `0:42` | 浏览器直接浏览远端目录与 `cds.lib`，自动标注 `schematic/maestro`，隔离 `Cadence si` + 只读 SKILL 导出 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-04b) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/04b_manual_library_manager.mp4) |
 | **05** | **批量温度扫描与自动出报闭环** | `0:51` | 一句话提交三温度扫描，自动分组派发、每 4 秒自动巡检、收齐波形并推送 AI 自动生成交互报告 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-05) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/05_submit_sim_and_report.mp4) |
 | **06** | **交互式仿真报告与 102 KB 离线分享** | `0:43` | 单点矢量波形报告 + 多温度「TB 综合报告」横向对比，一键导出 102 KB 独立离线 HTML 随时评审 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-06) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/06_simulation_reports.mp4) |
 | **07** | **自由创作定制温度特性曲线** | `0:57` | 一句话让 AI 现写统一 PSF 测量脚本，提取并绘制增益、±0.1% 建立时间、10–90% 上升时间与 VDD 功耗曲线 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-07) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/07_custom_ai_report.mp4) |
-| **08** | **自然语言编程夜间值守脚本** | `0:58` | 透明可控的 `night_watch.py` 规则引擎，自然语言修改策略边界，强制隔离沙箱 Dry-Run 验真后生效 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-08) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/08_agent_edit_night_watch.mp4) |
+| **08** | **自然语言编程夜间值守脚本** | `0:58` | 透明可读的 `night_watch.py` 规则引擎，自然语言修改策略边界，强制隔离沙箱 Dry-Run 验真后生效 | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-08) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/08_agent_edit_night_watch.mp4) |
 | **09** | **压轴实战：守红线 & 沉淀永久规则** | `3:25` | 遇未知 `STB` 报错坚决拒改原始网表并完整留证；一句授权后沉淀为永久 Python 规则自动恢复出报，跳过项诚实标 `Skipped / Unverified` | [在线播放](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-09) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/09_night_watch_new_case.mp4) |
 
 ## 最新核心能力
@@ -46,18 +46,18 @@ SpiceOwl 原生支持 **macOS、Linux 与 Windows**，采用 **Web 优先** 架�
 - **Code-First 可进化夜间值守（`night_watch.py`）、沙箱 Dry-Run 与一键启停**：用透明可读的本地 Python 规则引擎（`src/spiceowl/night_watch_script.py`）取代黑盒勾选框。顶栏支持一键「▶ 开启 / ⏸ 暂停夜间值守」；支持自然语言让 Agent 调整排队超时、OOM 内存上限、主机迁移策略或新增自定义排障规则（搭配单次调用 `update_watch_config` 与 `spiceowl-quick-ops` / `spiceowl-night-watch` Skill 极速响应），所有修改强制先经**独立沙箱 Dry-Run 验真**后生效。遇到触及电路定义边界的未知报错时，严守科学红线拒改网表与验收标准并完整留证；获工程师一句授权即可沉淀为永久规则，后续自动恢复有效波形并诚实标注跳过项为 `Skipped / Unverified`。
 - **双模式交互式 HTML 报告引擎（快速报告 & 自由创作）、TB 综合横评与 102 KB 离线导出**：仿真结束后 4 秒自动巡检收尾并自动推送给 AI 出报（`src/spiceowl/report_builder.py`、`spiceowl-sim-report-fast`、`spiceowl-sim-report`）。**快速模式**秒出带矢量波形、KPI 卡片与五维诊断的交互网页，并自动归档至多工况「TB 综合报告」，支持一键导出仅约 **102 KB 的单文件独立离线 HTML**（同事和导师双击即可悬停读数与开关曲线）；**自由创作模式**允许用大白话要求现算原始 PSF 并定制任意工程趋势曲线（如增益、建立时间、上升时间、VDD 功耗随温度变化）并自动回写报告库。
 - **双路径零 Virtuoso 打开远端电路（AI 模糊搜库 + 网页只读 Library Manager）**：无需启动卡顿的 Virtuoso GUI，也**零占用昂贵的 ADE 交互许可**。既可一句话让 AI 跨目录模糊检索远端 `cds.lib` 并隔离导出网表与 Maestro 配置，也可直接在网页**只读远程 Library Manager** 中点选浏览远端目录（自动标注 `schematic` / `maestro`，隔离调用 `Cadence si` + 只读 SKILL 导出，绝不修改原始设计库），同时兼容本地 `.scs / .sp / .cir` 网表导入。
-- **可视化 SSH 集群向导与实时 FlexLM SPICE License 监控**：告别手写 `~/.ssh/config` 与反复输密码，1 分钟完成多机纳管——自动复用 `ProxyJump` 跳板机与账号、自动识别旧版 OpenSSH 并启用 `ssh-rsa` 兼容、仅本机托管免密密钥（密码绝不落盘）并完成 5 项全绿连通校验（`onboarding_wizard.py`）。服务器资源页并行探测多台计算节点的 CPU、内存、磁盘、活跃 EDA 进程及多台 **FlexLM 许可服务**（`Spectre` / `Spectre X` / `ADE Assembler` / `ADE Explorer` / `Spectre GXL`），自动向 AI 推荐最空闲主机（`host_activity.py`）。
+- **可视化 SSH 集群向导与实时 FlexLM SPICE License 监控**：告别手写 `~/.ssh/config` 与反复输密码，1 分钟完成多机接入与管理——自动复用 `ProxyJump` 跳板机与账号、自动识别旧版 OpenSSH 并启用 `ssh-rsa` 兼容、仅本机托管免密密钥（密码绝不落盘）并完成 5 项全绿连通校验（`onboarding_wizard.py`）。服务器资源页并行探测多台计算节点的 CPU、内存、磁盘、活跃 EDA 进程及多台 **FlexLM 许可服务**（`Spectre` / `Spectre X` / `ADE Assembler` / `ADE Explorer` / `Spectre GXL`），自动向 AI 推荐最空闲主机（`host_activity.py`）。
 - **精简 4 页统一工作台、三级 Codex 权限模式与 5 大内置 Skill**：将未连接预览与已连接工作台统一为 4 个核心页面（`首页与连接` / `服务器资源` / `仿真工作台` / `历史任务与报告`），提供 **安全托管 / 满血受控 / 满血全权** 三级权限与实时终端流式输出，内置 5 大 Skill（`spiceowl-quick-ops`、`spiceowl-sim-submit`、`spiceowl-sim-report-fast`、`spiceowl-sim-report`、`spiceowl-night-watch`），原生兼容远端 `csh / tcsh`、Python 2.7 与自动发现 Spectre。
 - **二进制大波形原位解析（PSF Binary / PSFXL）、无损模拟量测（M3）与 PVT / Monte Carlo 批量管理**（[直连执行指南](docs/direct-execution.md)）：无需下载数 GB 原始波形，支持远端 Linux 原位 `seek()` 流式读取，全局 Min-Max 包络绝不丢毛刺、拖拽缩放自动切 100% 原始无损点并内置 **Cycle Slicer** 异常周期钻取；内置通用无损模拟量测配方库与保守良率 / `Cpk` 统计。
 - **原生跨平台（macOS / Linux / Windows）与 17 项全功能 CI 矩阵**（[跨平台与测试指南](docs/cross-platform.md)）：通过 [`src/spiceowl/_platform.py`](src/spiceowl/_platform.py) 原生支持三端（Windows 无需 WSL），每次提交自动运行 Ubuntu / macOS / Windows 单元测试及 Chromium Playwright 桌面端与 390px 移动端 E2E 回归（[`.github/workflows/tests.yml`](.github/workflows/tests.yml)）。
 
 ## 产品展示
 
-**[打开 SpiceOwl 产品理念与九节全流程导览页](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+**[打开 SpiceOwl 产品理念与全流程导览页](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
 
 - 开篇凝练呈现 SpiceOwl 端到端协作架构，并内置可按需展开的 **10:45 完整产品宣传片** 快捷播放条。
-- 围绕全部 **9 节核心实录** 采用**左文右视频**排版：左侧拆解功能边界、设计理念与工程思想，右侧以真实集群录像直观演示具体操作方法（视频按需流式加载，打开页面零额外流量消耗）。
-- 第 04 节内置双路径标签无缝切换 **04a（AI 对话模糊搜库）** 与 **04b（网页只读 Library Manager）**，并以第 09 节“未知故障严守科学红线 + 一句话沉淀永久规则”收官。
+- 围绕完整**端到端仿真工作流**采用**左文右视频**排版：左侧拆解功能边界、设计理念与工程思想，右侧以真实集群录像直观演示具体操作方法（视频按需流式加载，打开页面零额外流量消耗）。
+- 打开电路环节内置双路径标签无缝切换 **AI 对话模糊搜库（04a）** 与 **网页只读 Library Manager（04b）**，并以“未知故障严守科学红线 + 一句话沉淀永久规则”压轴收官。
 
 **可选设计工作台集成：** [CircuitGit · AI-native 本地电路设计与 Git 版本管理](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html)。作为子模块嵌入时，SpiceOwl 直接复用其原有 Codex 窗口，绝不启动第二个平行 Agent。
 

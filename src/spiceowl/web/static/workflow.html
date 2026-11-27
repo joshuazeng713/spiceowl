@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self' https://github.com https://*.githubusercontent.com; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
-  <meta name="description" content="SpiceOwl（仿真夜枭）产品架构与九节全流程实录导览：从 30 秒本地直连、集群算力与许可洞察、零 Virtuoso 打开电路、批量仿真与交互报告，到守红线可进化的夜间值守。">
-  <title>SpiceOwl · 你去休息，仿真我盯 — 产品理念与九节全流程导览</title>
+  <meta name="description" content="SpiceOwl（仿真夜枭）产品架构与全流程功能导览：从 30 秒本地直连、集群算力与许可洞察、零 Virtuoso 打开电路、批量仿真与交互报告，到守红线可进化的夜间值守。">
+  <title>SpiceOwl · 你去休息，仿真我盯 — 产品理念与全流程导览</title>
   <link rel="icon" href="./owl.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./workflow.css">
   <script type="module" src="./workflow.js"></script>
-  <link rel="stylesheet" href="./guide.css?v=3">
-  <script type="module" src="./guide.js?v=3"></script>
+  <link rel="stylesheet" href="./guide.css?v=4">
+  <script type="module" src="./guide.js?v=4"></script>
 </head>
 <body class="spice-theme">
   <a class="skip-link" href="#product-guide">跳到主要内容</a>
@@ -23,7 +23,8 @@
     <nav aria-label="页面导航">
       <a href="#so-overview">架构总览</a>
       <a href="#so-videos">完整宣传片</a>
-      <a href="#so-chapters">九节导览</a>
+      <a href="#so-chapters">全流程导览</a>
+      <a class="nav-repo" data-github-link>GitHub 仓库 ↗</a>
       <a class="nav-cta" href="./index.html">进入工作台 →</a>
     </nav>
     <span class="static-label"><span aria-hidden="true">●</span> 静态导览 · 视频按需加载</span>
@@ -34,12 +35,13 @@
     <section class="g-hero" id="so-overview">
       <div class="g-hero-copy">
         <p class="g-kicker">SPICEOWL · YOU SLEEP. SPICEOWL KEEPS WATCH.</p>
-        <h1>让可控的 AI，帮你<br><em>管好每一次仿真。</em></h1>
+        <h1>让 AI 帮你<br><em>管好每一次仿真。</em></h1>
         <p class="g-lead">SpiceOwl 是专为模拟 / 混合信号 IC 工程师打造的开源 Agent 仿真工作台。浏览器即唯一正式入口，30 秒打通本机 Connector 与远端 EDA 集群——将算力与 License 洞察、零交互许可导网表、一句话批量提交、交互式工程报告与可进化的夜间值守，沉淀为有证据、守红线的工程闭环。</p>
         <div class="g-actions">
           <a class="primary" href="#so-videos" data-open-film>▶ 观看完整宣传片 (10:45)</a>
-          <a href="#so-chapters">按 9 节深入浏览 ↓</a>
+          <a href="#so-chapters">浏览全流程能力 ↓</a>
           <a href="./index.html">打开正式工作台 →</a>
+          <a data-github-link>GitHub 仓库 ↗</a>
         </div>
       </div>
 
@@ -80,15 +82,14 @@
       <div class="so-film-row">
         <div class="so-film-copy">
           <span class="g-pill">完整产品宣传片 · 10:45</span>
-          <h2 id="film-banner-title">想一次看完九节完整串讲？</h2>
-          <p>完整版由开篇愿景、全部 9 节真实集群操作实录（含痛点 / 方案 / 效率对比卡片与第 09 节双转折压轴实战）无缝串联，配 AI 语音解说与原创环境配乐。</p>
+          <h2 id="film-banner-title">想一次看完完整全流程串讲？</h2>
+          <p>完整版由开篇愿景与端到端真实集群操作实录（含痛点 / 方案 / 效率对比卡片，以及未知故障守红线自进化压轴实战）无缝串联，配 AI 语音解说与原创环境配乐。</p>
         </div>
         <div class="so-film-actions">
           <button type="button" class="so-film-toggle" id="film-toggle-btn" aria-expanded="false" aria-controls="film-drawer">
             <span class="so-play-dot" aria-hidden="true">▶</span>
             <span id="film-toggle-label">展开播放完整宣传片 (10:45)</span>
           </button>
-          <div class="so-film-links" id="film-links"></div>
         </div>
       </div>
       <div class="so-film-drawer" id="film-drawer" hidden>
@@ -96,17 +97,17 @@
       </div>
     </section>
 
-    <!-- 9-CHAPTER EDITORIAL WALKTHROUGH -->
+    <!-- END-TO-END EDITORIAL WALKTHROUGH -->
     <section class="so-chapters" id="so-chapters" aria-labelledby="chapters-heading">
       <header class="so-chapters-head">
         <div>
-          <p class="g-kicker">NINE-CHAPTER PRODUCT WALKTHROUGH</p>
-          <h2 id="chapters-heading">围绕九节实录，拆解 SpiceOwl 的核心功能与设计思想</h2>
+          <p class="g-kicker">END-TO-END WORKFLOW &amp; DESIGN PHILOSOPHY</p>
+          <h2 id="chapters-heading">从接入到夜间值守，拆解 SpiceOwl 的核心功能与设计思想</h2>
         </div>
-        <p>每一节<strong>左侧阐述功能边界与背后的工程理念</strong>，<strong>右侧以真实集群录像演示具体操作方法</strong>。点击右侧画面即可原位流式播放高清演示。</p>
+        <p>每个关键环节<strong>左侧阐述功能边界与背后的工程理念</strong>，<strong>右侧以真实集群录像演示具体操作方法</strong>。点击右侧画面即可原位流式播放高清演示。</p>
       </header>
 
-      <nav class="so-toc" aria-label="九节目录快速跳转">
+      <nav class="so-toc" aria-label="全流程目录快速跳转">
         <a href="#video-01" data-toc-link="video-01"><span>01</span>本地直连</a>
         <a href="#video-02" data-toc-link="video-02"><span>02</span>集群向导</a>
         <a href="#video-03" data-toc-link="video-03"><span>03</span>算力与许可</a>
@@ -154,15 +155,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="01_initial_connect.mp4" data-video-poster="./demo-poster-01.webp" data-video-title="第 01 节：30 秒零配置连接本机">
-              <button type="button" class="so-poster-btn" aria-label="播放第 01 节操作演示：30 秒零配置连接本机 (0分34秒)">
-                <img src="./demo-poster-01.webp" width="1280" height="650" alt="第 01 节演示预览：打开网页即用，30 秒打通本机工作环境">
+            <div class="so-demo-stage" data-video-file="01_initial_connect.mp4" data-video-poster="./demo-poster-01.webp" data-video-title="01 · 30 秒零配置连接本机">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：30 秒零配置连接本机 (0分34秒)">
+                <img src="./demo-poster-01.webp" width="1280" height="650" alt="实操演示预览：打开网页即用，30 秒打通本机工作环境">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>点击顶栏「连接本机」触发一键探测引导 → 双击 <code>.command / .bat</code> 全自动部署 → 浏览器瞬间点亮「本机已连接 · LIVE」并完成 Agent 配对。</p>
-              <div class="so-dl-slot" data-dl-file="01_initial_connect.mp4"></div>
             </div>
           </div>
         </div>
@@ -176,7 +176,7 @@
             <span class="so-ch-kicker">VISUAL SSH WIZARD</span>
             <span class="so-ch-metric">3 台集群 1 分钟就绪</span>
           </div>
-          <h3>告别手写 SSH Config，1 分钟纳管整套 EDA 集群</h3>
+          <h3>告别手写 SSH Config，1 分钟管理整套 EDA 集群</h3>
           <p class="so-ch-lead">高校与企业 EDA 服务器往往藏在多级跳板机后面，且混杂着老旧 OpenSSH、<code>csh / tcsh</code> 默认 Shell 与 Python 2.7 环境。手写 <code>~/.ssh/config</code>、分发公钥与排查旧版 RSA 握手失败是最耗神的入门门槛。</p>
           <div class="so-philosophy">
             <p class="so-phil-label">设计理念与工程思想</p>
@@ -202,15 +202,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="02_connect_servers.mp4" data-video-poster="./demo-poster-02.webp" data-video-title="第 02 节：1 分钟纳管整套 EDA 集群">
-              <button type="button" class="so-poster-btn" aria-label="播放第 02 节操作演示：1 分钟纳管整套 EDA 集群 (0分41秒)">
-                <img src="./demo-poster-02.webp" width="1280" height="650" loading="lazy" alt="第 02 节演示预览：告别手写 SSH Config，1 分钟连上整套 EDA 集群">
+            <div class="so-demo-stage" data-video-file="02_connect_servers.mp4" data-video-poster="./demo-poster-02.webp" data-video-title="02 · 1 分钟管理整套 EDA 集群">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：1 分钟管理整套 EDA 集群 (0分41秒)">
+                <img src="./demo-poster-02.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：告别手写 SSH Config，1 分钟连上整套 EDA 集群">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>打开 SSH 向导填入跳板机与首台节点 → 自动识别旧版 RSA 兼容并完成 5 项全绿校验 → 继续添加同集群其余计算节点，沿用配置零重复填写。</p>
-              <div class="so-dl-slot" data-dl-file="02_connect_servers.mp4"></div>
             </div>
           </div>
         </div>
@@ -250,15 +249,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="03_resource_monitor.mp4" data-video-poster="./demo-poster-03.webp" data-video-title="第 03 节：集群算力与 FlexLM License 洞察">
-              <button type="button" class="so-poster-btn" aria-label="播放第 03 节操作演示：集群算力与 FlexLM License 洞察 (0分40秒)">
-                <img src="./demo-poster-03.webp" width="1280" height="650" loading="lazy" alt="第 03 节演示预览：告别盲选服务器与撞车排队，算力与 License 一屏透明">
+            <div class="so-demo-stage" data-video-file="03_resource_monitor.mp4" data-video-poster="./demo-poster-03.webp" data-video-title="03 · 集群算力与 FlexLM License 洞察">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：集群算力与 FlexLM License 洞察 (0分40秒)">
+                <img src="./demo-poster-03.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：告别盲选服务器与撞车排队，算力与 License 一屏透明">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>进入「服务器资源」页一键刷新 → 查看多台计算节点 CPU / 内存 / 活跃仿真进程与多台 FlexLM 许可池 → 核对系统自动高亮的最空闲推荐主机标签。</p>
-              <div class="so-dl-slot" data-dl-file="03_resource_monitor.mp4"></div>
             </div>
           </div>
         </div>
@@ -292,7 +290,7 @@
         <div class="so-chapter-media">
           <div class="so-frame">
             <div class="so-frame-bar so-frame-bar-tabs">
-              <div class="so-tab-list" role="tablist" aria-label="选择第 04 节电路打开路径演示">
+              <div class="so-tab-list" role="tablist" aria-label="选择电路打开路径演示">
                 <button type="button" id="tab-04a" role="tab" aria-selected="true" aria-controls="panel-04" data-ch4-tab="04a">方式 A · AI 对话搜库 (0:45)</button>
                 <button type="button" id="video-04b" role="tab" aria-selected="false" aria-controls="panel-04" tabindex="-1" data-ch4-tab="04b">方式 B · 网页只读库管理 (0:42)</button>
               </div>
@@ -302,15 +300,14 @@
             </div>
 
             <div id="panel-04" role="tabpanel" aria-labelledby="tab-04a" tabindex="0">
-              <div class="so-demo-stage" id="ch4-stage" data-video-file="04a_agent_open_workspace.mp4" data-video-poster="./demo-poster-04a.webp" data-video-title="第 04a 节：一句话让 AI 打开远端电路">
-                <button type="button" class="so-poster-btn" aria-label="播放第 04a 节操作演示：一句话让 AI 打开远端电路 (0分45秒)">
-                  <img src="./demo-poster-04a.webp" width="1280" height="650" loading="lazy" alt="第 04a 节演示预览：一句话打开远端电路，彻底告别卡顿的 Virtuoso">
+              <div class="so-demo-stage" id="ch4-stage" data-video-file="04a_agent_open_workspace.mp4" data-video-poster="./demo-poster-04a.webp" data-video-title="04a · 一句话让 AI 打开远端电路">
+                <button type="button" class="so-poster-btn" aria-label="播放实操演示：一句话让 AI 打开远端电路 (0分45秒)">
+                  <img src="./demo-poster-04a.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：一句话打开远端电路，彻底告别卡顿的 Virtuoso">
                   <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
                 </button>
               </div>
               <div class="so-frame-foot">
                 <p id="ch4-howto"><strong>具体操作方法（方式 A · AI 驱动）：</strong>将对话权限切至「满血全权」→ 用自然语言说出电路关键词 → 观察 AI 检索远端 <code>cds.lib</code> 并将完整 Spectre 网表与 Maestro 配置自动填满右侧工作台。</p>
-                <div class="so-dl-slot" id="ch4-dl-slot" data-dl-file="04a_agent_open_workspace.mp4"></div>
               </div>
             </div>
           </div>
@@ -351,15 +348,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="05_submit_sim_and_report.mp4" data-video-poster="./demo-poster-05.webp" data-video-title="第 05 节：一句话批量温度扫描与自动出报">
-              <button type="button" class="so-poster-btn" aria-label="播放第 05 节操作演示：一句话批量温度扫描与自动出报 (0分51秒)">
-                <img src="./demo-poster-05.webp" width="1280" height="650" loading="lazy" alt="第 05 节演示预览：一句话发起多温度批量扫描，从此告别熬夜盯进度">
+            <div class="so-demo-stage" data-video-file="05_submit_sim_and_report.mp4" data-video-poster="./demo-poster-05.webp" data-video-title="05 · 一句话批量温度扫描与自动出报">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：一句话批量温度扫描与自动出报 (0分51秒)">
+                <img src="./demo-poster-05.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：一句话发起多温度批量扫描，从此告别熬夜盯进度">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>一句话下发三温度瞬态扫描 → 观察 Agent 自动拆单同组提交 → 切至「历史任务与报告」查看每 4 秒自动巡检进度，直到自动亮起「已自动推送给 AI 撰写报告」。</p>
-              <div class="so-dl-slot" data-dl-file="05_submit_sim_and_report.mp4"></div>
             </div>
           </div>
         </div>
@@ -399,15 +395,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="06_simulation_reports.mp4" data-video-poster="./demo-poster-06.webp" data-video-title="第 06 节：交互式仿真报告与 102 KB 离线分享">
-              <button type="button" class="so-poster-btn" aria-label="播放第 06 节操作演示：交互式仿真报告与 102 KB 离线分享 (0分43秒)">
-                <img src="./demo-poster-06.webp" width="1280" height="650" loading="lazy" alt="第 06 节演示预览：仿真结束即出交互报告，告别半小时截波形拼 PPT">
+            <div class="so-demo-stage" data-video-file="06_simulation_reports.mp4" data-video-poster="./demo-poster-06.webp" data-video-title="06 · 交互式仿真报告与 102 KB 离线分享">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：交互式仿真报告与 102 KB 离线分享 (0分43秒)">
+                <img src="./demo-poster-06.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：仿真结束即出交互报告，告别半小时截波形拼 PPT">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>点开单次仿真交互报告悬停读取瞬态波形与 KPI → 一键导出 102 KB 独立离线 HTML 文件 → 切换查看自动汇总三温度横向对比的「TB 综合报告」。</p>
-              <div class="so-dl-slot" data-dl-file="06_simulation_reports.mp4"></div>
             </div>
           </div>
         </div>
@@ -447,15 +442,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="07_custom_ai_report.mp4" data-video-poster="./demo-poster-07.webp" data-video-title="第 07 节：自由创作定制温度特性曲线">
-              <button type="button" class="so-poster-btn" aria-label="播放第 07 节操作演示：自由创作定制温度特性曲线 (0分57秒)">
-                <img src="./demo-poster-07.webp" width="1280" height="650" loading="lazy" alt="第 07 节演示预览：想要什么工程曲线，直接开口让 AI 现算现画">
+            <div class="so-demo-stage" data-video-file="07_custom_ai_report.mp4" data-video-poster="./demo-poster-07.webp" data-video-title="07 · 自由创作定制温度特性曲线">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：自由创作定制温度特性曲线 (0分57秒)">
+                <img src="./demo-poster-07.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：想要什么工程曲线，直接开口让 AI 现算现画">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>在报告顶部切换至「自由创作」并用中文描述想看的曲线 → 等待 Agent 读取全部 4 份原始波形输出统一口径测量汇总表 → 验收自动生成的 4 组温度特性曲线。</p>
-              <div class="so-dl-slot" data-dl-file="07_custom_ai_report.mp4"></div>
             </div>
           </div>
         </div>
@@ -495,15 +489,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放演示</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="08_agent_edit_night_watch.mp4" data-video-poster="./demo-poster-08.webp" data-video-title="第 08 节：自然语言编程夜间值守脚本">
-              <button type="button" class="so-poster-btn" aria-label="播放第 08 节操作演示：自然语言编程夜间值守脚本 (0分58秒)">
-                <img src="./demo-poster-08.webp" width="1280" height="650" loading="lazy" alt="第 08 节演示预览：把半夜守仿真写成规则，用自然语言编程值守脚本">
+            <div class="so-demo-stage" data-video-file="08_agent_edit_night_watch.mp4" data-video-poster="./demo-poster-08.webp" data-video-title="08 · 自然语言编程夜间值守脚本">
+              <button type="button" class="so-poster-btn" aria-label="播放实操演示：自然语言编程夜间值守脚本 (0分58秒)">
+                <img src="./demo-poster-08.webp" width="1280" height="650" loading="lazy" alt="实操演示预览：把半夜守仿真写成规则，用自然语言编程值守脚本">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>在自然语言输入栏下发夜间策略要求 → 观看 AI 精准编辑本机 <code>night_watch.py</code> 并执行隔离沙箱 Dry-Run 演练 → 确认顶栏点亮「夜间值守已启用」。</p>
-              <div class="so-dl-slot" data-dl-file="08_agent_edit_night_watch.mp4"></div>
             </div>
           </div>
         </div>
@@ -543,15 +536,14 @@
                 <button type="button" class="so-play-chip" data-play-trigger>▶ 播放压轴实战</button>
               </div>
             </div>
-            <div class="so-demo-stage" data-video-file="09_night_watch_new_case.mp4" data-video-poster="./demo-poster-09.webp" data-video-title="第 09 节压轴实战：未知故障守红线与沉淀永久规则">
-              <button type="button" class="so-poster-btn" aria-label="播放第 09 节压轴实操演示：未知故障守红线与沉淀永久规则 (3分25秒)">
-                <img src="./demo-poster-09.webp" width="1280" height="650" loading="lazy" alt="第 09 节演示预览：遇未知故障严守科学红线，一句话教会它永久避坑">
+            <div class="so-demo-stage" data-video-file="09_night_watch_new_case.mp4" data-video-poster="./demo-poster-09.webp" data-video-title="09 · 压轴实战：未知故障守红线与沉淀永久规则">
+              <button type="button" class="so-poster-btn" aria-label="播放压轴实操演示：未知故障守红线与沉淀永久规则 (3分25秒)">
+                <img src="./demo-poster-09.webp" width="1280" height="650" loading="lazy" alt="压轴实操演示预览：遇未知故障严守科学红线，一句话教会它永久避坑">
                 <span class="so-play-fab" aria-hidden="true"><span>▶</span></span>
               </button>
             </div>
             <div class="so-frame-foot">
               <p><strong>具体操作方法：</strong>观看 AI 遭遇未知 STB 报错后拒绝擅改网表并留证 → 用户一句授权触发编写 <code>rule_stb_missing_probe</code> 与沙箱验真 → 自动恢复回收 1,745 点真实波形并诚实出报。</p>
-              <div class="so-dl-slot" data-dl-file="09_night_watch_new_case.mp4"></div>
             </div>
           </div>
         </div>
@@ -563,22 +555,26 @@
       <div>
         <p class="g-kicker">READY TO HAND OVER THE NIGHT SHIFT?</p>
         <h2>你去休息，仿真我盯。</h2>
-        <p>直接在浏览器打开 SpiceOwl 正式工作台体验零安装交互沙箱，或点击顶栏「连接本机」30 秒接入你自己的 EDA 集群。</p>
+        <p>直接在浏览器打开 SpiceOwl 正式工作台体验零安装交互沙箱，或前往 GitHub 仓库查看完整源码与文档。</p>
       </div>
       <div class="g-actions">
         <a class="primary" href="./index.html">打开 SpiceOwl 正式工作台 →</a>
+        <a data-github-link>前往 GitHub 仓库 ↗</a>
         <a href="#so-overview">回到顶部 ↑</a>
       </div>
     </section>
   </main>
 
   <footer class="site-footer">
-    <a href="./index.html">← 进入 SpiceOwl 工作台</a>
+    <div class="footer-links">
+      <a href="./index.html">← 进入 SpiceOwl 工作台</a>
+      <a data-github-link>GitHub 开源仓库 ↗</a>
+    </div>
     <span>你去休息，仿真我盯 · 身份不丢失 · 严守科学红线</span>
   </footer>
 
   <noscript>
-    <p class="noscript">文字介绍与架构总览可直接阅读；在线播放实操录像与切换第 04 节双路径标签需要开启 JavaScript。</p>
+    <p class="noscript">文字介绍与架构总览可直接阅读；在线播放实操录像与切换双路径标签需要开启 JavaScript。</p>
   </noscript>
 </body>
 </html>

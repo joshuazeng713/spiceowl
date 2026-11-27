@@ -449,9 +449,10 @@ const connectorState = {
   baseUrl: DEFAULT_CONNECTOR_BASE,
   token: '',
   version: '',
-  phase: 'idle', // idle | probing | waking | ready_to_pair | not_installed | connected
+  capabilities: null,
+  phase: 'idle', // idle | probing | waking | ready_to_pair | not_installed | upgrade_required | connected
   note: '',
-  afterConnect: '', // '' | 'codex' | 'ssh'
+  afterConnect: '', // '' | 'codex' | 'ssh' | 'ssh_setup'
 };
 const isHostedPages = () => window.SpiceOwlDemo !== undefined || document.documentElement?.dataset?.publicDemo === 'true';
 const isConnectorLive = () => Boolean(connectorState.connected && connectorState.baseUrl && connectorState.token);
@@ -526,6 +527,7 @@ async function restoreConnectorSession() {
     connectorState.baseUrl = saved.baseUrl;
     connectorState.token = saved.token;
     connectorState.version = health.version || '';
+    connectorState.capabilities = health.capabilities && typeof health.capabilities === 'object' ? health.capabilities : null;
     connectorState.phase = 'connected';
     return true;
   } catch {
@@ -537,6 +539,7 @@ function disconnectConnector() {
   try { sessionStorage.removeItem(CONNECTOR_STORAGE_KEY); } catch {}
   connectorState.connected = false;
   connectorState.token = '';
+  connectorState.capabilities = null;
   connectorState.phase = 'idle';
   connectorState.note = '';
   directState.loaded = false;
@@ -550,6 +553,11 @@ function disconnectConnector() {
 function renderConnectorDialog() {
   const box = $('#connector-dialog-content');
   if (!box) return;
+  if (connectorState.phase === 'upgrade_required') {
+    const zipUrl = `${demoRepository}/archive/refs/heads/${escape(demoSource().branch)}.zip`;
+    box.innerHTML = `<div class="direct-rec-integrity"><strong>⚠️ 本机 SpiceOwl Connector 版本较旧</strong><span>·</span><code>${escape(connectorState.baseUrl)}</code></div><p class="subtle-note">${escape(connectorState.note || '当前后台运行的本机连接器缺少「SSH 图形化配置向导（/ssh/setup）」接口。')}</p><p class="subtle-note">请下载最新安装包并<strong>确保解压后双击新目录中的</strong> <code>Install SpiceOwl Connector.command</code>（macOS）或 <code>Install SpiceOwl Connector.bat</code>（Windows）；切勿继续运行以前旧版解压文件夹中的安装脚本。安装器会自动覆盖升级并重启后台连接器。</p><div class="dialog-actions"><a class="button secondary" href="${zipUrl}" target="_blank" rel="noopener noreferrer">下载最新版安装包 (.zip)</a><button type="button" class="button secondary" data-action="connector-close">稍后再说</button><button type="button" class="button primary" data-action="connector-upgrade-retry">我已升级，重新连接</button></div>`;
+    return;
+  }
   if (connectorState.connected) {
     box.innerHTML = `<div class="direct-rec-integrity"><strong>🟢 本机 SpiceOwl Connector 已连接</strong><span>·</span><code>${escape(connectorState.baseUrl)}</code>${connectorState.version ? `<span>· v${escape(connectorState.version)}</span>` : ''}</div><p class="subtle-note">当前网页已直连您的本机无界面连接器：可直接探测 <code>~/.ssh/config</code>、提交真实 SSH/LSF/Slurm 仿真、原位流式读取远端大波形并唤醒本机 Codex Agent。同标签页刷新会自动续连，关闭标签页自动吊销授权。</p><div class="dialog-actions"><button type="button" class="button secondary" data-action="connector-disconnect">断开本机连接（切回网页预览）</button><button type="button" class="button primary" data-action="connector-close">返回工作台</button></div>`;
     return;
@@ -571,6 +579,7 @@ function renderConnectorDialog() {
 async function startConnectorFlow({openModal = true} = {}) {
   const dlg = $('#connector-dialog');
   if (connectorState.connected) {
+    connectorState.phase = 'connected';
     renderConnectorDialog();
     if (openModal && dlg && !dlg.open) dlg.showModal();
     return;
@@ -581,6 +590,7 @@ async function startConnectorFlow({openModal = true} = {}) {
   let health = await probeConnectorHealth(connectorState.baseUrl, 1200);
   if (health) {
     connectorState.version = health.version || '';
+    connectorState.capabilities = health.capabilities && typeof health.capabilities === 'object' ? health.capabilities : null;
     connectorState.phase = 'ready_to_pair';
     renderConnectorDialog();
     return;
@@ -595,6 +605,7 @@ async function startConnectorFlow({openModal = true} = {}) {
     health = await probeConnectorHealth(connectorState.baseUrl, 800);
     if (health) {
       connectorState.version = health.version || '';
+      connectorState.capabilities = health.capabilities && typeof health.capabilities === 'object' ? health.capabilities : null;
       connectorState.phase = 'ready_to_pair';
       renderConnectorDialog();
       return;
@@ -612,8 +623,33 @@ function openConnectorAuthorizationPopup() {
   }
 }
 
+function showConnectorUpgradeDialog(note = '') {
+  connectorState.phase = 'upgrade_required';
+  connectorState.note = note;
+  renderConnectorDialog();
+  const dlg = $('#connector-dialog');
+  if (dlg && !dlg.open) dlg.showModal();
+}
+
 function openSshSetupWizard(alias = '') {
-  const base = isConnectorLive() ? connectorState.baseUrl : '';
+  const liveConnector = isConnectorLive();
+  const base = liveConnector ? connectorState.baseUrl : '';
+  if (liveConnector && connectorState.capabilities?.ssh_setup !== true) {
+    void (async () => {
+      const health = await probeConnectorHealth(connectorState.baseUrl, 1200);
+      if (health?.capabilities?.ssh_setup === true) {
+        connectorState.version = health.version || connectorState.version;
+        connectorState.capabilities = health.capabilities;
+        const extra = alias ? `&alias=${encodeURIComponent(alias)}` : '';
+        const url = `${base}/ssh/setup?origin=${encodeURIComponent(location.origin)}${extra}`;
+        const popup = window.open(url, 'spiceowl_ssh_setup', 'width=940,height=740,resizable=yes,scrollbars=yes');
+        if (!popup) toast('浏览器拦截了 SSH 配置向导窗口，请允许弹出窗口后重试。');
+        return;
+      }
+      showConnectorUpgradeDialog('当前运行的本机 SpiceOwl Connector 尚未包含 SSH 配置向导（/ssh/setup），需要升级到最新版连接器。');
+    })();
+    return;
+  }
   const extra = alias ? `&alias=${encodeURIComponent(alias)}` : '';
   const url = `${base}/ssh/setup?origin=${encodeURIComponent(location.origin)}${extra}`;
   const popup = window.open(url, 'spiceowl_ssh_setup', 'width=940,height=740,resizable=yes,scrollbars=yes');
@@ -705,6 +741,9 @@ window.addEventListener('message', async event => {
   connectorState.connected = true;
   connectorState.token = msg.token;
   connectorState.version = msg.version || connectorState.version;
+  if (msg.capabilities && typeof msg.capabilities === 'object') {
+    connectorState.capabilities = msg.capabilities;
+  }
   connectorState.phase = 'connected';
   try {
     sessionStorage.setItem(CONNECTOR_STORAGE_KEY, JSON.stringify({baseUrl: connectorState.baseUrl, token: connectorState.token}));
@@ -7031,6 +7070,12 @@ document.addEventListener('click', async event => {
   }
   if (action === 'connector-authorize') {
     openConnectorAuthorizationPopup();
+    return;
+  }
+  if (action === 'connector-upgrade-retry') {
+    disconnectConnector();
+    connectorState.afterConnect = 'ssh_setup';
+    await startConnectorFlow({openModal: true});
     return;
   }
   if (action === 'connector-disconnect') {

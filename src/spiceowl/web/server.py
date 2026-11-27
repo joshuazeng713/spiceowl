@@ -47,6 +47,7 @@ def _live_request(body):
 
 
 DEFAULT_WEB_ORIGINS = frozenset({"https://spiceowl-dev.github.io", "https://circuitgit-dev.github.io"})
+CONNECTOR_CAPABILITIES = {"ssh_setup": True}
 
 
 def _connect_page_html(target_origin: str, port: int, nonce: str) -> bytes:
@@ -108,7 +109,7 @@ document.getElementById('approve').onclick = async () => {{
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || '授权失败');
     if (window.opener) {{
-      window.opener.postMessage({{type: 'spiceowl.connector.authorized', token: data.token, baseUrl, version: data.version}}, targetOrigin);
+      window.opener.postMessage({{type: 'spiceowl.connector.authorized', token: data.token, baseUrl, version: data.version, capabilities: data.capabilities || null}}, targetOrigin);
     }}
     window.close();
   }} catch (e) {{
@@ -592,6 +593,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     "connector": True,
                     "version": __version__,
                     "port": self.server.server_address[1],
+                    "capabilities": dict(CONNECTOR_CAPABILITIES),
                 })
             if self.command == "GET" and path == "/connect":
                 query = parse_qs(url.query, keep_blank_values=True)
@@ -617,7 +619,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 entry = pairing_nonces.pop(nonce, None) if isinstance(nonce, str) else None
                 if entry is None or entry[0] != target or entry[1] < time.monotonic():
                     raise DomainError("Pairing session expired or invalid; reopen from SpiceOwl Web.", "forbidden")
-                return self.reply({"authorized": True, "token": token, "version": __version__})
+                return self.reply({"authorized": True, "token": token, "version": __version__, "capabilities": dict(CONNECTOR_CAPABILITIES)})
             if self.command == "GET" and path == "/ssh/setup":
                 from spiceowl.onboarding.ssh_setup_ui import build_ssh_setup_state, ssh_setup_csp, ssh_setup_html
                 query = parse_qs(url.query, keep_blank_values=True)

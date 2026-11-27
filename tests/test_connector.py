@@ -102,6 +102,15 @@ class TestLocalConnectorAndPairing(unittest.TestCase):
                 health = json.loads(raw.decode("utf-8"))
                 self.assertTrue(health["ok"])
                 self.assertEqual(health["product"], "spiceowl")
+                self.assertTrue(health.get("capabilities", {}).get("ssh_setup"))
+
+                # 1b. GET /ssh/setup succeeds from loopback popup with official target origin
+                st, _, ssh_html_bytes = raw_req("GET", f"/ssh/setup?origin={OFFICIAL_ORIGIN}")
+                self.assertEqual(st, 200)
+                ssh_html = ssh_html_bytes.decode("utf-8")
+                self.assertIn("/ssh/setup/action", ssh_html)
+                self.assertIn("SpiceOwl", ssh_html)
+                self.assertEqual(raw_req("GET", f"/ssh/setup?origin={EVIL_ORIGIN}")[0], 403)
 
                 # 2. Foreign origin is STRICTLY rejected on /health, OPTIONS, /api/state, and /connect
                 self.assertEqual(raw_req("GET", "/health", {"Origin": EVIL_ORIGIN})[0], 403)

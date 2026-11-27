@@ -106,8 +106,8 @@ if [ -n "$USE_UV" ]; then
     read -r -p "按回车关闭。"
     exit 1
   fi
-  if ! "$USE_UV" pip install --python "$VENV_DIR/bin/python" --no-build-isolation --no-deps "$SRC_DIR" 2>/dev/null; then
-    "$USE_UV" pip install --python "$VENV_DIR/bin/python" "$SRC_DIR"
+  if ! "$USE_UV" pip install --python "$VENV_DIR/bin/python" --force-reinstall --no-build-isolation --no-deps "$SRC_DIR" 2>/dev/null; then
+    "$USE_UV" pip install --python "$VENV_DIR/bin/python" --force-reinstall "$SRC_DIR"
   fi
 else
   if [ -z "$PY_BIN" ]; then
@@ -121,8 +121,8 @@ else
   if [ ! -x "$VENV_DIR/bin/python" ]; then
     "$PY_BIN" -m venv "$VENV_DIR"
   fi
-  # Fast zero-dependency install (works offline too!); upgrade/install package into permanent site-packages
-  if ! "$VENV_DIR/bin/python" -m pip install --no-deps --no-build-isolation --quiet "$SRC_DIR" 2>/dev/null; then
+  # Fast zero-dependency install (works offline too!); force-reinstall so same-version upgrades always replace old files.
+  if ! "$VENV_DIR/bin/python" -m pip install --force-reinstall --no-deps --no-build-isolation --quiet "$SRC_DIR" 2>/dev/null; then
     # Fallback: copy package cleanly into venv site-packages so offline installs without setuptools wheel also succeed!
     SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
     rm -rf "$SITE_DIR/spiceowl"

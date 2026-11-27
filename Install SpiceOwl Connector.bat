@@ -116,7 +116,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-"%USE_UV%" pip install --python "%VENV_DIR%\Scripts\python.exe" --no-build-isolation --no-deps "%SRC_DIR%" >nul 2>&1
+"%USE_UV%" pip install --python "%VENV_DIR%\Scripts\python.exe" --force-reinstall --no-build-isolation --no-deps "%SRC_DIR%" >nul 2>&1
 if errorlevel 1 (
   "%VENV_DIR%\Scripts\python.exe" -c "import shutil, sysconfig, pathlib; dst = pathlib.Path(sysconfig.get_path('purelib')) / 'spiceowl'; shutil.rmtree(dst, ignore_errors=True); shutil.copytree(pathlib.Path(r'%SRC_DIR%') / 'src' / 'spiceowl', dst)"
 )
@@ -131,7 +131,7 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
     "%PY_CMD%" -m venv "%VENV_DIR%"
   )
 )
-"%VENV_DIR%\Scripts\python.exe" -m pip install --no-deps --no-build-isolation --quiet "%SRC_DIR%" >nul 2>&1
+"%VENV_DIR%\Scripts\python.exe" -m pip install --force-reinstall --no-deps --no-build-isolation --quiet "%SRC_DIR%" >nul 2>&1
 if errorlevel 1 (
   "%VENV_DIR%\Scripts\python.exe" -c "import shutil, sysconfig, pathlib; dst = pathlib.Path(sysconfig.get_path('purelib')) / 'spiceowl'; shutil.rmtree(dst, ignore_errors=True); shutil.copytree(pathlib.Path(r'%SRC_DIR%') / 'src' / 'spiceowl', dst)"
 )

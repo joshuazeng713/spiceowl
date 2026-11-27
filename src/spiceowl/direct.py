@@ -56,6 +56,19 @@ _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", re.ASCII)
 _COMMIT = re.compile(r"[a-f0-9]{40}", re.ASCII)
 
 _TERMINAL_ADAPTER_STATES = frozenset({"completed", "failed", "timed_out", "cancelled", "preflight_failed"})
+_BLOCKED_ERROR_CODES = frozenset({"identity_mismatch", "run_key_conflict", "input_hash_mismatch", "receipt_mismatch"})
+
+
+def _as_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _receipt_transport_flags(receipt) -> tuple[bool, bool]:
+    rec = _as_dict(receipt)
+    err = rec.get("error")
+    connected = err is None
+    blocked = _as_dict(err).get("code") in _BLOCKED_ERROR_CODES
+    return connected, blocked
 _VIRTUOSO_EXPORT_RE = re.compile(
     r"//\s*Exported from Virtuoso schematic\s+([^\s/]+)/([^\s(]+)(?:\s*\(([^)]+)\))?",
     re.IGNORECASE,
@@ -231,8 +244,9 @@ def _monotonic_observed_at(previous_iso):
 
 def _map_adapter_state(receipt, *, launch_claimed=False):
     """Map low-level adapter state to RunnerProtocol / RuntimeMonitor states."""
-    raw = receipt.get("state")
-    result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+    rec = _as_dict(receipt)
+    raw = rec.get("state")
+    result = _as_dict(rec.get("result"))
     raw_exit = result.get("exit_code")
     if raw == "completed":
         code = raw_exit if type(raw_exit) is int else 0
@@ -250,7 +264,7 @@ def _map_adapter_state(receipt, *, launch_claimed=False):
         return "running_observed", "running", None
     if raw in ("staged", "not_staged", "stage_incomplete"):
         return raw, raw, None
-    err = receipt.get("error") if isinstance(receipt.get("error"), dict) else {}
+    err = _as_dict(rec.get("error"))
     if err.get("code") in ("input_hash_mismatch", "receipt_mismatch", "run_key_conflict"):
         return "input_hash_failure", "input_hash_failure", 1
     if launch_claimed:
@@ -302,7 +316,7 @@ class DirectExecutionManager:
         if not path.exists() and not path.is_symlink():
             return {"schema": SUBMISSIONS_SCHEMA, "entries": {}}
         data = _read_json(path)
-        if data.get("schema") != SUBMISSIONS_SCHEMA or not isinstance(data.get("entries"), dict):
+        if not isinstance(data, dict) or data.get("schema") != SUBMISSIONS_SCHEMA or not isinstance(data.get("entries"), dict):
             raise DomainError("Direct submission index is corrupt.", "direct_state_invalid")
         return data
 
@@ -317,8 +331,8 @@ class DirectExecutionManager:
             plan_path = self.path(run_id) / "plan.json"
             if not plan_path.is_file() or plan_path.is_symlink():
                 return ""
-            plan = _read_json(plan_path)
-            raw_b64 = (plan.get("files") or {}).get("input.scs")
+            plan = _as_dict(_read_json(plan_path))
+            raw_b64 = _as_dict(plan.get("files")).get("input.scs")
             if not isinstance(raw_b64, str) or not raw_b64:
                 return ""
             # Decode up to first 6 KiB of base64 (~4.5 KiB text) for header comments only
@@ -422,7 +436,7 @@ class DirectExecutionManager:
                     runs.append(self._enrich_record(raw_rec, batch_info=bmap.get(raw_rec.get("run_id"))))
                 except DomainError:
                     continue
-        runs.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        runs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
         return runs
 
     def lookup_submission(self, submission_key: str) -> dict:
@@ -529,10 +543,10 @@ class DirectExecutionManager:
 
         resolved_version = expected_version
         if resolved_version is None and pin_version:
-            last_probe = host_record.get("last_probe") if isinstance(host_record.get("last_probe"), dict) else None
-            if last_probe and last_probe.get("identity", {}).get("verified"):
-                for tool in last_probe.get("tools", []):
-                    if tool.get("kind") == simulator and tool.get("status") == "available" and tool.get("version"):
+            last_probe = _as_dict(host_record.get("last_probe"))
+            if _as_dict(last_probe.get("identity")).get("verified"):
+                for tool in (last_probe.get("tools") or []):
+                    if isinstance(tool, dict) and tool.get("kind") == simulator and tool.get("status") == "available" and tool.get("version"):
                         resolved_version = tool["version"]
                         break
 
@@ -646,40 +660,43 @@ class DirectExecutionManager:
         return plan
 
     def _apply_observation(self, record: dict, receipt: dict, *, connected: bool, blocked: bool = False) -> dict:
+        rec = _as_dict(receipt)
         now = _monotonic_observed_at(record.get("observed_at"))
         record["updated_at"] = now
         if connected:
             record["observed_at"] = now
             record["status_transport"] = "connected"
             record["last_error"] = None
-            state, remote_state, exit_code = _map_adapter_state(receipt, launch_claimed=record.get("dispatch_claimed", False))
+            state, remote_state, exit_code = _map_adapter_state(rec, launch_claimed=record.get("dispatch_claimed", False))
             record["state"] = state
             record["remote_state"] = remote_state
-            record["raw_remote_state"] = receipt.get("state")
+            record["raw_remote_state"] = rec.get("state")
             if exit_code is not None:
                 record["simulator_exit_code"] = exit_code
-            result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+            result = _as_dict(rec.get("result"))
             if "exit_code" in result:
                 record["raw_exit_code"] = result.get("exit_code")
-            if receipt.get("remote_directory"):
-                record["remote_directory"] = receipt["remote_directory"]
-            if receipt.get("scheduler"):
-                record["scheduler"] = receipt["scheduler"]
-            if receipt.get("scheduler_observation"):
-                record["scheduler_observation"] = receipt["scheduler_observation"]
+            if rec.get("remote_directory"):
+                record["remote_directory"] = rec["remote_directory"]
+            if rec.get("scheduler"):
+                record["scheduler"] = rec["scheduler"]
+            if rec.get("scheduler_observation"):
+                record["scheduler_observation"] = rec["scheduler_observation"]
             if result.get("oom_evidence"):
                 record["oom_evidence"] = result["oom_evidence"]
             if result.get("termination_reason"):
                 record["termination_reason"] = result["termination_reason"]
-            if receipt.get("accepted", {}).get("dispatch_claimed"):
+            accepted = _as_dict(rec.get("accepted"))
+            if accepted.get("dispatch_claimed"):
                 record["dispatch_claimed"] = True
                 if record.get("submitted_at") is None:
-                    record["submitted_at"] = receipt["accepted"].get("accepted_at") or now
+                    record["submitted_at"] = accepted.get("accepted_at") or now
         else:
             record["status_transport"] = "blocked" if blocked else "disconnected"
-            record["last_error"] = receipt.get("error")
+            err = rec.get("error")
+            record["last_error"] = err
             if blocked:
-                record["state"] = "input_hash_failure" if receipt.get("error", {}).get("code") in ("input_hash_mismatch", "receipt_mismatch") else "reconcile_required"
+                record["state"] = "input_hash_failure" if _as_dict(err).get("code") in ("input_hash_mismatch", "receipt_mismatch") else "reconcile_required"
             elif record.get("dispatch_claimed") and record.get("state") in ("prepared", "staged", "launch_outcome_unknown"):
                 record["state"] = "launch_outcome_unknown"
         return record
@@ -691,8 +708,7 @@ class DirectExecutionManager:
             plan = self._load_plan(run_id)
             receipt = transport.stage(plan)
             self._save_receipt(run_id, "stage", receipt)
-            connected = "error" not in receipt
-            blocked = receipt.get("error", {}).get("code") in ("identity_mismatch", "run_key_conflict", "input_hash_mismatch", "receipt_mismatch")
+            connected, blocked = _receipt_transport_flags(receipt)
             self._apply_observation(record, receipt, connected=connected, blocked=blocked)
             _atomic_write(self.path(run_id) / "run.json", record)
             return deepcopy(record)
@@ -723,7 +739,7 @@ class DirectExecutionManager:
                     [host_id],
                 )
                 self._save_receipt(run_id, "prelaunch", {"observation": observation, "placement": placement})
-                if placement.get("recommended_host_id") != host_id:
+                if _as_dict(placement).get("recommended_host_id") != host_id:
                     raise DomainError(
                         "Selected host no longer meets the required observed resource headroom.",
                         "host_headroom_insufficient",
@@ -739,11 +755,61 @@ class DirectExecutionManager:
 
             receipt = transport.launch(plan)
             self._save_receipt(run_id, "launch", receipt)
-            connected = "error" not in receipt
-            blocked = receipt.get("error", {}).get("code") in ("identity_mismatch", "run_key_conflict", "input_hash_mismatch", "receipt_mismatch")
+            connected, blocked = _receipt_transport_flags(receipt)
             self._apply_observation(record, receipt, connected=connected, blocked=blocked)
             _atomic_write(self.path(run_id) / "run.json", record)
             return deepcopy(record)
+
+    def stage_and_launch(self, run_id: str, *, recheck_resources: bool = False) -> dict:
+        """Persist dispatch claim locally, then stage inputs and launch once in a single SSH exchange."""
+        run_id = _validate_run_id(run_id)
+        with _locked(self.path(run_id) / "run.lock"):
+            record = self.read(run_id)
+            plan = self._load_plan(run_id)
+            if record.get("dispatch_claimed"):
+                raise DomainError(
+                    "Launch was already claimed for this run key. Query status to reconcile instead of launching again.",
+                    "launch_already_claimed",
+                )
+            host_id = plan["manifest"]["profile"]["host_id"]
+            current_host = self.hosts.inspect(host_id)
+            if profile_from_record(current_host) != plan["manifest"]["profile"]:
+                raise DomainError("Registered host profile changed since preparation.", "host_profile_changed")
+
+            if bool(recheck_resources):
+                observation = self.hosts.resources(host_id)
+                placement = self.hosts.recommend(
+                    {"cpu_count": plan["manifest"]["limits"]["cpu_count"],
+                     "memory_bytes": plan["manifest"]["limits"]["memory_bytes"],
+                     "simulator": plan["manifest"]["simulator"]},
+                    [host_id],
+                )
+                self._save_receipt(run_id, "prelaunch", {"observation": observation, "placement": placement})
+                if _as_dict(placement).get("recommended_host_id") != host_id:
+                    raise DomainError(
+                        "Selected host no longer meets the required observed resource headroom.",
+                        "host_headroom_insufficient",
+                    )
+
+            # Persist durable claim BEFORE remote SSH call so a lost response never permits replay.
+            now = utcnow()
+            record["dispatch_claimed"] = True
+            record["state"] = "launch_outcome_unknown"
+            record["submitted_at"] = now
+            record["updated_at"] = now
+            _atomic_write(self.path(run_id) / "run.json", record)
+
+            receipt = transport.stage_and_launch(plan)
+            self._save_receipt(run_id, "stage_and_launch", receipt)
+            connected, blocked = _receipt_transport_flags(receipt)
+            self._apply_observation(record, receipt, connected=connected, blocked=blocked)
+            _atomic_write(self.path(run_id) / "run.json", record)
+            return deepcopy(record)
+
+    def submit(self, *, recheck_resources: bool = False, **prepare_kwargs) -> dict:
+        """Freeze inputs locally, then stage and launch remotely in a single SSH exchange."""
+        prepared = self.prepare(**prepare_kwargs)
+        return self.stage_and_launch(prepared["run_id"], recheck_resources=recheck_resources)
 
     def status(self, run_id: str) -> dict:
         """Query the bound remote execution identity without re-launching."""
@@ -753,8 +819,7 @@ class DirectExecutionManager:
             plan = self._load_plan(run_id)
             receipt = transport.status(plan)
             self._save_receipt(run_id, "status", receipt)
-            connected = "error" not in receipt
-            blocked = receipt.get("error", {}).get("code") in ("identity_mismatch", "run_key_conflict", "input_hash_mismatch", "receipt_mismatch")
+            connected, blocked = _receipt_transport_flags(receipt)
             self._apply_observation(record, receipt, connected=connected, blocked=blocked)
             _atomic_write(self.path(run_id) / "run.json", record)
             return deepcopy(record)
@@ -766,23 +831,24 @@ class DirectExecutionManager:
         with _locked(self.path(run_id) / "run.lock"):
             record = self.read(run_id)
             plan = self._load_plan(run_id)
-            for existing in record.get("cancel_receipts", []):
-                if existing.get("action_key") == key:
+            prior_receipts = record.get("cancel_receipts") if isinstance(record.get("cancel_receipts"), list) else []
+            for existing in prior_receipts:
+                if isinstance(existing, dict) and existing.get("action_key") == key:
                     return deepcopy(existing)
-            receipt = transport.cancel(plan, key)
+            receipt = _as_dict(transport.cancel(plan, key))
             self._save_receipt(run_id, "cancel", receipt)
             action_record = {
                 "action_key": key,
                 "run_id": run_id,
                 "requested_at": utcnow(),
-                "outcome": receipt.get("outcome", "unknown"),
+                "outcome": receipt.get("outcome") or "unknown",
                 "state": receipt.get("state"),
                 "reason": receipt.get("reason"),
                 "job_id": receipt.get("job_id"),
                 "signaled": receipt.get("signaled"),
                 "error": receipt.get("error"),
             }
-            record["cancel_receipts"] = (record.get("cancel_receipts", []) + [action_record])[-32:]
+            record["cancel_receipts"] = (prior_receipts + [action_record])[-32:]
             record["updated_at"] = utcnow()
             _atomic_write(self.path(run_id) / "run.json", record)
             return deepcopy(action_record)
@@ -795,11 +861,13 @@ class DirectExecutionManager:
             plan = self._load_plan(run_id)
             if record.get("collection_phase") == "complete" and record.get("collection"):
                 return deepcopy(record)
-            receipt = transport.collect(plan, max_collection_bytes=max_collection_bytes)
-            if "error" in receipt:
+            receipt = _as_dict(transport.collect(plan, max_collection_bytes=max_collection_bytes))
+            if receipt.get("error") is not None:
                 self._save_receipt(run_id, "collect-error", receipt)
-                code = receipt["error"].get("code", "collection_failed")
-                raise DomainError(receipt["error"].get("message", f"Remote collection failed: {code}"), code)
+                err = _as_dict(receipt.get("error"))
+                code = err.get("code") or "collection_failed"
+                msg = err.get("message") or f"Remote collection failed: {code}"
+                raise DomainError(msg, code)
 
             transport._verify_collection(plan, receipt, max_collection_bytes=max_collection_bytes)
             remote_receipt = receipt["receipt"]
@@ -822,13 +890,14 @@ class DirectExecutionManager:
                 })
 
             collected_at = utcnow()
+            skipped_files = receipt.get("skipped_files") if isinstance(receipt.get("skipped_files"), list) else []
             record["collection_phase"] = "complete"
             record["collection"] = {
                 "collected_at": collected_at,
                 "directory": str(destination),
                 "file_count": len(file_inventory),
                 "files": file_inventory,
-                "skipped_files": receipt.get("skipped_files", []),
+                "skipped_files": skipped_files,
                 "collection_complete": bool(receipt.get("collection_complete", True)),
                 "total_bytes": receipt["total_bytes"],
                 "raw_present": bool(receipt.get("raw_present", False)),
@@ -844,18 +913,21 @@ class DirectExecutionManager:
             wf_index = psf_binary.index_waveform_directory(destination / "results.raw")
             for ds in wf_index["datasets"]:
                 ds["source"] = "local_collected"
-            skipped_raw = [s for s in record["collection"]["skipped_files"] if str(s.get("name", "")).startswith("results.raw/")]
+            skipped_raw = [
+                s for s in skipped_files
+                if isinstance(s, dict) and str(s.get("name", "")).startswith("results.raw/")
+            ]
             if skipped_raw:
                 try:
-                    remote_idx = transport.waveform_index(plan)
+                    remote_idx = _as_dict(transport.waveform_index(plan))
                     local_names = {ds["dataset"] for ds in wf_index["datasets"]}
-                    for ds in remote_idx.get("datasets", []):
-                        if ds.get("dataset") not in local_names:
+                    for ds in (remote_idx.get("datasets") or []):
+                        if isinstance(ds, dict) and ds.get("dataset") not in local_names:
                             ds["source"] = "remote_in_place"
                             wf_index["datasets"].append(ds)
                     wf_index["total_raw_bytes"] = max(
-                        wf_index.get("total_raw_bytes", 0),
-                        int(remote_idx.get("total_raw_bytes", 0)),
+                        int(wf_index.get("total_raw_bytes") or 0),
+                        int(remote_idx.get("total_raw_bytes") or 0),
                     )
                 except DomainError:
                     pass
@@ -937,7 +1009,7 @@ class DirectExecutionManager:
             item for item in self.list()
             if (item.get("root_run_id") or item["run_id"]) == root_id
         ]
-        runs.sort(key=lambda r: (r.get("attempt_number", 1), r.get("created_at", "")))
+        runs.sort(key=lambda r: (r.get("attempt_number") or 1, r.get("created_at") or ""))
         return root_id, runs
 
     def _decisions_path(self, root_run_id: str) -> Path:
@@ -948,7 +1020,7 @@ class DirectExecutionManager:
         if not path.exists() and not path.is_symlink():
             return []
         data = _read_json(path)
-        return list(data.get("decisions", [])) if isinstance(data, dict) else []
+        return list(data.get("decisions") or []) if isinstance(data, dict) else []
 
     def _save_recovery_artifacts(self, root_run_id: str, decisions: list[dict]) -> dict:
         root_id, lineage_runs = self.lineage(root_run_id)
@@ -989,10 +1061,13 @@ class DirectExecutionManager:
                 temp_md.unlink(missing_ok=True)
             idx_path = self._recovery_index_path()
             if idx_path.is_file() and not idx_path.is_symlink():
-                index = _read_json(idx_path)
+                index = _as_dict(_read_json(idx_path))
             else:
                 index = {"schema": RECOVERY_INDEX_SCHEMA, "reports": {}}
-            entries = index.setdefault("reports", {})
+            entries = index.get("reports")
+            if not isinstance(entries, dict):
+                entries = {}
+                index["reports"] = entries
             entries[root_id] = {
                 "report_id": root_id,
                 "root_run_id": root_id,
@@ -1020,8 +1095,8 @@ class DirectExecutionManager:
         idx_path = self._recovery_index_path()
         if not idx_path.exists() and not idx_path.is_symlink():
             return []
-        index = _read_json(idx_path)
-        rows = list(index.get("reports", {}).values())
+        index = _as_dict(_read_json(idx_path))
+        rows = [row for row in _as_dict(index.get("reports")).values() if isinstance(row, dict)]
         if outcome:
             rows = [row for row in rows if row.get("outcome") == outcome]
         if query:
@@ -1029,17 +1104,17 @@ class DirectExecutionManager:
             if needle:
                 def matches(row):
                     haystack = " ".join([
-                        str(row.get("root_run_id", "")),
-                        str(row.get("latest_run_id", "")),
-                        str(row.get("summary_zh", "")),
-                        str(row.get("backend", "")),
-                        str(row.get("simulator", "")),
-                        " ".join(row.get("hosts", [])),
-                        " ".join(row.get("failure_classes", [])),
+                        str(row.get("root_run_id") or ""),
+                        str(row.get("latest_run_id") or ""),
+                        str(row.get("summary_zh") or ""),
+                        str(row.get("backend") or ""),
+                        str(row.get("simulator") or ""),
+                        " ".join(str(x) for x in (row.get("hosts") or [])),
+                        " ".join(str(x) for x in (row.get("failure_classes") or [])),
                     ]).lower()
                     return needle in haystack
                 rows = [row for row in rows if matches(row)]
-        rows.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        rows.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
         return rows
 
     def get_recovery_report(self, run_or_root_id: str) -> dict:
@@ -1218,7 +1293,7 @@ class DirectExecutionManager:
             return {"resumed": [], "skipped": []}
         try:
             data = _read_json(registry_path)
-            watches = data.get("watches", {}) if isinstance(data, dict) else {}
+            watches = _as_dict(_as_dict(data).get("watches"))
         except DomainError:
             return {"resumed": [], "skipped": []}
         resumed, skipped = [], []
@@ -1274,27 +1349,27 @@ class DirectExecutionManager:
 
         cached_path = self.path(run_id) / "waveform_index.json"
         if not refresh_remote and cached_path.is_file() and not cached_path.is_symlink():
-            cached = _read_json(cached_path)
+            cached = _as_dict(_read_json(cached_path))
             local_names = {ds["dataset"] for ds in idx["datasets"]}
-            for ds in cached.get("datasets", []):
-                if ds.get("dataset") not in local_names:
+            for ds in (cached.get("datasets") or []):
+                if isinstance(ds, dict) and ds.get("dataset") not in local_names:
                     idx["datasets"].append(ds)
-            idx["total_raw_bytes"] = max(idx.get("total_raw_bytes", 0), int(cached.get("total_raw_bytes", 0)))
+            idx["total_raw_bytes"] = max(int(idx.get("total_raw_bytes") or 0), int(cached.get("total_raw_bytes") or 0))
 
         has_plan = (self.path(run_id) / "plan.json").is_file()
         skipped_raw = [
-            s for s in (record.get("collection") or {}).get("skipped_files", [])
-            if str(s.get("name", "")).startswith("results.raw/")
+            s for s in (_as_dict(record.get("collection")).get("skipped_files") or [])
+            if isinstance(s, dict) and str(s.get("name", "")).startswith("results.raw/")
         ]
         if allow_remote and has_plan and (refresh_remote or (skipped_raw and not any(d.get("source") == "remote_in_place" for d in idx["datasets"]))):
             plan = self._load_plan(run_id)
-            remote_idx = transport.waveform_index(plan)
+            remote_idx = _as_dict(transport.waveform_index(plan))
             local_names = {ds["dataset"] for ds in idx["datasets"]}
-            for ds in remote_idx.get("datasets", []):
-                if ds.get("dataset") not in local_names:
+            for ds in (remote_idx.get("datasets") or []):
+                if isinstance(ds, dict) and ds.get("dataset") not in local_names:
                     ds["source"] = "remote_in_place"
                     idx["datasets"].append(ds)
-            idx["total_raw_bytes"] = max(idx.get("total_raw_bytes", 0), int(remote_idx.get("total_raw_bytes", 0)))
+            idx["total_raw_bytes"] = max(int(idx.get("total_raw_bytes") or 0), int(remote_idx.get("total_raw_bytes") or 0))
             _atomic_write(cached_path, idx)
 
         idx["run_id"] = run_id
@@ -1533,10 +1608,10 @@ class DirectRecoverySupervisor:
             fd = {}
             if isinstance(rep, dict) and rep.get("schema") == "spiceowl.simulation-report.v1":
                 fd = {
-                    "execution": rep.get("execution_status", {}).get("status"),
-                    "measurement": rep.get("measurement_validity", {}).get("status"),
-                    "performance": rep.get("functional_performance", {}).get("status"),
-                    "soa": rep.get("operating_qualification", {}).get("status"),
+                    "execution": _as_dict(rep.get("execution_status")).get("status"),
+                    "measurement": _as_dict(rep.get("measurement_validity")).get("status"),
+                    "performance": _as_dict(rep.get("functional_performance")).get("status"),
+                    "soa": _as_dict(rep.get("operating_qualification")).get("status"),
                 }
             self.handoff_manager.record_anomaly(
                 anomaly_type=anomaly_type,
@@ -1558,7 +1633,7 @@ class DirectRecoverySupervisor:
         if self.handoff_manager is None or not isinstance(run_record, dict):
             return
         state = str(run_record.get("state") or "")
-        remote_state = str((run_record.get("last_status") or {}).get("remote_state") or "")
+        remote_state = str(_as_dict(run_record.get("last_status")).get("remote_state") or "")
         if state != "submitted" and remote_state not in ("queued", "pending"):
             return
         ts_raw = run_record.get("launched_at") or run_record.get("created_at")
@@ -1569,7 +1644,7 @@ class DirectRecoverySupervisor:
             elapsed = (datetime.now(timezone.utc) - started).total_seconds()
         except ValueError:
             return
-        policy = self.handoff_manager.get_policy()
+        policy = _as_dict(self.handoff_manager.get_policy())
         threshold = int(policy.get("queue_timeout_seconds") or 1800)
         if elapsed >= threshold:
             self._handoff_anomaly(
@@ -1604,8 +1679,8 @@ class DirectRecoverySupervisor:
             rep = None
         if result.get("state") == "simulator_complete_pending_measurements":
             if isinstance(rep, dict) and rep.get("schema") == "spiceowl.simulation-report.v1":
-                meas = (rep.get("measurement_validity") or {}).get("status")
-                perf = (rep.get("functional_performance") or {}).get("status")
+                meas = _as_dict(rep.get("measurement_validity")).get("status")
+                perf = _as_dict(rep.get("functional_performance")).get("status")
                 if meas == "valid" and perf == "fail":
                     self._handoff_anomaly(
                         "spec_missed",

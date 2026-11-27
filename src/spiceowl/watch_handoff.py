@@ -188,7 +188,7 @@ def build_agent_handoff_prompt(event: dict, policy: dict) -> str:
         "请按以下步骤使用 SpiceOwl 工具自主排查并处理（人类正在休息，处理完后请把结论记录回网页端）：",
         "1. 调用 `spiceowl_scan_resources` / `spiceowl_recommend_hosts` 检查已注册主机的实时 CPU、内存与负载余量；",
         "2. 调用 `spiceowl_direct_read`（`inspect` / `report` / `log_tail`）核实故障证据与当前参数；",
-        "3. 若在授权边界内（如排队超时换空闲节点/队列、OOM 扩内存或换大内存主机、调整运行选项），使用 `spiceowl_direct_control` 取消卡死任务并提交可追溯的新尝试；若涉及修改网表或超出边界，请不要强行提交，留待早起人工审阅；",
+        "3. 若在授权边界内（如排队超时换空闲节点/队列、OOM 扩内存或换大内存主机、调整运行选项），使用 `spiceowl_direct_control` 取消卡死任务并通过 `operation='submit'` 一键提交可追溯的新尝试；若涉及修改网表或超出边界，请不要强行提交，留待早起人工审阅；",
         f"4. 最后调用 `spiceowl_direct_control(operation='watch_record_decision', arguments={{'event_id': '{event['event_id']}', ...}})`，把查到的资源情况、决策理由与新 `run_id` 写入网页值守记录。",
     ]
     return "\n".join(lines)
@@ -220,7 +220,7 @@ def evaluate_autonomy_decision(
     if operation == "cancel":
         return {"allowed": True, "code": "cancel_stalled_permitted", "reason": "夜间值守允许取消已卡死或排队超时的原任务。"}
 
-    if operation in ("stage", "launch"):
+    if operation in ("stage", "launch", "stage_and_launch"):
         if resubmissions_used >= int(policy.get("max_agent_resubmissions", 0)):
             return {
                 "allowed": False,
@@ -229,14 +229,20 @@ def evaluate_autonomy_decision(
             }
         return {"allowed": True, "code": "bounded_launch_permitted", "reason": "在夜间自主重提次数上限内，允许派发新尝试。"}
 
-    if operation == "prepare":
+    if operation in ("prepare", "submit"):
         if resubmissions_used >= int(policy.get("max_agent_resubmissions", 0)):
             return {
                 "allowed": False,
                 "code": "resubmission_budget_exhausted",
                 "reason": f"已达夜间自主重提上限（{resubmissions_used}/{policy.get('max_agent_resubmissions', 0)}），暂停等待早起人工审阅。",
             }
-        # Scientific redline: if preparing a recovery attempt for an existing run, netlist bytes MUST stay identical!
+        # Scientific redline: if preparing/submitting a recovery attempt for an existing run, netlist bytes MUST stay identical!
+        if arguments.get("netlist_edits") or arguments.get("append_netlist"):
+            return {
+                "allowed": False,
+                "code": "netlist_mutation_blocked",
+                "reason": "检测到网表修改参数（netlist_edits / append_netlist）：夜间自治禁止擅自修改网表，已挂起等待早起人工审阅。",
+            }
         if parent_run is not None:
             parent_sources = parent_run.get("sources") or {}
             proposed_sources = arguments.get("sources")
@@ -272,15 +278,21 @@ def evaluate_autonomy_decision(
                         "reason": "当前策略未开启仿真选项调优，已挂起等待人工审阅。",
                     }
 
-        # Memory cap check (bytes or MiB)
-        req_res = arguments.get("resources") or {}
-        mem_bytes = req_res.get("memory_bytes")
+        # Memory cap check (resources / limits / flat memory_gib)
+        req_res = arguments.get("resources") if isinstance(arguments.get("resources"), dict) else {}
+        req_lim = arguments.get("limits") if isinstance(arguments.get("limits"), dict) else {}
+        mem_bytes = req_res.get("memory_bytes") if req_res.get("memory_bytes") is not None else req_lim.get("memory_bytes")
         mem_mb = req_res.get("memory_mb")
         if mem_bytes is None and isinstance(mem_mb, (int, float)):
             mem_bytes = int(mem_mb * 1024 * 1024)
+        if mem_bytes is None and isinstance(arguments.get("memory_gib"), (int, float)) and not isinstance(arguments.get("memory_gib"), bool):
+            mem_bytes = int(round(float(arguments["memory_gib"]) * (1024 ** 3)))
         max_bytes = int(policy.get("max_memory_gib", 64)) * (1024 ** 3)
         if isinstance(mem_bytes, (int, float)) and mem_bytes > 0:
-            parent_mem = ((parent_run or {}).get("resources") or {}).get("memory_bytes")
+            parent_mem = (
+                ((parent_run or {}).get("resources") or {}).get("memory_bytes")
+                or ((parent_run or {}).get("limits") or {}).get("memory_bytes")
+            )
             if parent_mem and mem_bytes > parent_mem and not policy.get("allow_memory_scale"):
                 return {
                     "allowed": False,
@@ -297,7 +309,7 @@ def evaluate_autonomy_decision(
         return {
             "allowed": True,
             "code": "within_overnight_policy",
-            "reason": "符合夜间自治授权边界（原始网表不变、资源在上限内），允许 Agent 自主准备新尝试。",
+            "reason": "符合夜间自治授权边界（原始网表不变、资源在上限内），允许 Agent 自主提交新尝试。",
         }
 
     return {

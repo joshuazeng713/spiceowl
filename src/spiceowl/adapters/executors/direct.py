@@ -1095,6 +1095,12 @@ def launch(request):
         })
     return snapshot(path, manifest)
 
+def stage_and_launch(request):
+    staged = stage(request)
+    if staged.get("state") != "staged":
+        return staged
+    return launch(request)
+
 def cancel_run(request):
     manifest = request["manifest"]
     identity(manifest)
@@ -1576,6 +1582,8 @@ def request_main(request):
         return stage(request)
     if operation == "launch":
         return launch(request)
+    if operation == "stage_and_launch":
+        return stage_and_launch(request)
     if operation == "status":
         return snapshot(directory(manifest), manifest)
     if operation == "cancel":
@@ -1904,7 +1912,7 @@ def _request(plan, operation, extra=None):
     request = {"operation": operation, "nonce": secrets.token_hex(16), "manifest": manifest}
     if extra:
         request.update(extra)
-    if operation == "stage":
+    if operation in ("stage", "stage_and_launch"):
         request["files"] = plan["files"]
     try:
         reply = _exchange(manifest["profile"], request)
@@ -1916,7 +1924,7 @@ def _request(plan, operation, extra=None):
                 code = "remote_operation_failed"
             return {
                 "operation": operation,
-                "state": "outcome_unknown" if operation in ("stage", "launch", "cancel") else "rejected",
+                "state": "outcome_unknown" if operation in ("stage", "launch", "stage_and_launch", "cancel") else "rejected",
                 "error": {"code": code},
                 "run_key": manifest["run_key"],
                 "backend": manifest["backend"],
@@ -1932,7 +1940,7 @@ def _request(plan, operation, extra=None):
     except DomainError as exc:
         return {
             "operation": operation,
-            "state": "outcome_unknown" if operation in ("stage", "launch", "cancel") else "unobserved",
+            "state": "outcome_unknown" if operation in ("stage", "launch", "stage_and_launch", "cancel") else "unobserved",
             "run_key": manifest["run_key"],
             "backend": manifest["backend"],
             "manifest_sha256": plan["manifest_sha256"],
@@ -1948,6 +1956,11 @@ def stage(plan):
 def launch(plan):
     """Claim at most one launch (SSH detached wrapper, LSF bsub, or Slurm sbatch)."""
     return _request(plan, "launch")
+
+
+def stage_and_launch(plan):
+    """Atomically stage frozen inputs and claim at most one remote launch in a single SSH exchange."""
+    return _request(plan, "stage_and_launch")
 
 
 def status(plan):

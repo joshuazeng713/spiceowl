@@ -144,6 +144,96 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
     from spiceowl.codex_bridge import CodexBridge
     agent_ui_lock = threading.Lock()
     agent_ui_state: dict[str, object] = {"revision": 0, "patches": []}
+    workspace_source_box: dict = {}
+
+    def _sync_workspace_source(res: dict, *, host_id: str | None = None, source_origin: str = "ssh") -> None:
+        if not isinstance(res, dict):
+            return
+        text = res.get("text") if isinstance(res.get("text"), str) else res.get("netlist_text")
+        if not isinstance(text, str) or not text.strip():
+            return
+        run_rec = res.get("run") if isinstance(res.get("run"), dict) else {}
+        org = res.get("organization") if isinstance(res.get("organization"), dict) else {}
+        lib_name = res.get("lib_name") or res.get("library_name") or run_rec.get("library_name") or org.get("library") or None
+        cell_name = res.get("cell_name") or run_rec.get("cell_name") or None
+        view_name = res.get("view_name") or run_rec.get("view_name") or org.get("view") or None
+        project_name = res.get("project_name") or run_rec.get("project_name") or lib_name or cell_name or None
+        resolved_host = host_id or res.get("host_id") or run_rec.get("host_id") or None
+        resolved_origin = run_rec.get("source_origin") or res.get("source_origin") or source_origin
+        support = dict(res.get("support_files") or {}) if isinstance(res.get("support_files"), dict) else {}
+        workspace_source_box.clear()
+        workspace_source_box.update({
+            "host_id": resolved_host,
+            "netlist_text": text,
+            "support_files": support,
+            "project_name": project_name,
+            "library_name": lib_name,
+            "cell_name": cell_name,
+            "view_name": view_name,
+            "source_origin": resolved_origin,
+        })
+
+    def _prepare_kwargs_from_payload(payload: dict, *, allow_recheck: bool = False) -> tuple[dict, bool]:
+        allowed = {
+            "run_key", "netlist_text", "support_files", "host_id", "host_ids", "backend", "simulator",
+            "output_format", "expected_version", "pin_version", "cpus", "memory_gib",
+            "wall_seconds", "license_queue_seconds", "enforce_rlimit_as", "scheduler",
+            "include_dirs", "remote_python", "remote_root", "source_commit", "recovery_policy",
+            "remote_env",
+            "project_name", "library_name", "cell_name", "view_name",
+            "submission_group_id", "submission_label", "source_origin",
+        }
+        if allow_recheck:
+            allowed.add("recheck_resources")
+        if set(payload) - allowed or not {"run_key", "netlist_text"} <= set(payload):
+            label = "Direct submit" if allow_recheck else "Direct prepare"
+            raise DomainError(f"{label} requires run_key, netlist_text, and supported direct parameters only.")
+        recheck_resources = payload.get("recheck_resources", False)
+        if allow_recheck and type(recheck_resources) is not bool:
+            raise DomainError("recheck_resources must be boolean.")
+        cpus = payload.get("cpus", 1)
+        memory_gib = payload.get("memory_gib", 4.0)
+        wall_seconds = payload.get("wall_seconds", 3600)
+        lq_seconds = payload.get("license_queue_seconds", 120)
+        enforce_as = payload.get("enforce_rlimit_as", False)
+        if type(cpus) is not int or not 1 <= cpus <= 4096:
+            raise DomainError("cpus must be an integer between 1 and 4096.")
+        if isinstance(memory_gib, bool) or not isinstance(memory_gib, (int, float)) or not 0.0625 <= float(memory_gib) <= 16384:
+            raise DomainError("memory_gib must be a number between 0.0625 and 16384.")
+        limits = {
+            "cpu_count": cpus,
+            "memory_bytes": int(round(float(memory_gib) * 2**30)),
+            "wall_seconds": wall_seconds,
+            "license_queue_seconds": lq_seconds,
+            "enforce_rlimit_as": enforce_as,
+        }
+        return {
+            "run_key": payload["run_key"],
+            "netlist_text": payload["netlist_text"],
+            "support_files": payload.get("support_files"),
+            "host_id": payload.get("host_id"),
+            "host_ids": payload.get("host_ids"),
+            "backend": payload.get("backend", "ssh_direct"),
+            "simulator": payload.get("simulator", "spectre"),
+            "expected_version": payload.get("expected_version"),
+            "pin_version": payload.get("pin_version", True),
+            "limits": limits,
+            "scheduler": payload.get("scheduler"),
+            "output_format": payload.get("output_format", "psfascii"),
+            "include_dirs": payload.get("include_dirs"),
+            "remote_python": payload.get("remote_python", "/usr/bin/python3"),
+            "remote_root": payload.get("remote_root", ".spiceowl-runs"),
+            "remote_env": payload.get("remote_env"),
+            "source_commit": payload.get("source_commit"),
+            "recovery_policy": payload.get("recovery_policy"),
+            "project_name": payload.get("project_name"),
+            "library_name": payload.get("library_name"),
+            "cell_name": payload.get("cell_name"),
+            "view_name": payload.get("view_name"),
+            "submission_group_id": payload.get("submission_group_id"),
+            "submission_label": payload.get("submission_label"),
+            "source_origin": payload.get("source_origin"),
+        }, bool(recheck_resources)
 
     def record_ui_patch(kind: str, payload: dict) -> int:
         with agent_ui_lock:
@@ -163,6 +253,11 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 meta["host_id"] = payload.get("host_id")
                 meta["file_name"] = p.get("file_name")
                 meta["cell_name"] = p.get("cell_name")
+            elif kind == "direct_run_submitted" and isinstance(payload, dict):
+                meta["run_id"] = payload.get("run_id")
+                meta["host_id"] = payload.get("host_id")
+                meta["state"] = payload.get("state")
+                meta["simulator"] = payload.get("simulator")
             bridge_obj.emit_ui_patch(meta)
         return rev
 
@@ -174,7 +269,8 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
             circuitgit_sdk_path=circuitgit_sdk_path,
             direct_manager=direct_manager if enable_direct_exec else None,
             handoff_manager=handoff_manager,
-            ui_patch_sink=record_ui_patch, ssh_dir=ssh_dir)
+            ui_patch_sink=record_ui_patch, ssh_dir=ssh_dir,
+            active_source_box=workspace_source_box)
         definitions = [{key: row[key] for key in ('name', 'description', 'inputSchema')}
                        for row in dispatcher.definitions()]
     controller.codex = CodexBridge(controller.store.directory / 'codex', mode=controller.agent_mode,
@@ -601,61 +697,16 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 if url.query:
                     raise DomainError("Direct prepare does not accept query parameters.")
                 payload = self.body(max_bytes=2 * 1024 * 1024 + 65536)
-                allowed = {
-                    "run_key", "netlist_text", "support_files", "host_id", "host_ids", "backend", "simulator",
-                    "output_format", "expected_version", "pin_version", "cpus", "memory_gib",
-                    "wall_seconds", "license_queue_seconds", "enforce_rlimit_as", "scheduler",
-                    "include_dirs", "remote_python", "remote_root", "source_commit", "recovery_policy",
-                    "remote_env",
-                    "project_name", "library_name", "cell_name", "view_name",
-                    "submission_group_id", "submission_label", "source_origin",
-                }
-                if set(payload) - allowed or not {"run_key", "netlist_text"} <= set(payload):
-                    raise DomainError("Direct prepare requires run_key, netlist_text, and supported direct parameters only.")
-                cpus = payload.get("cpus", 1)
-                memory_gib = payload.get("memory_gib", 4.0)
-                wall_seconds = payload.get("wall_seconds", 3600)
-                lq_seconds = payload.get("license_queue_seconds", 120)
-                enforce_as = payload.get("enforce_rlimit_as", False)
-                if type(cpus) is not int or not 1 <= cpus <= 4096:
-                    raise DomainError("cpus must be an integer between 1 and 4096.")
-                if isinstance(memory_gib, bool) or not isinstance(memory_gib, (int, float)) or not 0.0625 <= float(memory_gib) <= 16384:
-                    raise DomainError("memory_gib must be a number between 0.0625 and 16384.")
-                limits = {
-                    "cpu_count": cpus,
-                    "memory_bytes": int(round(float(memory_gib) * 2**30)),
-                    "wall_seconds": wall_seconds,
-                    "license_queue_seconds": lq_seconds,
-                    "enforce_rlimit_as": enforce_as,
-                }
-                run = direct_manager.prepare(
-                    run_key=payload["run_key"],
-                    netlist_text=payload["netlist_text"],
-                    support_files=payload.get("support_files"),
-                    host_id=payload.get("host_id"),
-                    host_ids=payload.get("host_ids"),
-                    backend=payload.get("backend", "ssh_direct"),
-                    simulator=payload.get("simulator", "spectre"),
-                    expected_version=payload.get("expected_version"),
-                    pin_version=payload.get("pin_version", True),
-                    limits=limits,
-                    scheduler=payload.get("scheduler"),
-                    output_format=payload.get("output_format", "psfascii"),
-                    include_dirs=payload.get("include_dirs"),
-                    remote_python=payload.get("remote_python", "/usr/bin/python3"),
-                    remote_root=payload.get("remote_root", ".spiceowl-runs"),
-                    remote_env=payload.get("remote_env"),
-                    source_commit=payload.get("source_commit"),
-                    recovery_policy=payload.get("recovery_policy"),
-                    project_name=payload.get("project_name"),
-                    library_name=payload.get("library_name"),
-                    cell_name=payload.get("cell_name"),
-                    view_name=payload.get("view_name"),
-                    submission_group_id=payload.get("submission_group_id"),
-                    submission_label=payload.get("submission_label"),
-                    source_origin=payload.get("source_origin"),
-                )
+                prep_kwargs, _ = _prepare_kwargs_from_payload(payload, allow_recheck=False)
+                run = direct_manager.prepare(**prep_kwargs)
                 return self.reply({"run": run}, 201)
+            if path == "/api/direct/submit" and self.command == "POST":
+                if url.query:
+                    raise DomainError("Direct submit does not accept query parameters.")
+                payload = self.body(max_bytes=2 * 1024 * 1024 + 65536)
+                prep_kwargs, recheck_resources = _prepare_kwargs_from_payload(payload, allow_recheck=True)
+                run = direct_manager.submit(recheck_resources=recheck_resources, **prep_kwargs)
+                return self.reply({"run": run}, 202)
             if path == "/api/library/ssh-browse" and self.command == "POST":
                 from pathlib import Path as _Path
                 from spiceowl.onboarding.ssh_import import browse_remote_netlists
@@ -695,13 +746,15 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     ssh_target = body["ssh_target"]
                 ssh_cfg = (_Path(ssh_dir) / "config") if ssh_dir is not None else None
                 include_deps = body.get("include_dependencies", True)
-                return self.reply(fetch_remote_netlist(
+                res = fetch_remote_netlist(
                     ssh_target,
                     ssh_cfg,
                     body["path"],
                     include_dependencies=include_deps,
                     ssh_hostname=ssh_hostname,
-                ))
+                )
+                _sync_workspace_source(res, host_id=body.get("host_id"), source_origin="ssh")
+                return self.reply(res)
             if path == "/api/library/ssh-export-schematic" and self.command == "POST":
                 from pathlib import Path as _Path
                 from spiceowl.onboarding.ssh_import import export_remote_schematic
@@ -719,7 +772,7 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                 else:
                     ssh_target = body["ssh_target"]
                 ssh_cfg = (_Path(ssh_dir) / "config") if ssh_dir is not None else None
-                return self.reply(export_remote_schematic(
+                res = export_remote_schematic(
                     ssh_target,
                     ssh_cfg,
                     body["path"],
@@ -729,7 +782,9 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     maestro_test=body.get("maestro_test"),
                     cds_lib=body.get("cds_lib"),
                     ssh_hostname=ssh_hostname,
-                ))
+                )
+                _sync_workspace_source(res, host_id=body.get("host_id"), source_origin="ssh")
+                return self.reply(res)
             if path == "/api/library/circuitgit-entry":
                 if self.command == "GET":
                     entry = circuitgit_entry_box.get("entry")
@@ -1048,7 +1103,14 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         pass
                     return self.reply(direct_manager.delete(run_id))
                 if len(sub) == 2 and sub[1] == "inputs" and self.command == "GET":
-                    return self.reply(direct_manager.read_inputs(run_id))
+                    res = direct_manager.read_inputs(run_id)
+                    run_rec = res.get("run") if isinstance(res.get("run"), dict) else {}
+                    _sync_workspace_source(
+                        res,
+                        host_id=run_rec.get("host_id"),
+                        source_origin=run_rec.get("source_origin") or "direct",
+                    )
+                    return self.reply(res)
                 if len(sub) == 2 and sub[1] == "waveforms" and self.command == "GET":
                     query = parse_qs(url.query, keep_blank_values=True)
                     if set(query) - {"refresh_remote", "allow_remote"}:
@@ -1153,6 +1215,13 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                         if req:
                             raise DomainError("Stage takes an empty object.")
                         return self.reply({"run": direct_manager.stage(run_id)}, 202)
+                    if op == "stage-and-launch":
+                        if set(req) - {"recheck_resources"} or ("recheck_resources" in req and type(req["recheck_resources"]) is not bool):
+                            raise DomainError("Stage and launch accepts an empty object or boolean recheck_resources.")
+                        return self.reply(
+                            {"run": direct_manager.stage_and_launch(run_id, recheck_resources=bool(req.get("recheck_resources", False)))},
+                            202,
+                        )
                     if op == "launch":
                         if set(req) - {"recheck_resources"} or ("recheck_resources" in req and type(req["recheck_resources"]) is not bool):
                             raise DomainError("Launch accepts an empty object or boolean recheck_resources.")

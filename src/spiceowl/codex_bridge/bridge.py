@@ -53,10 +53,15 @@ Only the human client can decide a frozen approval. Stop dependent work after de
 Preserve exact source, model, experiment and run identities. Missing scientific inputs stay missing.
 Report execution, measurement validity, specification, operating qualification and dependency provenance separately.
 Be concise and direct (matching CircuitGit's assistant style): reply in the user's language, lead with concrete conclusions and actionable recommendations, avoid verbose filler, and never dump raw tool JSON.
-When a [SPICEOWL_CTX] workspace snapshot (live server CPU/memory/active simulations, SPICE FlexLM license availability, active circuit netlist, and Maestro settings) is attached to the user's message, treat it as current connector telemetry and use it directly without re-probing servers.
+When a [SPICEOWL_CTX] workspace snapshot (live server CPU/memory/active simulations, SPICE FlexLM license availability, active circuit netlist, and Maestro settings) is attached to the user's message, treat it as current connector telemetry and use it directly without re-probing or scanning servers.
 Do NOT call approval-gated tools (spiceowl_scan_resources, spiceowl_probe_host, spiceowl_direct_control, spiceowl_live_control) for routine host recommendation, license review, netlist checks, or PVT/MC planning; use [SPICEOWL_CTX] and read-only tools (spiceowl_list_hosts, spiceowl_recommend_hosts, spiceowl_direct_read, spiceowl_inspect_agent_source, spiceowl_netlist_requirements) instead.
-You CAN directly browse and search remote SSH circuit libraries / Virtuoso schematics via `spiceowl_library_browse` (use `operation="find"` with `query` when the user asks to find or open a library/cell/schematic by name), open and export them straight into the webpage editor via `spiceowl_library_open` (preserving Maestro setup and RNL geometry), and change ANY webpage option (target server, simulator, backend, CPUs, memory, wall time, output format, run name, netlist edits, LSF/Slurm scheduler, overnight recovery policy, or active page/tab) via `spiceowl_ui_configure`. These tools run immediately without approval popups and update the user's browser in real time.
-The web workbench keeps only two minimal tabs (`setup` for Agent configuration and `recovery` for overnight watch/recovery) while all simulation history and run controls live in `overview` grouped by Project and Testbench. Treat binary waveform analysis, Cycle Slicer, lossless analog/ADC metrics (`spiceowl_direct_read` waveform_* + `spiceowl_adctools`), and PVT/MC batch sweeps (`spiceowl_direct_control` batch_* + `spiceowl_direct_read` batch_*) as Agent skills invoked on demand—never ask the user to click removed waveform/batch tabs. When preparing a simulation after `spiceowl_library_open`, `spiceowl_direct_control(operation="prepare", arguments={"host_id": ..., "simulator": ...})` automatically reuses the opened netlist, support files, and project/TB metadata (and generates `run_key` if omitted) so you do not need to paste large netlists back into arguments. When preparing multiple simulations for one request, keep `project_name`/`library_name`/`cell_name` filled so they auto-archive together under the user's Project and TB in `overview`.
+Fast Simulation Submission Skill (`spiceowl-sim-submit`):
+1. Read `[SPICEOWL_CTX]` first; never probe or scan hosts when live telemetry is already present.
+2. Locate and open remote SSH circuit libraries / Virtuoso schematics read-only via `spiceowl_library_browse(operation="find", query=...)` + `spiceowl_library_open` (preserving Maestro setup and RNL geometry), and update any webpage option via `spiceowl_ui_configure`—these run immediately without approval popups.
+3. For parameter or analysis changes on an opened circuit, use surgical `netlist_edits: [{"find": ..., "replace": ...}]` instead of pasting an entire large netlist.
+4. Prefer 1-call atomic `spiceowl_direct_control(operation="submit", arguments={"host_id": ..., "simulator": ..., "cpus": ..., "memory_gib": ...})` (freezes locally + stages + launches in 1 approval and 1 SSH round-trip, auto-reusing active netlist, support files, and Project/TB metadata, and generating `run_key` if omitted); use `operation="stage_and_launch"` to launch an already-`prepared` run in 1 call. Keep `project_name`/`library_name`/`cell_name` filled for multi-run requests so they auto-archive together under the user's Project and TB in `overview`.
+5. You can read the full SOP checklist anytime via `spiceowl_direct_read(operation="skill", arguments={"name": "spiceowl-sim-submit"})`.
+The web workbench keeps only two minimal tabs (`setup` for Agent configuration and `recovery` for overnight watch/recovery) while all simulation history and run controls live in `overview` grouped by Project and Testbench. Treat binary waveform analysis, Cycle Slicer, lossless analog/ADC metrics (`spiceowl_direct_read` waveform_* + `spiceowl_adctools`), and PVT/MC batch sweeps (`spiceowl_direct_control` batch_* + `spiceowl_direct_read` batch_*) as Agent skills invoked on demand—never ask the user to click removed waveform/batch tabs.
 Never call spiceowl_probe_host in a loop across multiple hosts. Only invoke an approval-gated tool when the user explicitly requests that remote SSH check or simulation execution action.
 Only include a fenced ```spectre or ```spice code block when proposing a runnable netlist or concrete netlist modification.
 '''
@@ -350,6 +355,8 @@ class CodexBridge:
         _check(isinstance(note, str) and len(note) <= 1000, 'Recovery note must be at most 1000 characters.')
         _check(type(confirmed_side_effects_checked) is bool, 'confirmed_side_effects_checked must be boolean.')
         with self.operation_lock:
+            rpc_replies = []
+            interrupted_turns = []
             with self.lock:
                 _check(bool(self.data['recovery_required']), 'No interrupted turn requires recovery.', 'codex_no_recovery_needed')
                 snap = self.recovery_report()
@@ -359,6 +366,67 @@ class CodexBridge:
                         'Reconcile remote status/lookup first and set confirmed_side_effects_checked=true.',
                         'codex_side_effects_unconfirmed',
                     )
+                rpc = self.rpc
+                rpc_live = rpc is not None and not rpc.closed
+                prev_thread_id = self.data.get('thread_id')
+                prev_turn_id = self.data.get('turn_id')
+                seen_rpc_ids = set()
+                seen_turns = set()
+                reconciled_tool_reply = {
+                    'success': False,
+                    'contentItems': [{'type': 'inputText', 'text': encode({'error': 'Turn was interrupted and reconciled.'})}],
+                }
+                if prev_thread_id and prev_turn_id:
+                    seen_turns.add((prev_thread_id, prev_turn_id))
+                    interrupted_turns.append((prev_thread_id, prev_turn_id))
+                for row in self.data['requests'].values():
+                    if row.get('state') in ACTIVE | {'pending', 'unknown'}:
+                        tid = row.get('thread_id') or prev_thread_id
+                        turn_id = row.get('turn_id')
+                        if tid and turn_id and (tid, turn_id) not in seen_turns:
+                            seen_turns.add((tid, turn_id))
+                            interrupted_turns.append((tid, turn_id))
+                for row in self.data['approvals'].values():
+                    if row.get('status') in ('pending', 'resolving', 'responding', 'unknown'):
+                        if row.get('kind') == 'dynamic_tool' and row.get('call_key') in self.data['calls']:
+                            call = self.data['calls'][row['call_key']]
+                            if call.get('state') in ('pending', 'executing', 'unknown'):
+                                for rid in call.get('rpc_ids') or ():
+                                    if rid not in seen_rpc_ids:
+                                        seen_rpc_ids.add(rid)
+                                        rpc_replies.append({'id': rid, 'result': reconciled_tool_reply})
+                        elif row.get('rpc_id') is not None and row['rpc_id'] not in seen_rpc_ids:
+                            rid = row['rpc_id']
+                            seen_rpc_ids.add(rid)
+                            if row.get('method') in NATIVE_APPROVALS:
+                                rpc_replies.append({'id': rid, 'result': {'decision': 'decline'}})
+                            elif row.get('method') == 'item/permissions/requestApproval':
+                                rpc_replies.append({'id': rid, 'result': {'permissions': {}, 'scope': 'turn'}})
+                            else:
+                                rpc_replies.append({'id': rid, 'error': {'code': -32601, 'message': 'Turn was interrupted and reconciled'}})
+                for row in self.data['calls'].values():
+                    if row.get('state') in ('pending', 'executing', 'unknown'):
+                        for rid in row.get('rpc_ids') or ():
+                            if rid not in seen_rpc_ids:
+                                seen_rpc_ids.add(rid)
+                                rpc_replies.append({'id': rid, 'result': reconciled_tool_reply})
+
+            # Unblock dangling server requests and best-effort interrupt open turns outside self.lock.
+            if rpc is not None and not rpc.closed:
+                for payload in rpc_replies:
+                    try:
+                        rpc.send(payload)
+                    except BridgeError:
+                        pass
+                for tid, turn_id in interrupted_turns:
+                    if rpc.closed:
+                        break
+                    try:
+                        rpc.call('turn/interrupt', {'threadId': tid, 'turnId': turn_id})
+                    except BridgeError:
+                        pass
+
+            with self.lock:
                 now = utcnow()
                 archived_requests = []
                 for key, row in self.data['requests'].items():
@@ -388,6 +456,10 @@ class CodexBridge:
                         )
                         archived_approvals.append(aid)
 
+                had_live_interrupted_turn = bool(
+                    rpc_live and (archived_requests or archived_calls or archived_approvals or prev_turn_id)
+                )
+                reset_thread = resolution == 'abort_and_reset_thread' or had_live_interrupted_turn
                 entry = {
                     'recovery_id': 'rec-' + uuid4().hex[:16],
                     'reconciled_at': now,
@@ -398,6 +470,7 @@ class CodexBridge:
                     'archived_requests': archived_requests,
                     'archived_calls': archived_calls,
                     'archived_approvals': archived_approvals,
+                    'thread_reset': reset_thread,
                     'automatic_replay': False,
                 }
                 history = list(self.data.get('recovery_history') or [])
@@ -406,7 +479,7 @@ class CodexBridge:
                 self.data['recovery_required'] = False
                 self.data['turn_id'] = None
                 self.data['request_key'] = None
-                if resolution == 'abort_and_reset_thread':
+                if reset_thread:
                     self.data['thread_id'] = None
                 if self.rpc is not None and not self.rpc.closed:
                     self.data['state'] = 'ready' if self.data['thread_id'] else 'connected'
@@ -636,7 +709,8 @@ class CodexBridge:
                 turn_id = _id(reply.get('turn', {}).get('id'), 'turn ID')
                 with self.lock:
                     _check(self.data['turn_id'] in (None, turn_id), 'Codex changed the turn identity.', 'codex_protocol')
-                    _check(not any(r['request_key'] != request_key and r.get('turn_id') == turn_id
+                    _check(not any(r['request_key'] != request_key and r.get('thread_id') == thread_id
+                                   and r.get('turn_id') == turn_id
                                    for r in self.data['requests'].values()),
                            'Codex reused an earlier turn identity.', 'codex_protocol')
                     self.data['turn_id'] = turn_id
@@ -718,7 +792,8 @@ class CodexBridge:
             row = self.data['requests'].get(self.data['request_key'])
             if row is None or row['state'] not in ACTIVE:
                 return
-            if any(r['request_key'] != row['request_key'] and r.get('turn_id') == incoming
+            if any(r['request_key'] != row['request_key'] and r.get('thread_id') == self.data['thread_id']
+                   and r.get('turn_id') == incoming
                    for r in self.data['requests'].values()):
                 return
             if method == 'turn/started':
@@ -800,7 +875,7 @@ class CodexBridge:
                 self.rpc.send({'id': message['id'], 'error': {'code': -32602, 'message': 'Approval payload exceeds the review limit'}})
             self._event('bridge/error', {'code': 'codex_approval_payload_limit'})
             return
-        approval_id = 'approval-' + _digest([self.data['connection_id'], message['id'], method])
+        approval_id = 'approval-' + _digest([self.data['connection_id'], self.data['thread_id'], self.data['turn_id'], message['id'], method])
         old = self.data['approvals'].get(approval_id)
         if old is not None:
             if old['params'] != params:
@@ -870,7 +945,13 @@ class CodexBridge:
                     return
                 # Exceptions may occur after a dispatcher side effect. Preserve its identity, do not replay.
                 self._unknown('tool_execution_unconfirmed')
-                self._event('bridge/error', {'code': 'codex_tool_outcome_unknown', 'automatic_retry': False})
+                detail = _redact(str(exc))
+                self._event('bridge/error', {
+                    'code': 'codex_tool_outcome_unknown',
+                    'automatic_retry': False,
+                    'error_type': type(exc).__name__[:128],
+                    'detail': detail[:200] if isinstance(detail, str) else '',
+                })
 
     def _tool_result(self, message, call_key, success, result):
         public = _redact(result)

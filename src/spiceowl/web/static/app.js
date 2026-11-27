@@ -21,7 +21,7 @@ const codexPanelState = {loaded: false, loading: false, busy: false, interruptin
   models: [], defaultModel: '', modelsLoaded: false, authAccount: null, settingsOpen: false,
   turnStartedAt: null, turnTimer: null, lastTurnStatus: '', lastTurnDurationMs: null,
   uiPatchRevision: 0, uiPatchSyncing: false,
-  historyTruncated: false, recoverySnapshot: null, recoveryConfirmed: false, evalReport: null, evalBusy: false};
+  historyTruncated: false, recoverySnapshot: null, recoveryConfirmed: false, recoveryAutoLoadedKey: null, evalReport: null, evalBusy: false};
 const CODEX_PENDING_KEY = 'spiceowl.codex-pending';
 const isStandaloneAgent = () => !isPublicDemo() && state.agent_channel?.mode === 'standalone';
 let poolImportPreview = null;
@@ -1281,12 +1281,13 @@ function stripRnlCommentsForAgent(netlistText) {
 function buildSimAgentWorkspaceContext() {
   const lines = [buildSimAgentContextSummary()];
   lines.push(`当前选中主机：${directDraft.host_id || '未选择'}；仿真器：${directDraft.simulator || 'spectre'}；执行后端：${directDraft.backend || 'ssh_direct'}；资源预算：${directDraft.cpus} 核 / ${directDraft.memory_gib} GiB / ${directDraft.wall_seconds}s。`);
+  lines.push('提交流程提示：新建并启动仿真优先单次调用 spiceowl_direct_control(operation="submit")（自动复用当前网表与 Project/TB 元数据，支持用 netlist_edits 做精准局部修改，1 次调用完成准备、上传与启动）；对已处于 prepared 状态的任务可直接调用 spiceowl_direct_control(operation="stage_and_launch") 一次上传并启动。');
   if (directState.agentLinkedRunId) {
     const linked = (directState.runs || []).find(r => r.run_id === directState.agentLinkedRunId) || (directState.detail?.run_id === directState.agentLinkedRunId ? directState.detail : null);
     if (linked) {
       const org = resolveRunOrganization(linked);
       const st = classifyDirectRunState(linked);
-      lines.push(`当前对接的历史/待处理任务：run_id=${linked.run_id}，状态=${linked.state}（${st.label}），主机=${linked.host_id}，仿真器=${linked.simulator}，项目/TB=${org.project}/${org.testbench}；可直接用 spiceowl_direct_read(inspect/inputs/report) 或 spiceowl_direct_control(stage/launch/status/collect/cancel/delete) 操作此任务。`);
+      lines.push(`当前对接的历史/待处理任务：run_id=${linked.run_id}，状态=${linked.state}（${st.label}），主机=${linked.host_id}，仿真器=${linked.simulator}，项目/TB=${org.project}/${org.testbench}；可直接用 spiceowl_direct_read(inspect/inputs/report) 或 spiceowl_direct_control(stage_and_launch/status/collect/cancel/delete) 操作此任务，或用 operation="submit" 一步新提。`);
     }
   }
   const recentRuns = (directState.runs || []).slice(0, 6);
@@ -1459,24 +1460,21 @@ async function quickLaunchDirectSimulation() {
   directState.busy = true;
   directState.error = null;
   directState.quickLaunchError = null;
-  directState.quickLaunchNote = '① 正在本地冻结网表与仿真计划 (Prepare)…';
+  directState.quickLaunchNote = '⚡ 正在一键准备、上传并启动仿真…';
   render();
   try {
-    const prep = await api('/api/direct/prepare', {method: 'POST', body: buildDirectPreparePayload()});
-    const runId = prep.run.run_id;
-    directState.selectedId = runId;
-    overviewState.selectedRunId = runId;
-    directDraft.run_key = '';
-    directState.quickLaunchNote = `✓ 已冻结 ${runId} → ② 正在上传网表到 ${prep.run.host_id} (Stage)…`;
-    render();
-    await api(`/api/direct/runs/${encodeURIComponent(runId)}/stage`, {method: 'POST', body: {}});
-    directState.quickLaunchNote = `✓ 已冻结 → ✓ 已上传 → ③ 正在原子启动仿真 (Launch)…`;
-    render();
-    await api(`/api/direct/runs/${encodeURIComponent(runId)}/launch`, {
+    const res = await api('/api/direct/submit', {
       method: 'POST',
-      body: {recheck_resources: false},
+      body: {...buildDirectPreparePayload(), recheck_resources: false},
     });
-    directState.quickLaunchNote = `🚀 仿真 ${runId} 已在 ${prep.run.host_id} 成功启动！`;
+    const runId = res?.run?.run_id || '';
+    const hostId = res?.run?.host_id || directDraft.host_id || '';
+    if (runId) {
+      directState.selectedId = runId;
+      overviewState.selectedRunId = runId;
+    }
+    directDraft.run_key = '';
+    directState.quickLaunchNote = `🚀 仿真 ${runId} 已在 ${hostId} 成功启动！`;
     hostLiveState.loaded = false;
     toast(`🚀 仿真 ${runId} 已成功启动！可查看任务控制或回「服务器池资源」查看紫色个人资源条。`);
   } catch (error) {
@@ -1489,6 +1487,14 @@ async function quickLaunchDirectSimulation() {
   }
 }
 
+function formatCodexErrorMessage(error) {
+  const raw = String(error?.message || '请求失败');
+  if (/Codex reused an earlier turn identity/i.test(raw)) {
+    return `${raw}（旧会话回合冲突，请点上方「一键归档并恢复对话」或「新对话」）`;
+  }
+  return raw;
+}
+
 async function sendPromptToSimAgent(promptText) {
   if (!isStandaloneAgent() || isCircuitGitManagedEntry() || codexPanelState.busy || codexActiveTurn()) return;
   const userText = String(promptText || '').trim();
@@ -1499,6 +1505,7 @@ async function sendPromptToSimAgent(promptText) {
   codexPanelState.lastTurnStatus = 'running';
   codexPanelState.lastTurnDurationMs = null;
   renderCodexActivity();
+  let request = null;
   try {
     if (state.hosts.length && (!hostLiveState.loaded || Date.now() - hostLiveState.loadedAt > 60000) && !hostLiveState.loading) {
       await Promise.race([
@@ -1521,7 +1528,7 @@ async function sendPromptToSimAgent(promptText) {
     }
     openCodexEvents();
     const fullText = `${buildSimAgentWorkspaceContext()}\n\n${userText}`;
-    const request = {
+    request = {
       thread_id: codexPanelState.status.thread_id,
       text: fullText.slice(0, 23800),
       request_key: `codex-${crypto.randomUUID()}`,
@@ -1548,8 +1555,27 @@ async function sendPromptToSimAgent(promptText) {
     }
     await refreshCodexStatus();
   } catch (error) {
-    codexPanelState.error = error.message;
-    toast(error.message);
+    const statusOk = await refreshCodexStatus().catch(() => false);
+    const status = codexPanelState.status || {};
+    const serverRejected = Boolean(error?.status || error?.code);
+    const notPendingOnServer = Boolean(statusOk && request && status.request_key !== request.request_key);
+    const shouldClearPending = !request || serverRejected || Boolean(status.recovery_required) || notPendingOnServer;
+    codexPanelState.turnStartedAt = null;
+    codexPanelState.lastTurnStatus = 'failed';
+    if (shouldClearPending) {
+      const pending = codexPanelState.pending;
+      const reqKey = request?.request_key || pending?.request_key;
+      const threadId = request?.thread_id || pending?.thread_id;
+      if (reqKey && threadId) {
+        const uItem = codexThread(threadId)?.items.find(row => row.requestKey === reqKey);
+        if (uItem && uItem.status === 'unconfirmed') uItem.status = 'failed';
+      }
+      codexPanelState.pending = null;
+      try { sessionStorage.removeItem(CODEX_PENDING_KEY); } catch { /* ignore */ }
+    }
+    const msg = formatCodexErrorMessage(error);
+    codexPanelState.error = msg;
+    toast(msg);
   } finally {
     codexPanelState.busy = false;
     renderCodexActivity();
@@ -3493,11 +3519,13 @@ async function api(path, options = {}) {
       render();
       const staleErr = new Error('本机连接器刚刚重启，请点右上角「连接本机」重新授权 1 秒续连。');
       staleErr.code = 'connector_session_expired';
+      staleErr.status = response.status;
       staleErr.definitive = true;
       throw staleErr;
     }
     const error = new Error(data.error?.message || 'The local request failed.');
     error.code = data.error?.code || 'request_failed';
+    error.status = response.status;
     error.definitive = response.status < 500;
     throw error;
   }
@@ -4864,8 +4892,12 @@ function friendlyCodexToolName(name) {
 }
 
 function syncCodexTurnTimer() {
-  const active = codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending);
-  if (active) {
+  const isLive = () => {
+    const statusObj = codexPanelState.status || {};
+    const brokenRecovery = Boolean(statusObj.recovery_required || statusObj.state === 'unknown');
+    return !brokenRecovery && !codexPanelState.error && (codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending));
+  };
+  if (isLive()) {
     if (!codexPanelState.turnStartedAt) codexPanelState.turnStartedAt = Date.now();
     if (!codexPanelState.turnTimer && typeof setInterval === 'function' && typeof clearInterval === 'function') {
       codexPanelState.turnTimer = setInterval(() => {
@@ -4873,7 +4905,7 @@ function syncCodexTurnTimer() {
         if (el && codexPanelState.turnStartedAt) {
           el.textContent = formatTurnSeconds(Date.now() - codexPanelState.turnStartedAt);
         }
-        if (!(codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending))) {
+        if (!isLive()) {
           if (typeof clearInterval === 'function') clearInterval(codexPanelState.turnTimer);
           codexPanelState.turnTimer = null;
         }
@@ -5025,6 +5057,16 @@ function applyAgentUiPatch(patch) {
     toast(`✨ AI 已更新页面配置（${changed.slice(0, 5).join('、')}${changed.length > 5 ? ' 等' : ''}）`);
     return true;
   }
+  if (kind === 'direct_run_submitted') {
+    if (data.run_id) {
+      directState.selectedId = data.run_id;
+      overviewState.selectedRunId = data.run_id;
+    }
+    hostLiveState.loaded = false;
+    void refreshDirect();
+    toast(`🚀 AI 已提交并启动仿真 ${data.run_id || ''}${data.host_id ? ' @ ' + data.host_id : ''}`.trim());
+    return true;
+  }
   return false;
 }
 
@@ -5099,7 +5141,7 @@ function receiveCodexEvent(event) {
       status: params.success === true ? 'completed' : 'failed',
       ownerReview: typeof params.result?.details?.review_url === 'string'
         || typeof params.result?.error?.details?.review_url === 'string'});
-    if (params.success === true && ['spiceowl_library_open', 'spiceowl_ui_configure'].includes(params.tool)) {
+    if (params.success === true && ['spiceowl_library_open', 'spiceowl_ui_configure', 'spiceowl_direct_control'].includes(params.tool)) {
       void syncAgentUiPatches(Number(params.result?.revision) || 0);
     }
   } else if (event.method === 'approval/required' && typeof params.approval_id === 'string') {
@@ -5198,19 +5240,36 @@ function receiveCodexEvent(event) {
 }
 
 async function refreshCodexStatus() {
-  if (!isStandaloneAgent() || codexPanelState.loading) return;
+  if (!isStandaloneAgent() || codexPanelState.loading) return false;
   codexPanelState.loading = true;
   loadCodexPending();
+  let ok = false;
   try {
     setCodexStatus(await api('/api/codex/status'));
     codexPanelState.error = null;
+    ok = true;
     openCodexEvents();
+    if (codexPanelState.status?.recovery_required && !codexPanelState.recoverySnapshot) {
+      const recKey = `${codexPanelState.status.request_key || ''}:${codexPanelState.status.cursor || 0}`;
+      if (codexPanelState.recoveryAutoLoadedKey !== recKey) {
+        codexPanelState.recoveryAutoLoadedKey = recKey;
+        try {
+          codexPanelState.recoverySnapshot = await api('/api/codex/recovery');
+          codexPanelState.recoveryConfirmed = false;
+        } catch { /* Fallback: user can still click inspect button manually */ }
+      }
+    } else if (!codexPanelState.status?.recovery_required && codexPanelState.recoverySnapshot) {
+      codexPanelState.recoverySnapshot = null;
+      codexPanelState.recoveryConfirmed = false;
+      codexPanelState.recoveryAutoLoadedKey = null;
+    }
     if (codexPanelState.status?.connected && location.hash === '#direct') {
       if (!codexPanelState.modelsLoaded) void loadCodexCatalogAndAuth();
       void syncAgentUiPatches();
     }
   } catch (error) { codexPanelState.error = error.message; codexPanelState.loaded = true; }
   finally { codexPanelState.loading = false; if (!location.hash || ['#quickstart', '#agents', '#direct'].includes(location.hash)) render(); }
+  return ok;
 }
 
 function formatDirectApprovalTitle(approval) {
@@ -5222,7 +5281,32 @@ function formatDirectApprovalTitle(approval) {
     const ids = Array.isArray(args.host_ids) ? args.host_ids : [];
     return `扫描服务器资源（${ids.slice(0, 3).join(', ')}${ids.length > 3 ? ` 等 ${ids.length} 台` : ''}）`;
   }
-  if (tool === 'spiceowl_direct_control') return `仿真控制 · ${args.operation || '执行'}`;
+  if (tool === 'spiceowl_direct_control') {
+    const op = args.operation || '';
+    const sub = args.arguments && typeof args.arguments === 'object' ? args.arguments : {};
+    if (op === 'submit') {
+      const target = sub.cell_name || sub.run_key || '当前电路';
+      const host = sub.host_id || '指定主机';
+      const spec = sub.simulator
+        ? `（${sub.simulator}${sub.cpus ? ' · ' + sub.cpus + '核' : ''}${sub.memory_gib ? '/' + sub.memory_gib + 'GiB' : ''}）`
+        : '';
+      return `一键准备并启动仿真 · ${target} @ ${host}${spec}`;
+    }
+    if (op === 'stage_and_launch') {
+      return `一键上传并启动 · ${sub.run_id || '任务'}`;
+    }
+    const opMap = {
+      prepare: '冻结仿真计划',
+      stage: '上传输入文件',
+      launch: '启动远端仿真',
+      status: '查询远端状态',
+      collect: '收集结果与日志',
+      cancel: '取消远端作业',
+      delete: '删除本地记录',
+    };
+    const label = opMap[op] || op || '执行';
+    return `仿真控制 · ${label}${sub.run_id ? ` (${sub.run_id})` : ''}`;
+  }
   if (tool === 'spiceowl_live_control') return `远端仿真控制 · ${args.operation || '执行'}`;
   return tool;
 }
@@ -5248,7 +5332,7 @@ function codexApprovalCard(approval) {
 function renderCleanDirectTimeline(items) {
   const statusObj = codexPanelState.status || {};
   const brokenRecovery = Boolean(statusObj.recovery_required || statusObj.state === 'unknown');
-  const active = !brokenRecovery && (codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending));
+  const active = !brokenRecovery && !codexPanelState.error && (codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending));
   if (!items.length && !active) {
     return '<div class="codex-chat-empty"><strong>Agent 仿真配置已就绪</strong><p>可以直接让 AI 查找/打开远端电路库或原理图、修改右侧仿真参数，或点上方快捷指令开始。</p></div>';
   }
@@ -5256,8 +5340,8 @@ function renderCleanDirectTimeline(items) {
   let toolBuf = [];
   const flushTools = () => {
     if (!toolBuf.length) return;
-    const running = !brokenRecovery && toolBuf.find(t => t.status === 'running');
-    const interrupted = brokenRecovery && toolBuf.some(t => t.status === 'running');
+    const running = active && toolBuf.find(t => t.status === 'running');
+    const interrupted = !active && toolBuf.some(t => t.status === 'running');
     const failed = interrupted || toolBuf.some(t => t.status === 'failed');
     const summaryLabel = running
       ? `正在执行 · ${friendlyCodexToolName(running.name)}…`
@@ -5265,7 +5349,7 @@ function renderCleanDirectTimeline(items) {
       ? `执行步骤（${toolBuf.length} 步 · ${interrupted ? '已中断' : '含异常'}，点击展开）`
       : `已完成 · ${toolBuf.length} 步工具调用`;
     const stepsHtml = toolBuf.map(t => {
-      const stateLabel = (t.status === 'running' && brokenRecovery) ? '已中断' : t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束';
+      const stateLabel = (t.status === 'running' && !active) ? '已中断' : t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束';
       return `<li class="sim-ai-step"><details><summary><span>${escape(friendlyCodexToolName(t.name))}</span><small>${stateLabel}</small></summary><pre>${escape(t.text || '')}</pre></details></li>`;
     }).join('');
     chunks.push(`<details class="sim-ai-progress"><summary>${escape(summaryLabel)}</summary><ol class="sim-ai-steps">${stepsHtml}</ol></details>`);
@@ -5282,7 +5366,8 @@ function renderCleanDirectTimeline(items) {
     flushTools();
     if (item.type === 'user') {
       const cleanUser = stripSimAgentContextEnvelope(item.text || '');
-      chunks.push(`<article class="sim-ai-msg is-user"><strong class="sim-ai-role">你${item.status === 'unconfirmed' ? ' · 发送中' : ''}</strong><div class="sim-ai-md"><p>${escape(cleanUser)}</p></div></article>`);
+      const uBadge = item.status === 'unconfirmed' ? ' · 发送中' : item.status === 'failed' ? ' · 未发送' : '';
+      chunks.push(`<article class="sim-ai-msg is-user"><strong class="sim-ai-role">你${uBadge}</strong><div class="sim-ai-md"><p>${escape(cleanUser)}</p></div></article>`);
       lastAssistantHadFooter = false;
     } else {
       const text = item.text || '';
@@ -5376,11 +5461,16 @@ function renderCodexActivity() {
   const recSnap = codexPanelState.recoverySnapshot;
   const recBox = status?.recovery_required
     ? (onDirectSetup
-        ? `<div class="denial"><p>上次连接器重启或断线时有一条未完成的 Agent 请求被安全挂起（未自动重放），需先归档解锁后才能继续对话。请求 ID：<code>${escape(status.request_key || '未返回')}</code>。</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" data-reconnect="1" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并重新连接</button>` : ''}</div>${recSnap ? `<p class="subtle-note">受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}（不会自动重放）。</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已确认远端无重复任务，允许归档旧会话</label>` : ''}` : ''}</div>`
+        ? `<div class="denial"><p>上次 Agent 回合异常中断或连接器重启，未完成请求已被安全挂起（不会自动重放），归档旧会话后即可恢复对话。请求 ID：<code>${escape(status.request_key || '未返回')}</code>。</p>${recSnap ? `<p class="subtle-note">受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}（不会自动重放）。</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row" style="margin:6px 0"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已确认远端无重复任务，允许归档旧会话</label>` : ''}<div class="direct-actions"><button type="button" class="button primary small" data-action="codex-reconcile" data-reconnect="1" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>一键归档并恢复对话</button></div>` : `<div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情</button></div>`}</div>`
         : `<div class="denial"><p>The Agent has an unresolved operation. Preserve its conversation and request identity; new conversations and messages are blocked. Request: <code>${escape(status.request_key || 'not returned')}</code>.</p><div class="direct-actions"><button type="button" class="button secondary small" data-action="codex-inspect-recovery" ${codexPanelState.busy ? 'disabled' : ''}>检查中断详情 (Inspect Recovery)</button>${recSnap ? `<button type="button" class="button primary small" data-action="codex-reconcile" ${codexPanelState.busy || (recSnap.has_possible_side_effects && !codexPanelState.recoveryConfirmed) ? 'disabled' : ''}>归档并解除锁定 (Reconcile &amp; Unlock)</button>` : ''}</div>${recSnap ? `<p class="subtle-note">${escape(recSnap.guidance)}（受影响请求：${recSnap.interrupted_requests.length}，未完成工具调用：${recSnap.unresolved_calls.length}）</p>${recSnap.has_possible_side_effects ? `<label class="direct-check-row"><input id="codex-rec-confirm" type="checkbox" ${codexPanelState.recoveryConfirmed ? 'checked' : ''}> 我已通过 status/lookup 核对远端任务状态，确认不会盲目重放副作用</label>` : ''}` : ''}</div>`)
     : '';
+  const pendingBanner = pending && !(onDirectSetup && status?.recovery_required)
+    ? (onDirectSetup
+        ? `<p class="denial">上次发送状态尚未确认（请求 ID：<code>${escape(pending.request_key)}</code>），不会自动重发；可点击「刷新状态」核对或解锁恢复。<button type="button" class="button secondary small" data-action="codex-refresh" style="margin-left:8px">刷新状态</button></p>`
+        : `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>`)
+    : '';
   if ($('#codex-notices')) {
-    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pending ? `<p class="denial">A previous send is unconfirmed. Its request key is preserved: <code>${escape(pending.request_key)}</code>. Refresh status to inspect it; it will not be resent automatically.</p>` : ''}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
+    $('#codex-notices').innerHTML = `${codexPanelState.error ? `<p class="error-text" role="alert">${escape(codexPanelState.error)}</p>` : ''}${pendingBanner}${recBox}${codexPanelState.historyTruncated || thread?.truncated ? '<p class="subtle-note">Only the retained event history is shown; earlier content is unavailable in this view.</p>' : ''}${thread && thread.id !== status?.thread_id ? '<p class="subtle-note">Historical conversation · read only. Select the current conversation to send a message.</p>' : ''}`;
   }
   const evalOut = $('#codex-eval-output');
   if (evalOut) {
@@ -5778,8 +5868,10 @@ document.addEventListener('click', async event => {
       directState.error = null;
       render();
       try {
-        await api(`/api/direct/runs/${encodeURIComponent(id)}/stage`, {method: 'POST', body: {}});
-        await api(`/api/direct/runs/${encodeURIComponent(id)}/launch`, {method: 'POST', body: {recheck_resources: false}});
+        await api(`/api/direct/runs/${encodeURIComponent(id)}/stage-and-launch`, {
+          method: 'POST',
+          body: {recheck_resources: false},
+        });
         hostLiveState.loaded = false;
         toast(`🚀 任务 ${id} 已上传并成功启动！`);
       } catch (error) {
@@ -6364,20 +6456,41 @@ document.addEventListener('click', async event => {
   let approval = null;
   try {
     if (action === 'codex-reconcile') {
-      await api('/api/codex/recover', {method: 'POST', body: {
-        resolution: 'acknowledge_and_archive',
+      const resolution = (button.dataset.reconnect === '1' || location.hash === '#direct')
+        ? 'abort_and_reset_thread'
+        : 'acknowledge_and_archive';
+      const recRes = await api('/api/codex/recover', {method: 'POST', body: {
+        resolution,
         note: 'Reconciled interrupted turn from local console.',
         confirmed_side_effects_checked: !!codexPanelState.recoveryConfirmed,
       }});
+      if (codexPanelState.pending) {
+        const pItem = codexThread(codexPanelState.pending.thread_id)?.items
+          .find(row => row.requestKey === codexPanelState.pending.request_key);
+        if (pItem && pItem.status === 'unconfirmed') pItem.status = 'interrupted';
+      }
+      codexPanelState.pending = null;
+      try { sessionStorage.removeItem(CODEX_PENDING_KEY); } catch { /* ignore */ }
+      codexPanelState.turnStartedAt = null;
+      codexPanelState.lastTurnStatus = null;
       codexPanelState.recoverySnapshot = null;
       codexPanelState.recoveryConfirmed = false;
+      codexPanelState.recoveryAutoLoadedKey = null;
+      for (const row of codexPanelState.approvals.values()) {
+        if (['pending', 'resolving', 'unknown'].includes(row.status || 'pending')) {
+          Object.assign(row, {status: 'resolved', decision: 'interrupted_reconciled', can_approve: false, can_deny: false});
+        }
+      }
       if (button.dataset.reconnect === '1') {
-        await api('/api/codex/connect', {method: 'POST', body: {}});
+        const alreadyConnected = Boolean(recRes?.status?.connected);
+        if (!alreadyConnected) {
+          await api('/api/codex/connect', {method: 'POST', body: {}});
+        }
         if (location.hash === '#direct') {
           const th = await api('/api/codex/thread', {method: 'POST'});
           codexPanelState.selectedThread = th.thread_id || null;
         }
-        toast('🟢 已归档旧中断记录并重新连接 Codex！');
+        toast('🟢 已归档中断记录并切换到全新 Codex 会话，可直接继续对话！');
       } else {
         toast('中断回合已归档（未重放任何操作）并解除锁定。');
       }
@@ -6497,18 +6610,20 @@ document.addEventListener('submit', async event => {
   } catch (error) {
     const rejected = ['codex_rpc_rejected', 'codex_turn_busy', 'codex_thread_mismatch',
       'codex_journal_full', 'codex_not_connected', 'codex_embedded_mode', 'codex_bridge_closed', 'codex_recovery_required'];
-    if (!connecting && rejected.includes(error.code) && codexPanelState.pending) {
+    codexPanelState.turnStartedAt = null;
+    codexPanelState.lastTurnStatus = 'failed';
+    if (!connecting && (rejected.includes(error.code) || error.code === 'codex_protocol') && codexPanelState.pending) {
       const pending = codexPanelState.pending;
       try {
         sessionStorage.removeItem(CODEX_PENDING_KEY);
         codexPanelState.pending = null;
-        codexPanelState.draft = pending.text;
+        if (rejected.includes(error.code)) codexPanelState.draft = pending.text;
         const item = codexThread(pending.thread_id)?.items.find(row => row.requestKey === pending.request_key);
-        if (item) item.status = 'rejected';
+        if (item) item.status = rejected.includes(error.code) ? 'rejected' : 'failed';
       } catch { /* Preserve an unreadable request record without replay. */ }
     }
-    await refreshCodexStatus();
-    codexPanelState.error = error.message;
+    await refreshCodexStatus().catch(() => {});
+    codexPanelState.error = formatCodexErrorMessage(error);
   } finally { codexPanelState.busy = false; renderCodexActivity(); }
 });
 

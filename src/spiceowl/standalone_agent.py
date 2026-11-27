@@ -109,10 +109,43 @@ def _strip_rnl_preview(text, limit=12000):
     return clean[:limit] + ('\n... (truncated)' if len(clean) > limit else '')
 
 
+def _apply_netlist_edits(netlist_text: str, edits: list) -> str:
+    if not isinstance(netlist_text, str):
+        raise DomainError('Active netlist text must be a string.', 'invalid_tool_arguments')
+    if not isinstance(edits, list) or len(edits) > 32:
+        raise DomainError('netlist_edits must be a list of at most 32 edit objects.', 'invalid_tool_arguments')
+    updated = netlist_text
+    for item in edits:
+        if not isinstance(item, dict):
+            raise DomainError('Each netlist_edits item must be an object with find and replace.', 'invalid_tool_arguments')
+        if set(item) - {'find', 'replace', 'replace_all'}:
+            raise DomainError('netlist_edits items accept only find, replace, and optional replace_all.', 'invalid_tool_arguments')
+        find = item.get('find')
+        replace = item.get('replace')
+        replace_all = item.get('replace_all', False)
+        if not isinstance(find, str) or not find or len(find) > 8192:
+            raise DomainError('Each netlist_edits item requires a non-empty find string.', 'invalid_tool_arguments')
+        if not isinstance(replace, str) or len(replace) > 16384:
+            raise DomainError('Each netlist_edits item requires a replace string.', 'invalid_tool_arguments')
+        if type(replace_all) is not bool:
+            raise DomainError('netlist_edits replace_all must be a boolean.', 'invalid_tool_arguments')
+        count = updated.count(find)
+        if count == 0:
+            raise DomainError('netlist_edits target was not found in the active netlist.', 'invalid_tool_arguments')
+        if count > 1 and not replace_all:
+            raise DomainError(
+                'netlist_edits target matched multiple locations; add more context or set replace_all=true.',
+                'invalid_tool_arguments',
+            )
+        updated = updated.replace(find, replace) if replace_all else updated.replace(find, replace, 1)
+    return updated
+
+
 def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=None,
                                 circuitgit_client_config=None, circuitgit_sdk_path=None,
                                 direct_manager=None, handoff_manager=None,
-                                ui_patch_sink=None, ssh_dir=None):
+                                ui_patch_sink=None, ssh_dir=None,
+                                active_source_box=None):
     from spiceowl.read_api import open_read_views
     ssh_cfg = (Path(ssh_dir) / 'config') if ssh_dir else (Path.home() / '.ssh' / 'config')
 
@@ -143,7 +176,7 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         )
         return {'host_id': host['host_id'], **res}
 
-    active_source_box: dict = {}
+    source_box = active_source_box if isinstance(active_source_box, dict) else {}
 
     def library_open(args, **_):
         from spiceowl.onboarding.ssh_import import export_remote_schematic, fetch_remote_netlist
@@ -171,8 +204,8 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 include_dependencies=True,
                 ssh_hostname=ssh_hostname,
             )
-        active_source_box.clear()
-        active_source_box.update({
+        source_box.clear()
+        source_box.update({
             'host_id': host['host_id'],
             'netlist_text': res.get('text') or '',
             'support_files': dict(res.get('support_files') or {}),
@@ -223,17 +256,35 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
             raise DomainError('Provide at least one UI option to configure.', 'invalid_tool_arguments')
         if 'host_id' in args:
             _resolve_library_host(controller, args['host_id'])
+        patch_args = dict(args)
         if isinstance(args.get('netlist_text'), str) and args['netlist_text'].strip():
-            active_source_box['netlist_text'] = args['netlist_text']
-        elif isinstance(args.get('append_netlist'), str) and args['append_netlist'].strip() and active_source_box.get('netlist_text'):
-            active_source_box['netlist_text'] = active_source_box['netlist_text'].rstrip() + '\n\n' + args['append_netlist'].strip() + '\n'
+            source_box['netlist_text'] = args['netlist_text']
+        if 'netlist_edits' in args:
+            edits = patch_args.pop('netlist_edits')
+            if edits:
+                base_text = source_box.get('netlist_text')
+                if not isinstance(base_text, str) or not base_text.strip():
+                    raise DomainError(
+                        'netlist_edits requires an active netlist (open a schematic/netlist or set netlist_text first).',
+                        'invalid_tool_arguments',
+                    )
+                updated_text = _apply_netlist_edits(base_text, edits)
+                source_box['netlist_text'] = updated_text
+                patch_args['netlist_text'] = updated_text
+        if isinstance(args.get('append_netlist'), str) and args['append_netlist'].strip():
+            if source_box.get('netlist_text'):
+                combined = source_box['netlist_text'].rstrip() + '\n\n' + args['append_netlist'].strip() + '\n'
+                source_box['netlist_text'] = combined
+                if 'netlist_text' in patch_args:
+                    patch_args['netlist_text'] = combined
+                    patch_args.pop('append_netlist', None)
         revision = None
         if callable(ui_patch_sink):
-            revision = ui_patch_sink('ui_configure', args)
+            revision = ui_patch_sink('ui_configure', patch_args)
         return {
             'applied': True,
             'revision': revision,
-            'changed_fields': sorted(args.keys()),
+            'changed_fields': sorted(patch_args.keys()),
         }
 
     handlers = {
@@ -347,65 +398,145 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                     return batch_manager.build_summary(params['batch_id'])
                 if op == 'batch_report':
                     return batch_manager.report(params['batch_id'])
+                if op == 'skills':
+                    if params:
+                        raise DomainError('skills takes empty arguments.', 'invalid_tool_arguments')
+                    from spiceowl.skills import list_skills
+                    return list_skills()
+                if op == 'skill':
+                    if set(params) != {'name'}:
+                        raise DomainError('skill requires only name.', 'invalid_tool_arguments')
+                    from spiceowl.skills import get_skill
+                    return get_skill(params['name'])
                 raise DomainError('Unknown direct read operation.', 'invalid_tool_arguments')
             except (KeyError, TypeError, ValueError) as exc:
                 raise DomainError(f'Invalid arguments for direct_read {op}: {exc}', 'invalid_tool_arguments') from None
 
-        def direct_control(args, *, context):
+        def _normalize_prepare_params(params, context, *, op_name='prepare', allow_recheck=False):
             import inspect as _inspect
             import re as _re
             from datetime import datetime, timezone
 
+            prep_params = dict(params)
+            recheck_resources = False
+            if allow_recheck and 'recheck_resources' in prep_params:
+                raw_recheck = prep_params.pop('recheck_resources')
+                if type(raw_recheck) is not bool:
+                    raise DomainError('recheck_resources must be a boolean.', 'invalid_tool_arguments')
+                recheck_resources = raw_recheck
+
+            # Convert convenient flat resource arguments into limits dict
+            flat_lim_keys = ('cpus', 'memory_gib', 'wall_seconds', 'license_queue_seconds', 'enforce_rlimit_as')
+            if any(k in prep_params for k in flat_lim_keys):
+                lim = dict(prep_params.get('limits') or {}) if isinstance(prep_params.get('limits'), dict) else {}
+                if 'cpus' in prep_params and 'cpu_count' not in lim:
+                    raw_cpus = prep_params.pop('cpus')
+                    if type(raw_cpus) is bool:
+                        raise ValueError('cpus must be an integer')
+                    lim['cpu_count'] = int(raw_cpus)
+                else:
+                    prep_params.pop('cpus', None)
+                if 'memory_gib' in prep_params and 'memory_bytes' not in lim:
+                    raw_mem = prep_params.pop('memory_gib')
+                    if type(raw_mem) is bool:
+                        raise ValueError('memory_gib must be numeric')
+                    lim['memory_bytes'] = int(round(float(raw_mem) * 2**30))
+                else:
+                    prep_params.pop('memory_gib', None)
+                for lk in ('wall_seconds', 'license_queue_seconds', 'enforce_rlimit_as'):
+                    if lk in prep_params:
+                        val = prep_params.pop(lk)
+                        if lk not in lim:
+                            lim[lk] = val
+                prep_params['limits'] = lim
+
+            netlist_edits = prep_params.pop('netlist_edits', None)
+            append_netlist = prep_params.pop('append_netlist', None)
+
+            # Reuse active netlist & support files opened via spiceowl_library_open / workbench if omitted
+            if not prep_params.get('netlist_text') and source_box.get('netlist_text'):
+                prep_params['netlist_text'] = source_box['netlist_text']
+                if not prep_params.get('support_files') and source_box.get('support_files'):
+                    prep_params['support_files'] = dict(source_box['support_files'])
+                for mk in ('project_name', 'library_name', 'cell_name', 'view_name', 'source_origin'):
+                    if not prep_params.get(mk) and source_box.get(mk):
+                        prep_params[mk] = source_box[mk]
+
+            if not isinstance(prep_params.get('netlist_text'), str) or not prep_params['netlist_text'].strip():
+                raise DomainError(
+                    f'{op_name} requires netlist_text (or call spiceowl_library_open first to load a schematic/netlist).',
+                    'invalid_tool_arguments',
+                )
+            if netlist_edits is not None:
+                prep_params['netlist_text'] = _apply_netlist_edits(prep_params['netlist_text'], netlist_edits)
+            if append_netlist is not None:
+                if not isinstance(append_netlist, str):
+                    raise DomainError('append_netlist must be a string.', 'invalid_tool_arguments')
+                if append_netlist.strip():
+                    prep_params['netlist_text'] = prep_params['netlist_text'].rstrip() + '\n\n' + append_netlist.strip() + '\n'
+            if not prep_params['netlist_text'].strip():
+                raise DomainError(f'{op_name} requires a non-empty netlist_text.', 'invalid_tool_arguments')
+
+            if not prep_params.get('host_id') and not prep_params.get('host_ids'):
+                raise DomainError('Specify host_id (or host_ids) for the target server.', 'invalid_tool_arguments')
+
+            if not prep_params.get('run_key'):
+                stem = _re.sub(r'[^A-Za-z0-9_-]', '_', str(prep_params.get('cell_name') or 'sim')).strip('_-')[:40] or 'sim'
+                if not stem[0].isalnum():
+                    stem = 'sim-' + stem
+                stamp = datetime.now(timezone.utc).strftime('%H%M%S')
+                base_key = f'{stem}-{stamp}'
+                cand = base_key
+                suffix = 2
+                while direct_manager.path(cand).exists():
+                    cand = f'{base_key}-{suffix}'
+                    suffix += 1
+                prep_params['run_key'] = cand
+
+            if not prep_params.get('submission_group_id') and context.get('turn_id'):
+                prep_params['submission_group_id'] = f"turn:{context['turn_id']}"
+            if not prep_params.get('source_origin'):
+                prep_params['source_origin'] = 'agent'
+
+            valid_sig = set(_inspect.signature(direct_manager.prepare).parameters)
+            unknown = set(prep_params) - valid_sig
+            if unknown:
+                raise DomainError(f'Unsupported {op_name} arguments: {", ".join(sorted(unknown))}.', 'invalid_tool_arguments')
+            return prep_params, recheck_resources
+
+        def direct_control(args, *, context):
             op, params = args['operation'], args['arguments']
             try:
                 if op == 'prepare':
-                    prep_params = dict(params)
-                    # Convert convenient flat resource arguments into limits dict
-                    flat_lim_keys = ('cpus', 'memory_gib', 'wall_seconds', 'license_queue_seconds', 'enforce_rlimit_as')
-                    if any(k in prep_params for k in flat_lim_keys):
-                        lim = dict(prep_params.get('limits') or {}) if isinstance(prep_params.get('limits'), dict) else {}
-                        if 'cpus' in prep_params and 'cpu_count' not in lim:
-                            lim['cpu_count'] = int(prep_params.pop('cpus'))
-                        else:
-                            prep_params.pop('cpus', None)
-                        if 'memory_gib' in prep_params and 'memory_bytes' not in lim:
-                            lim['memory_bytes'] = int(round(float(prep_params.pop('memory_gib')) * 2**30))
-                        else:
-                            prep_params.pop('memory_gib', None)
-                        for lk in ('wall_seconds', 'license_queue_seconds', 'enforce_rlimit_as'):
-                            if lk in prep_params:
-                                val = prep_params.pop(lk)
-                                if lk not in lim:
-                                    lim[lk] = val
-                        prep_params['limits'] = lim
-                    # Reuse active netlist & support files opened via spiceowl_library_open if omitted
-                    if not prep_params.get('netlist_text') and active_source_box.get('netlist_text'):
-                        prep_params['netlist_text'] = active_source_box['netlist_text']
-                        if not prep_params.get('support_files') and active_source_box.get('support_files'):
-                            prep_params['support_files'] = dict(active_source_box['support_files'])
-                        for mk in ('project_name', 'library_name', 'cell_name', 'view_name', 'source_origin'):
-                            if not prep_params.get(mk) and active_source_box.get(mk):
-                                prep_params[mk] = active_source_box[mk]
-                    if not prep_params.get('netlist_text'):
-                        raise DomainError(
-                            'prepare requires netlist_text (or call spiceowl_library_open first to load a schematic/netlist).',
-                            'invalid_tool_arguments',
-                        )
-                    if not prep_params.get('run_key'):
-                        stem = _re.sub(r'[^A-Za-z0-9_-]', '_', str(prep_params.get('cell_name') or 'sim')).strip('_-')[:40] or 'sim'
-                        if not stem[0].isalnum():
-                            stem = 'sim-' + stem
-                        stamp = datetime.now(timezone.utc).strftime('%H%M%S')
-                        prep_params['run_key'] = f'{stem}-{stamp}'
-                    if not prep_params.get('submission_group_id') and context.get('turn_id'):
-                        prep_params['submission_group_id'] = f"turn:{context['turn_id']}"
-                    if not prep_params.get('source_origin'):
-                        prep_params['source_origin'] = 'agent'
-                    valid_sig = set(_inspect.signature(direct_manager.prepare).parameters)
-                    unknown = set(prep_params) - valid_sig
-                    if unknown:
-                        raise DomainError(f'Unsupported prepare arguments: {", ".join(sorted(unknown))}.', 'invalid_tool_arguments')
+                    prep_params, _ = _normalize_prepare_params(params, context, op_name='prepare', allow_recheck=False)
                     return direct_manager.prepare(**prep_params)
+                if op == 'submit':
+                    prep_params, recheck_resources = _normalize_prepare_params(params, context, op_name='submit', allow_recheck=True)
+                    result = direct_manager.submit(recheck_resources=recheck_resources, **prep_params)
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_run_submitted', {
+                            'run_id': result.get('run_id'),
+                            'host_id': result.get('host_id'),
+                            'state': result.get('state'),
+                            'simulator': result.get('simulator'),
+                        })
+                    return result
+                if op == 'stage_and_launch':
+                    unknown = set(params) - {'run_id', 'recheck_resources'}
+                    if unknown:
+                        raise DomainError(f'Unsupported stage_and_launch arguments: {", ".join(sorted(unknown))}.', 'invalid_tool_arguments')
+                    result = direct_manager.stage_and_launch(
+                        params['run_id'],
+                        recheck_resources=bool(params.get('recheck_resources', False)),
+                    )
+                    if callable(ui_patch_sink):
+                        ui_patch_sink('direct_run_submitted', {
+                            'run_id': result.get('run_id'),
+                            'host_id': result.get('host_id'),
+                            'state': result.get('state'),
+                            'simulator': result.get('simulator'),
+                        })
+                    return result
                 if op == 'stage':
                     return direct_manager.stage(params['run_id'])
                 if op == 'launch':

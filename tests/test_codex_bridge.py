@@ -24,15 +24,19 @@ fixture=json.loads((root/'fixture.json').read_text())
 scenario=fixture.get('scenario','normal')
 record=root/'wire.jsonl'
 pending_responses=set()
+thread_seq=0
+turn_seq=0
+cur_thread='thread-1'
+cur_turn='turn-1'
 def send(value):
     sys.stdout.write(json.dumps(value)+'\n');sys.stdout.flush()
 def reply(message,result):send({'id':message['id'],'result':result})
 def notice(method,params):send({'method':method,'params':params})
 def complete():
-    notice('item/agentMessage/delta',{'threadId':'thread-1','turnId':'turn-1','itemId':'text-1','delta':'verified answer'})
-    notice('turn/completed',{'threadId':'thread-1','turn':{'id':'turn-1','status':'completed'}})
+    notice('item/agentMessage/delta',{'threadId':cur_thread,'turnId':cur_turn,'itemId':'text-1','delta':'verified answer'})
+    notice('turn/completed',{'threadId':cur_thread,'turn':{'id':cur_turn,'status':'completed'}})
 def request(method,params,rid='server-1'):
-    send({'id':rid,'method':method,'params':{'threadId':'thread-1','turnId':'turn-1',**params}})
+    send({'id':rid,'method':method,'params':{'threadId':cur_thread,'turnId':cur_turn,**params}})
 for line in sys.stdin:
     message=json.loads(line)
     with record.open('a') as out:out.write(json.dumps(message)+'\n')
@@ -42,24 +46,28 @@ for line in sys.stdin:
     elif method=='config/read':reply(message,{'config':{'approval_policy':fixture.get('policy','on-request'),
         'approvals_reviewer':'user','mcp_servers':{'private_server':{'secret':'do not persist'} }}})
     elif method=='thread/start':
-        reply(message,{'thread':{'id':'thread-1'},'model':'fake-model','approvalPolicy':fixture.get('thread_policy','on-request'),
+        thread_seq+=1
+        cur_thread='thread-'+str(thread_seq) if scenario=='recover_new_thread' else 'thread-1'
+        reply(message,{'thread':{'id':cur_thread},'model':'fake-model','approvalPolicy':fixture.get('thread_policy','on-request'),
             'approvalsReviewer':'user','sandbox':{'type':'readOnly'}})
     elif method=='turn/interrupt':
         reply(message,{})
-        notice('turn/completed',{'threadId':'thread-1','turn':{'id':'turn-1','status':'interrupted'}})
+        notice('turn/completed',{'threadId':cur_thread,'turn':{'id':cur_turn,'status':'interrupted'}})
     elif method=='turn/start':
+        turn_seq+=1
+        cur_turn='turn-'+str(turn_seq) if scenario=='recover_new_thread' else 'turn-1'
         if scenario=='exit_on_turn':os._exit(0)
         if scenario=='oversized':sys.stdout.write('x'*(2*1024*1024+1));sys.stdout.flush();os._exit(0)
         if scenario=='reject_turn':send({'id':message['id'],'error':{'code':-32602,'message':'rejected'}});continue
-        if scenario!='early_complete':reply(message,{'turn':{'id':'turn-1','status':'inProgress'}})
-        notice('turn/started',{'threadId':'thread-1','turn':{'id':'turn-1','status':'inProgress'}})
+        if scenario!='early_complete':reply(message,{'turn':{'id':cur_turn,'status':'inProgress'}})
+        notice('turn/started',{'threadId':cur_thread,'turn':{'id':cur_turn,'status':'inProgress'}})
         if scenario in ('normal','early_complete'):
             complete()
-            if scenario=='early_complete':reply(message,{'turn':{'id':'turn-1','status':'inProgress'}})
-        elif scenario in ('tool','duplicate_tool','changed_tool','tool_then_exit','tool_cross_turn','denial_followup','premature_terminal'):
-            params={'tool':fixture.get('tool','inspect_circuit'),'callId':'call-1','arguments':fixture.get('arguments',{'value':7})}
+            if scenario=='early_complete':reply(message,{'turn':{'id':cur_turn,'status':'inProgress'}})
+        elif scenario in ('tool','recover_new_thread','duplicate_tool','changed_tool','tool_then_exit','tool_cross_turn','denial_followup','premature_terminal'):
+            params={'tool':fixture.get('tool','inspect_circuit'),'callId':'call-'+str(turn_seq) if scenario=='recover_new_thread' else 'call-1','arguments':fixture.get('arguments',{'value':7})}
             if scenario=='tool_cross_turn':params['turnId']='other-turn'
-            request('item/tool/call',params)
+            request('item/tool/call',params,'server-'+str(turn_seq) if scenario=='recover_new_thread' else 'server-1')
             if scenario=='duplicate_tool':request('item/tool/call',params,'server-duplicate')
             if scenario=='changed_tool':request('item/tool/call',{**params,'arguments':{'value':8}},'server-changed')
             if scenario=='premature_terminal':complete()
@@ -631,6 +639,38 @@ class CodexBridgeTests(unittest.TestCase):
         # Idempotent when already stopped
         again=bridge.interrupt()
         self.assertFalse(again['interrupted'])
+
+    def test_reconcile_interrupted_unblocks_live_rpc_and_resets_thread_for_clean_followup(self):
+        fail_once={'boom':True}
+        def flaky_dispatch(name,arguments,*,context):
+            self.dispatched.append((name,arguments,context))
+            if fail_once['boom']:
+                fail_once['boom']=False
+                raise RuntimeError('simulated unexpected dispatch bug')
+            return {'ok':True,'value':arguments['value']}
+        bridge=self.bridge('recover_new_thread',policy='read',dispatch=flaky_dispatch)
+        thread=self.ready(bridge)
+        bridge.send_message(thread,'trigger unexpected crash','request-crash-1')
+        self.wait(lambda:bridge.status()['recovery_required'])
+        events=bridge.events(after=0,limit=200)['events']
+        err_ev=[e for e in events if e['method']=='bridge/error']
+        self.assertTrue(any(e['params'].get('error_type')=='RuntimeError' for e in err_ev))
+
+        # Reconciling a live interrupted turn must reply to dangling rpc_ids, interrupt, and reset thread_id
+        rec=bridge.reconcile_interrupted(resolution='acknowledge_and_archive',note='recovered')
+        self.assertFalse(rec['status']['recovery_required'])
+        self.assertTrue(rec['recovery']['thread_reset'])
+        self.assertIsNone(rec['status']['thread_id'])
+        self.assertEqual('connected',rec['status']['state'])
+        wire=self.wire(bridge)
+        self.assertTrue(any(m.get('id')=='server-1' for m in wire))
+        self.assertTrue(any(m.get('method')=='turn/interrupt' for m in wire))
+
+        # Starting a new thread on the same connected bridge completes cleanly without turn-ID reuse errors
+        new_thread=bridge.create_thread()['thread_id']
+        bridge.send_message(new_thread,'clean retry on fresh thread','request-clean-2')
+        self.wait(lambda:bridge.status()['state']=='complete')
+        self.assertFalse(bridge.status()['recovery_required'])
 
 
 if __name__ == '__main__':

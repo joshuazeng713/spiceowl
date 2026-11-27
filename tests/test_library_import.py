@@ -780,6 +780,127 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
             finally:
                 ctrl.close()
 
+    def test_fast_submit_skill_netlist_edits_none_safe_stage_and_overnight_redline(self):
+        from unittest.mock import patch
+        from spiceowl.direct import DirectExecutionManager
+        from spiceowl.service import Controller
+        from spiceowl.skills import BUILTIN_SKILLS, get_skill, list_skills
+        from spiceowl.standalone_agent import build_standalone_dispatcher
+        from spiceowl.watch_handoff import WatchHandoffManager
+
+        # 1. Canonical SKILL.md stays byte-identical to embedded BUILTIN_SKILLS fallback
+        repo_skill = Path(__file__).resolve().parents[1] / "skills" / "spiceowl-sim-submit" / "SKILL.md"
+        self.assertTrue(repo_skill.is_file())
+        self.assertEqual(repo_skill.read_text(encoding="utf-8"), BUILTIN_SKILLS["spiceowl-sim-submit"]["content"])
+        self.assertEqual(get_skill("spiceowl-sim-submit")["content"], repo_skill.read_text(encoding="utf-8"))
+        self.assertTrue(any(s["name"] == "spiceowl-sim-submit" for s in list_skills()["skills"]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctrl = Controller(root / "state", agent_mode="standalone")
+            try:
+                ctrl.hosts.register({
+                    "schema": "spiceowl.host.v1",
+                    "host_id": "eda-node-01",
+                    "label": "EDA Node 01",
+                    "ssh_target": "eda-node-01",
+                    "expected_host": "eda-node-01",
+                    "expected_user": "researcher",
+                    "tools": [{"kind": "spectre", "executable": "/opt/cadence/bin/spectre"}],
+                })
+                dm = DirectExecutionManager(ctrl.store.directory, hosts=ctrl.hosts)
+                hm = WatchHandoffManager(ctrl.store.directory)
+                shared_box = {
+                    "host_id": "eda-node-01",
+                    "netlist_text": "simulator lang=spectre\nparameters R=10K\ntran tran stop=10n\n",
+                    "support_files": {"helper.scs": "// helper\n"},
+                    "project_name": "analog_lib",
+                    "library_name": "analog_lib",
+                    "cell_name": "tb_amp",
+                    "view_name": "schematic",
+                    "source_origin": "ssh",
+                }
+                patches = []
+                disp = build_standalone_dispatcher(
+                    ctrl,
+                    direct_manager=dm,
+                    handoff_manager=hm,
+                    active_source_box=shared_box,
+                    ui_patch_sink=lambda k, p: patches.append((k, p)) or len(patches),
+                )
+
+                # 2. Agent can read built-in skill without approval
+                self.assertEqual(disp.policy("spiceowl_direct_read", {"operation": "skill", "arguments": {"name": "spiceowl-sim-submit"}}), "read")
+                skill_res = disp.dispatch("spiceowl_direct_read", {"operation": "skill", "arguments": {"name": "spiceowl-sim-submit"}})
+                self.assertIn("spiceowl-sim-submit", skill_res["content"])
+
+                # 3. Direct stage() must tolerate explicit null accepted/error/result fields without AttributeError
+                prep = dm.prepare(
+                    run_key="null-receipt-01",
+                    host_id="eda-node-01",
+                    netlist_text="simulator lang=spectre\nR0 (a 0) resistor r=1k\n",
+                )
+                with patch("spiceowl.direct.transport.stage", return_value={
+                    "state": "staged",
+                    "accepted": None,
+                    "error": None,
+                    "result": None,
+                    "manifest_sha256": prep["manifest_sha256"],
+                    "remote_directory": "/tmp/run-null-01",
+                }):
+                    staged = dm.stage("null-receipt-01")
+                self.assertEqual(staged["state"], "staged")
+                self.assertEqual(staged["remote_directory"], "/tmp/run-null-01")
+
+                # 4. Single-call submit + surgical netlist_edits + UI patch sync
+                self.assertEqual(
+                    disp.policy("spiceowl_direct_control", {"operation": "submit", "arguments": {"host_id": "eda-node-01"}}),
+                    "approval",
+                )
+                with patch("spiceowl.direct.transport.stage_and_launch", side_effect=lambda plan: {
+                    "state": "running",
+                    "accepted": {"dispatch_claimed": True, "accepted_at": "2026-11-27T03:00:00Z"},
+                    "result": None,
+                    "manifest_sha256": plan["manifest_sha256"],
+                    "remote_directory": "/tmp/run-submit-01",
+                }):
+                    sub = disp.dispatch("spiceowl_direct_control", {
+                        "operation": "submit",
+                        "arguments": {
+                            "host_id": "eda-node-01",
+                            "simulator": "spectre",
+                            "cpus": 2,
+                            "memory_gib": 8,
+                            "netlist_edits": [{"find": "stop=10n", "replace": "stop=50n"}],
+                        },
+                    }, context={"turn_id": "turn-fast-1"})
+                self.assertEqual(sub["state"], "running_observed")
+                self.assertTrue(sub["dispatch_claimed"])
+                self.assertEqual(sub["organization"]["project"], "analog_lib")
+                self.assertEqual(sub["organization"]["testbench"], "tb_amp")
+                self.assertIn("stop=50n", dm.read_inputs(sub["run_id"])["netlist_text"])
+                self.assertTrue(any(k == "direct_run_submitted" and p.get("run_id") == sub["run_id"] for k, p in patches))
+
+                # 5. Overnight autonomy policy enforces scientific redline (blocks netlist_edits and memory cap excess on submit)
+                hm.update_policy({"enabled": True, "max_memory_gib": 32, "max_agent_resubmissions": 2})
+                self.assertEqual(
+                    disp.policy("spiceowl_direct_control", {"operation": "submit", "arguments": {"host_id": "eda-node-01", "memory_gib": 8}}),
+                    "read",
+                )
+                self.assertEqual(
+                    disp.policy("spiceowl_direct_control", {
+                        "operation": "submit",
+                        "arguments": {"host_id": "eda-node-01", "netlist_edits": [{"find": "R=10K", "replace": "R=20K"}]},
+                    }),
+                    "approval",
+                )
+                self.assertEqual(
+                    disp.policy("spiceowl_direct_control", {"operation": "submit", "arguments": {"host_id": "eda-node-01", "memory_gib": 64}}),
+                    "approval",
+                )
+            finally:
+                ctrl.close()
+
 
 if __name__ == "__main__":
     unittest.main()

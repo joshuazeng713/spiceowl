@@ -270,6 +270,8 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 return {'runs': direct_manager.list()}
             if op == 'inspect':
                 return direct_manager.read(params['run_id'])
+            if op == 'inputs':
+                return direct_manager.read_inputs(params['run_id'])
             if op == 'lookup':
                 return direct_manager.lookup_submission(params['key'])
             if op == 'report':
@@ -352,6 +354,8 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 return direct_manager.cancel(params['run_id'], action_key=action_key)
             if op == 'collect':
                 return direct_manager.collect(params['run_id'])
+            if op == 'delete':
+                return direct_manager.delete(params['run_id'])
             if op == 'watch_record_decision':
                 return watch_mgr.record_agent_decision(
                     params['event_id'],

@@ -738,6 +738,25 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
                 self.assertEqual(r_a2["organization"]["submission_group_id"], "turn:turn-multi-99")
                 self.assertEqual(r_a1["organization"]["project"], "adc_proj")
                 self.assertEqual(r_a2["organization"]["testbench"], "tb_sar")
+
+                # 4. read_inputs returns frozen netlist & config; delete removes prepared runs and refuses active runs
+                inputs = dm.read_inputs("agent-tt-01")
+                self.assertIn("R0 (a 0) resistor r=1k", inputs["netlist_text"])
+                self.assertEqual(inputs["organization"]["project"], "adc_proj")
+
+                deleted = dm.delete("agent-tt-01")
+                self.assertEqual(deleted, {"deleted": True, "run_id": "agent-tt-01"})
+                self.assertFalse(dm.path("agent-tt-01").exists())
+
+                # Simulate active dispatched run on disk: delete must fail closed
+                active_json = dm.path("agent-ff-02") / "run.json"
+                active_rec = json.loads(active_json.read_text(encoding="utf-8"))
+                active_rec["dispatch_claimed"] = True
+                active_rec["state"] = "running_observed"
+                active_json.write_text(json.dumps(active_rec), encoding="utf-8")
+                with self.assertRaises(DomainError) as ctx_err:
+                    dm.delete("agent-ff-02")
+                self.assertEqual(ctx_err.exception.code, "run_active_cannot_delete")
             finally:
                 ctrl.close()
 

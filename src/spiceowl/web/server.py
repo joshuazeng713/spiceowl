@@ -1041,6 +1041,14 @@ def make_server(controller, port=0, live_client_config=None, *, codex_executable
                     except DomainError:
                         wf = None
                     return self.reply({"run": run, "report": rep, "waveforms": wf, "monitor": direct_monitor.snapshot(run_id)})
+                if len(sub) == 1 and self.command == "DELETE":
+                    try:
+                        direct_monitor.unwatch(run_id)
+                    except (DomainError, KeyError, ValueError):
+                        pass
+                    return self.reply(direct_manager.delete(run_id))
+                if len(sub) == 2 and sub[1] == "inputs" and self.command == "GET":
+                    return self.reply(direct_manager.read_inputs(run_id))
                 if len(sub) == 2 and sub[1] == "waveforms" and self.command == "GET":
                     query = parse_qs(url.query, keep_blank_values=True)
                     if set(query) - {"refresh_remote", "allow_remote"}:

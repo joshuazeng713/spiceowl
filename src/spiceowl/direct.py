@@ -28,6 +28,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import threading
 import uuid
 
@@ -338,6 +339,72 @@ class DirectExecutionManager:
 
     def read(self, run_id: str) -> dict:
         return self._enrich_record(_read_json(self.path(run_id) / "run.json"))
+
+    def read_inputs(self, run_id: str) -> dict:
+        """Return frozen netlist, support files, and config for restoring into the workbench / Agent."""
+        run_id = _validate_run_id(run_id)
+        record = self.read(run_id)
+        plan_path = self.path(run_id) / "plan.json"
+        if plan_path.is_symlink() or not plan_path.is_file():
+            raise DomainError("Frozen plan inputs for this run are unavailable.", "not_found")
+        plan = _read_json(plan_path)
+        files = plan.get("files") if isinstance(plan.get("files"), dict) else {}
+        netlist_b64 = files.get("input.scs")
+        netlist_text = ""
+        if isinstance(netlist_b64, str) and netlist_b64:
+            try:
+                netlist_text = base64.b64decode(netlist_b64, validate=True).decode("utf-8", errors="replace")
+            except (ValueError, UnicodeError):
+                raise DomainError("Frozen netlist input is corrupt.", "direct_state_invalid") from None
+        support_files: dict[str, str] = {}
+        for rel_name, b64_val in files.items():
+            if rel_name in ("input.scs", "wrapper.py") or not isinstance(b64_val, str):
+                continue
+            try:
+                support_files[rel_name] = base64.b64decode(b64_val, validate=True).decode("utf-8", errors="replace")
+            except (ValueError, UnicodeError):
+                continue
+        manifest = plan.get("manifest") if isinstance(plan.get("manifest"), dict) else {}
+        return {
+            "run": record,
+            "netlist_text": netlist_text,
+            "support_files": support_files,
+            "include_dirs": list(manifest.get("include_dirs") or []),
+            "remote_env": deepcopy(manifest.get("remote_env")) if isinstance(manifest.get("remote_env"), dict) else None,
+            "limits": deepcopy(record.get("limits") or manifest.get("limits") or {}),
+            "scheduler": deepcopy(record.get("scheduler_config") or manifest.get("scheduler") or {}),
+            "output_format": record.get("output_format") or manifest.get("output_format") or "psfbin",
+            "remote_python": manifest.get("remote_python") or "/usr/bin/python3",
+            "remote_root": record.get("remote_root") or manifest.get("remote_root") or ".spiceowl-runs",
+            "recovery_policy": deepcopy(record.get("recovery_policy") or {}),
+            "organization": deepcopy(record.get("organization") or {}),
+        }
+
+    def delete(self, run_id: str) -> dict:
+        """Delete a local non-active direct run record (refuses while dispatched & non-terminal)."""
+        run_id = _validate_run_id(run_id)
+        run_dir = self.path(run_id)
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with _locked(self.root / "submissions.lock"):
+            record = _read_json(run_dir / "run.json")
+            safe_states = {
+                "prepared", "staged", "stage_incomplete", "not_staged",
+                "simulator_complete_pending_measurements",
+                "simulator_failed", "job_setup_failed", "input_hash_failure", "cancelled",
+            }
+            if record.get("dispatch_claimed") and record.get("state") not in safe_states:
+                raise DomainError(
+                    "该任务已提交到远端且尚未确认终态，不能直接删除本地记录；请先取消作业或查询状态对账。",
+                    "run_active_cannot_delete",
+                )
+            if run_dir.is_symlink():
+                raise DomainError("Run directory cannot be a symlink.", "direct_state_invalid")
+            if run_dir.exists():
+                shutil.rmtree(run_dir)
+            index = self._load_submissions()
+            index["entries"].pop(run_id, None)
+            _atomic_write(self._submissions_path(), index)
+        return {"deleted": True, "run_id": run_id}
 
     def list(self, *, batch_map: dict[str, dict] | None = None) -> list[dict]:
         if not self.root.is_dir():

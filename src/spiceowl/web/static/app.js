@@ -32,6 +32,7 @@ let liveDraft = {configuration: '', source_commit: '', run_id: ''};
 let directState = {
   loaded: false, loading: false, busy: false, runs: [], monitor: null,
   activeTab: '',
+  agentLinkedRunId: '',
   quickLaunchNote: null, quickLaunchError: null,
   selectedId: null, detail: null, report: null, lookup: null, error: null,
   recoveryReports: [], selectedRecoveryId: null, recoveryDetail: null,
@@ -1280,6 +1281,22 @@ function stripRnlCommentsForAgent(netlistText) {
 function buildSimAgentWorkspaceContext() {
   const lines = [buildSimAgentContextSummary()];
   lines.push(`当前选中主机：${directDraft.host_id || '未选择'}；仿真器：${directDraft.simulator || 'spectre'}；执行后端：${directDraft.backend || 'ssh_direct'}；资源预算：${directDraft.cpus} 核 / ${directDraft.memory_gib} GiB / ${directDraft.wall_seconds}s。`);
+  if (directState.agentLinkedRunId) {
+    const linked = (directState.runs || []).find(r => r.run_id === directState.agentLinkedRunId) || (directState.detail?.run_id === directState.agentLinkedRunId ? directState.detail : null);
+    if (linked) {
+      const org = resolveRunOrganization(linked);
+      const st = classifyDirectRunState(linked);
+      lines.push(`当前对接的历史/待处理任务：run_id=${linked.run_id}，状态=${linked.state}（${st.label}），主机=${linked.host_id}，仿真器=${linked.simulator}，项目/TB=${org.project}/${org.testbench}；可直接用 spiceowl_direct_read(inspect/inputs/report) 或 spiceowl_direct_control(stage/launch/status/collect/cancel/delete) 操作此任务。`);
+    }
+  }
+  const recentRuns = (directState.runs || []).slice(0, 6);
+  if (recentRuns.length) {
+    const summary = recentRuns.map(r => {
+      const org = resolveRunOrganization(r);
+      return `${r.run_id}[${r.state}@${r.host_id},${org.project}/${org.testbench}]`;
+    }).join(' ; ');
+    lines.push(`已有本地仿真任务列表（最近 ${recentRuns.length} 条）：${summary}。`);
+  }
   if (simSourceState.origin !== 'none') {
     const label = simSourceState.fromSchematic && simSourceState.cellName
       ? `${simSourceState.libraryName ? simSourceState.libraryName + '/' : ''}${simSourceState.cellName} (${simSourceState.viewId || 'schematic'})`
@@ -1642,6 +1659,25 @@ function directAgentSetupPanel(hostsList) {
         </div>
       </div>
       <div id="codex-notices" class="codex-notices"></div>
+      ${(() => {
+        const linked = directState.agentLinkedRunId
+          ? ((directState.runs || []).find(r => r.run_id === directState.agentLinkedRunId) || (directState.detail?.run_id === directState.agentLinkedRunId ? directState.detail : null))
+          : null;
+        if (!linked) return '';
+        const st = classifyDirectRunState(linked);
+        const org = resolveRunOrganization(linked);
+        return `<div class="sim-linked-run-bar" data-linked-run-id="${escape(linked.run_id)}">
+          <div class="sim-linked-run-meta">
+            <span>🔗 已对接任务 <code>${escape(linked.run_id)}</code></span>
+            ${chip(st.label, st.color)}
+            <small>${escape(org.project)} / ${escape(org.testbench)} · 可直接向 AI 提问、修改网表后重提，或让 AI 启动/删除</small>
+          </div>
+          <div class="sim-linked-run-actions">
+            ${['prepared', 'stage_incomplete'].includes(linked.state) ? `<button type="button" class="button primary small" data-action="overview-launch-now" data-id="${escape(linked.run_id)}" ${directState.busy ? 'disabled' : ''}>🚀 启动原任务</button>` : ''}
+            <button type="button" class="button secondary small" data-action="sim-agent-unlink-run">取消关联</button>
+          </div>
+        </div>`;
+      })()}
       <div id="codex-timeline" class="sim-agent-timeline" role="log" aria-live="polite" aria-label="Agent 仿真配置对话"></div>
       <div id="codex-approvals" class="codex-approvals"></div>
       <form id="sim-agent-form" class="codex-composer sim-ai-composer">
@@ -3873,11 +3909,16 @@ function renderOverviewRunDetailPanel(run) {
   const canCancel = run.dispatch_claimed && !terminal && !directState.busy;
   const canCollect = terminal && run.collection_phase !== 'complete' && !directState.busy;
   const canRecover = terminal && run.state !== 'simulator_complete_pending_measurements' && !directState.busy;
+  const isActiveRemote = Boolean(run.dispatch_claimed && !terminal && !['prepared', 'staged', 'stage_incomplete', 'not_staged'].includes(run.state));
+  const canDelete = !isActiveRemote && !directState.busy;
   const recPolicy = run.recovery_policy || {};
   const report = directState.detail?.run_id === run.run_id ? directState.report : null;
   const cpus = run.limits?.cpu_count ? `${run.limits.cpu_count} 核` : '—';
   const memBytes = run.limits?.memory_bytes;
   const memText = Number.isFinite(memBytes) && memBytes > 0 ? `${(memBytes / 2**30).toFixed(memBytes % 2**30 === 0 ? 0 : 1)} GiB` : '—';
+  const preparedHint = ['prepared', 'stage_incomplete'].includes(run.state)
+    ? `<p class="ov-prepared-hint">💡 该任务目前仅在本地冻结了网表与配置，<strong>尚未上传到远端服务器，也没有占用远端算力</strong>。你可以直接点击「🚀 立即上传并启动」，或点击「✧ 载入工作台 / 交给 Agent」重新对接 AI 检查修改；如果不再需要，直接点「🗑 删除记录」清理即可。</p>`
+    : '';
   return `<section class="panel direct-panel ov-detail-panel" data-overview-run-detail="${escape(run.run_id)}">
     <div class="section-title">
       <div class="ov-detail-head">
@@ -3888,22 +3929,27 @@ function renderOverviewRunDetailPanel(run) {
       <button type="button" class="button secondary small" data-action="overview-close-run">收起详情</button>
     </div>
     <p class="subtle-note">第 <strong>#${escape(run.attempt_number || 1)}</strong> 次尝试 · 主机 <strong>${escape(run.host_id)}</strong> · 后端 <strong>${escape(String(run.backend || '').toUpperCase())}</strong> · 仿真器 <strong>${escape(run.simulator)}</strong> · 资源 <strong>${cpus} / ${memText}</strong>${run.scheduler?.job_id ? ` · Job ID <code>${escape(run.scheduler.job_id)}</code>` : ''}<br>网表冻结摘要 <code>${escape((run.manifest_sha256 || '').slice(0, 16))}…</code> · 创建于 ${escape(formatHistoryTime(run.created_at))} · 最近观察 ${escape(run.observed_at ? formatHistoryTime(run.observed_at) : '尚未联网')}</p>
-    ${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「③ 查询状态」与远端对账。</p>' : ''}
+    ${preparedHint}
+    ${run.state === 'launch_outcome_unknown' ? '<p class="denial">提交回执未知：已锁定原 Key，禁止盲目重提。请点击「查询状态」与远端对账。</p>' : ''}
     ${run.oom_evidence?.oom_kill ? '<p class="denial">调度器已确认该作业触发 OOM（内存耗尽）。</p>' : ''}
     ${run.last_error ? `<p class="error-text">${escape(run.last_error.message || run.last_error.code)}</p>` : ''}
     <div class="direct-actions">
-      <button type="button" class="button secondary small" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>① 上传输入 (Stage)</button>
-      <button type="button" class="button primary small" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>② 启动仿真 (Launch)</button>
-      <button type="button" class="button secondary small" data-action="direct-status" data-id="${escape(run.run_id)}" ${canStatus ? '' : 'disabled'}>③ 查询状态 (Status)</button>
-      <button type="button" class="button primary small" data-action="direct-collect" data-id="${escape(run.run_id)}" ${canCollect ? '' : 'disabled'}>④ 收集报告与结果 (Collect)</button>
+      ${canStage ? `<button type="button" class="button primary small" data-action="overview-launch-now" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>🚀 立即上传并启动</button>` : ''}
+      ${canLaunch ? `<button type="button" class="button primary small" data-action="direct-launch" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>🚀 立即启动仿真</button>` : ''}
+      ${canStatus ? `<button type="button" class="button secondary small" data-action="direct-status" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>↻ 查询状态 (Status)</button>` : ''}
+      ${canCollect ? `<button type="button" class="button primary small" data-action="direct-collect" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>📥 收集报告与结果 (Collect)</button>` : ''}
+      <button type="button" class="button secondary small" data-action="overview-handoff-agent" data-id="${escape(run.run_id)}" ${directState.busy ? 'disabled' : ''}>✧ 载入工作台 / 交给 Agent</button>
+      <button type="button" class="button secondary small ov-btn-danger" data-action="overview-delete-run" data-id="${escape(run.run_id)}" ${canDelete ? '' : 'disabled'} title="${canDelete ? '删除此本地归档记录' : '运行中或待对账任务请先取消/对账后再删除'}">🗑 删除记录</button>
     </div>
     <details class="host-form-details">
-      <summary>进阶控制：后台盯守 (Watch) / 取消作业 / 有界自动恢复</summary>
+      <summary>进阶控制：分步上传 (Stage) / 后台盯守 (Watch) / 取消作业 / 有界自动恢复</summary>
       <div class="direct-check-row">
         <label><input id="direct-recheck" type="checkbox" ${directDraft.recheck_resources ? 'checked' : ''} ${run.backend !== 'ssh_direct' ? 'disabled' : ''}> 启动前复查主机余量（仅 ssh_direct）</label>
         <label><input id="direct-allow-collect" type="checkbox" ${directDraft.allow_collect ? 'checked' : ''}> Watch 确认终态后自动收集并生成报告</label>
       </div>
       <div class="direct-actions">
+        <button type="button" class="button secondary small" data-action="direct-stage" data-id="${escape(run.run_id)}" ${canStage ? '' : 'disabled'}>仅上传输入 (Stage)</button>
+        <button type="button" class="button secondary small" data-action="direct-launch" data-id="${escape(run.run_id)}" ${canLaunch ? '' : 'disabled'}>仅启动 (Launch)</button>
         <button type="button" class="button secondary small" data-action="direct-watch" data-id="${escape(run.run_id)}" ${canWatch ? '' : 'disabled'}>开启后台盯守 (Watch)</button>
         <button type="button" class="button secondary small" data-action="direct-unwatch" data-id="${escape(run.run_id)}" ${canUnwatch ? '' : 'disabled'}>停止盯守</button>
         <button type="button" class="button secondary small" data-action="direct-cancel" data-id="${escape(run.run_id)}" ${canCancel ? '' : 'disabled'}>取消作业 (Cancel)</button>
@@ -5714,6 +5760,105 @@ document.addEventListener('click', async event => {
     }
     if (action === 'overview-close-run') {
       overviewState.selectedRunId = '';
+      render();
+      return;
+    }
+    if (action === 'overview-launch-now') {
+      if (!id || directState.busy) return;
+      directState.busy = true;
+      directState.error = null;
+      render();
+      try {
+        await api(`/api/direct/runs/${encodeURIComponent(id)}/stage`, {method: 'POST', body: {}});
+        await api(`/api/direct/runs/${encodeURIComponent(id)}/launch`, {method: 'POST', body: {recheck_resources: false}});
+        hostLiveState.loaded = false;
+        toast(`🚀 任务 ${id} 已上传并成功启动！`);
+      } catch (error) {
+        directState.error = error.message;
+        toast(error.message);
+      } finally {
+        directState.busy = false;
+        await refreshDirect();
+      }
+      return;
+    }
+    if (action === 'overview-handoff-agent') {
+      if (!id || directState.busy) return;
+      directState.busy = true;
+      render();
+      try {
+        const res = await api(`/api/direct/runs/${encodeURIComponent(id)}/inputs`);
+        const r = res.run || {};
+        const org = res.organization || resolveRunOrganization(r);
+        const lim = res.limits || {};
+        const sched = res.scheduler || {};
+        const env = res.remote_env || {};
+        directDraft.netlist_text = res.netlist_text || '';
+        if (r.host_id) {
+          directDraft.target_mode = 'host';
+          directDraft.host_id = r.host_id;
+        }
+        if (r.simulator) directDraft.simulator = r.simulator;
+        if (r.backend) directDraft.backend = r.backend;
+        if (res.output_format) directDraft.output_format = res.output_format;
+        if (Number.isInteger(lim.cpu_count) && lim.cpu_count >= 1) directDraft.cpus = lim.cpu_count;
+        if (Number.isFinite(lim.memory_bytes) && lim.memory_bytes > 0) directDraft.memory_gib = Number((lim.memory_bytes / 2**30).toFixed(2));
+        if (Number.isInteger(lim.wall_seconds) && lim.wall_seconds >= 60) directDraft.wall_seconds = lim.wall_seconds;
+        if (res.remote_python) directDraft.remote_python = res.remote_python;
+        if (res.remote_root) directDraft.remote_root = res.remote_root;
+        directDraft.include_dirs = Array.isArray(res.include_dirs) ? res.include_dirs.join('\n') : '';
+        directDraft.env_modules = Array.isArray(env.modules) ? env.modules.join(' ') : '';
+        directDraft.env_scripts = Array.isArray(env.setup_scripts) ? env.setup_scripts.join('\n') : '';
+        for (const k of ['queue', 'project', 'job_group', 'partition', 'account', 'qos']) {
+          if (typeof sched[k] === 'string') directDraft[k] = sched[k];
+        }
+        if (typeof sched.exclusive === 'boolean') directDraft.exclusive = sched.exclusive;
+        directDraft.run_key = '';
+        simSourceState.origin = org.source_origin === 'local' ? 'local' : 'ssh';
+        simSourceState.sshHostId = r.host_id || '';
+        simSourceState.sshTarget = r.host_id || '';
+        simSourceState.projectName = org.project || '';
+        simSourceState.libraryName = org.library || '';
+        simSourceState.cellName = org.testbench || '';
+        simSourceState.viewId = org.view || '';
+        simSourceState.fromSchematic = Boolean(org.view);
+        simSourceState.fileName = `${org.testbench || r.run_id || 'input'}.scs`;
+        simSourceState.entryPath = simSourceState.fileName;
+        simSourceState.supportFiles = (res.support_files && typeof res.support_files === 'object') ? {...res.support_files} : {};
+        directState.agentLinkedRunId = id;
+        directState.selectedId = id;
+        directState.activeTab = 'setup';
+        location.hash = '#direct';
+        toast(`✨ 已将任务 ${id} 的网表与配置载入工作台，并重新对接给 Agent！`);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        directState.busy = false;
+        render();
+      }
+      return;
+    }
+    if (action === 'overview-delete-run') {
+      if (!id || directState.busy) return;
+      if (!window.confirm(`确认删除本地仿真记录 ${id}？仅删除本地记录与未上传草稿，不会影响远端原电路库文件。`)) return;
+      directState.busy = true;
+      render();
+      try {
+        await api(`/api/direct/runs/${encodeURIComponent(id)}`, {method: 'DELETE'});
+        if (overviewState.selectedRunId === id) overviewState.selectedRunId = '';
+        if (directState.selectedId === id) directState.selectedId = null;
+        if (directState.agentLinkedRunId === id) directState.agentLinkedRunId = '';
+        toast(`🗑 已删除本地仿真记录 ${id}。`);
+      } catch (error) {
+        toast(error.message);
+      } finally {
+        directState.busy = false;
+        await refreshDirect();
+      }
+      return;
+    }
+    if (action === 'sim-agent-unlink-run') {
+      directState.agentLinkedRunId = '';
       render();
       return;
     }

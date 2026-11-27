@@ -444,10 +444,18 @@ assert(liveOvHtml.includes('同次提交 · 2 次仿真'), 'Multi-run submission
 assert(liveOvHtml.includes('data-action="overview-open-run"'), 'History rows link directly to run control');
 
 // Selecting a run opens inline detail & control panel directly inside #overview
-ex.setOverviewState(s => { s.selectedRunId = 'amp-pvt-01-tt'; });
+ex.setOverviewState(s => { s.selectedRunId = 'sar-single-01'; });
 const detailOvHtml = ex.overview();
-assert(detailOvHtml.includes('data-overview-run-detail="amp-pvt-01-tt"'), 'Selected run renders inline detail panel in overview');
-assert(detailOvHtml.includes('data-action="direct-status"'), 'Inline detail panel exposes full lifecycle controls');
+assert(detailOvHtml.includes('data-overview-run-detail="sar-single-01"'), 'Selected run renders inline detail panel in overview');
+assert(detailOvHtml.includes('data-action="overview-launch-now"'), 'Prepared run shows one-click launch CTA');
+assert(detailOvHtml.includes('data-action="overview-handoff-agent"'), 'Detail panel lets user hand run back to workbench & Agent');
+assert(detailOvHtml.includes('data-action="overview-delete-run"'), 'Detail panel exposes safe delete for non-active records');
+assert(detailOvHtml.includes('ov-prepared-hint'), 'Prepared run displays clear explanation banner');
+ex.setDirectState(st => { st.agentLinkedRunId = 'sar-single-01'; });
+const ctxWithRun = ex.buildSimAgentWorkspaceContext();
+assert(ctxWithRun.includes('run_id=sar-single-01'), 'Agent context includes linked historical/prepared run');
+assert(ctxWithRun.includes('已有本地仿真任务列表'), 'Agent context includes recent local runs summary');
+ex.setDirectState(st => { st.agentLinkedRunId = ''; });
 ex.setOverviewState(s => { s.selectedRunId = ''; });
 
 // Filter narrows by project cleanly

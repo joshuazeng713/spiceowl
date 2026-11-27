@@ -3909,7 +3909,8 @@ function renderOverviewRunDetailPanel(run) {
   const canCancel = run.dispatch_claimed && !terminal && !directState.busy;
   const canCollect = terminal && run.collection_phase !== 'complete' && !directState.busy;
   const canRecover = terminal && run.state !== 'simulator_complete_pending_measurements' && !directState.busy;
-  const isActiveRemote = Boolean(run.dispatch_claimed && !terminal && !['prepared', 'staged', 'stage_incomplete', 'not_staged'].includes(run.state));
+  const neverStaged = !run.remote_directory && (!run.remote_state || run.remote_state === 'not_staged');
+  const isActiveRemote = Boolean(run.dispatch_claimed && !terminal && !neverStaged && !['prepared', 'staged', 'stage_incomplete', 'not_staged'].includes(run.state));
   const canDelete = !isActiveRemote && !directState.busy;
   const recPolicy = run.recovery_policy || {};
   const report = directState.detail?.run_id === run.run_id ? directState.report : null;
@@ -5245,7 +5246,9 @@ function codexApprovalCard(approval) {
 }
 
 function renderCleanDirectTimeline(items) {
-  const active = codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending);
+  const statusObj = codexPanelState.status || {};
+  const brokenRecovery = Boolean(statusObj.recovery_required || statusObj.state === 'unknown');
+  const active = !brokenRecovery && (codexActiveTurn() || codexPanelState.busy || Boolean(codexPanelState.pending));
   if (!items.length && !active) {
     return '<div class="codex-chat-empty"><strong>Agent 仿真配置已就绪</strong><p>可以直接让 AI 查找/打开远端电路库或原理图、修改右侧仿真参数，或点上方快捷指令开始。</p></div>';
   }
@@ -5253,14 +5256,18 @@ function renderCleanDirectTimeline(items) {
   let toolBuf = [];
   const flushTools = () => {
     if (!toolBuf.length) return;
-    const running = toolBuf.find(t => t.status === 'running');
-    const failed = toolBuf.some(t => t.status === 'failed');
+    const running = !brokenRecovery && toolBuf.find(t => t.status === 'running');
+    const interrupted = brokenRecovery && toolBuf.some(t => t.status === 'running');
+    const failed = interrupted || toolBuf.some(t => t.status === 'failed');
     const summaryLabel = running
       ? `正在执行 · ${friendlyCodexToolName(running.name)}…`
       : failed
-      ? `执行步骤（${toolBuf.length} 步 · 含异常，点击展开）`
+      ? `执行步骤（${toolBuf.length} 步 · ${interrupted ? '已中断' : '含异常'}，点击展开）`
       : `已完成 · ${toolBuf.length} 步工具调用`;
-    const stepsHtml = toolBuf.map(t => `<li class="sim-ai-step"><details><summary><span>${escape(friendlyCodexToolName(t.name))}</span><small>${t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束'}</small></summary><pre>${escape(t.text || '')}</pre></details></li>`).join('');
+    const stepsHtml = toolBuf.map(t => {
+      const stateLabel = (t.status === 'running' && brokenRecovery) ? '已中断' : t.status === 'running' ? '进行中' : t.status === 'failed' ? '失败' : '已结束';
+      return `<li class="sim-ai-step"><details><summary><span>${escape(friendlyCodexToolName(t.name))}</span><small>${stateLabel}</small></summary><pre>${escape(t.text || '')}</pre></details></li>`;
+    }).join('');
     chunks.push(`<details class="sim-ai-progress"><summary>${escape(summaryLabel)}</summary><ol class="sim-ai-steps">${stepsHtml}</ol></details>`);
     toolBuf = [];
   };
@@ -5307,6 +5314,8 @@ function renderCleanDirectTimeline(items) {
       : 'AI 正在思考中…';
     const elapsed = formatTurnSeconds(codexPanelState.turnStartedAt ? Date.now() - codexPanelState.turnStartedAt : 0);
     chunks.push(`<div class="sim-ai-turn-status is-thinking" role="status"><span class="sim-ai-dot" aria-hidden="true"></span><span>${escape(statusLabel)}</span><small id="sim-ai-elapsed">${escape(elapsed)}</small></div>`);
+  } else if (brokenRecovery) {
+    chunks.push(`<div class="sim-ai-turn-status is-paused">⚠ 上一步工具执行异常中断，请点击上方解锁按钮恢复后继续</div>`);
   } else if (items.length && !lastAssistantHadFooter) {
     const st = codexPanelState.status?.state;
     const dur = formatTurnSeconds(codexPanelState.lastTurnDurationMs);

@@ -143,6 +143,8 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
         )
         return {'host_id': host['host_id'], **res}
 
+    active_source_box: dict = {}
+
     def library_open(args, **_):
         from spiceowl.onboarding.ssh_import import export_remote_schematic, fetch_remote_netlist
         host = _resolve_library_host(controller, args.get('host_id'))
@@ -169,6 +171,17 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
                 include_dependencies=True,
                 ssh_hostname=ssh_hostname,
             )
+        active_source_box.clear()
+        active_source_box.update({
+            'host_id': host['host_id'],
+            'netlist_text': res.get('text') or '',
+            'support_files': dict(res.get('support_files') or {}),
+            'project_name': res.get('lib_name') or res.get('cell_name') or None,
+            'library_name': res.get('lib_name') or None,
+            'cell_name': res.get('cell_name') or None,
+            'view_name': res.get('view_name') or None,
+            'source_origin': 'ssh',
+        })
         revision = None
         if callable(ui_patch_sink):
             revision = ui_patch_sink('library_open', {
@@ -210,6 +223,10 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
             raise DomainError('Provide at least one UI option to configure.', 'invalid_tool_arguments')
         if 'host_id' in args:
             _resolve_library_host(controller, args['host_id'])
+        if isinstance(args.get('netlist_text'), str) and args['netlist_text'].strip():
+            active_source_box['netlist_text'] = args['netlist_text']
+        elif isinstance(args.get('append_netlist'), str) and args['append_netlist'].strip() and active_source_box.get('netlist_text'):
+            active_source_box['netlist_text'] = active_source_box['netlist_text'].rstrip() + '\n\n' + args['append_netlist'].strip() + '\n'
         revision = None
         if callable(ui_patch_sink):
             revision = ui_patch_sink('ui_configure', args)
@@ -264,125 +281,176 @@ def build_standalone_dispatcher(controller, *, live_client=None, pdk_lut_path=No
 
         def direct_read(args, **_):
             op, params = args['operation'], args['arguments']
-            if op == 'list':
-                if params:
-                    raise DomainError('list takes empty arguments.', 'invalid_tool_arguments')
-                return {'runs': direct_manager.list()}
-            if op == 'inspect':
-                return direct_manager.read(params['run_id'])
-            if op == 'inputs':
-                return direct_manager.read_inputs(params['run_id'])
-            if op == 'lookup':
-                return direct_manager.lookup_submission(params['key'])
-            if op == 'report':
-                return direct_manager.report(params['run_id'])
-            if op == 'waveform_index':
-                return direct_manager.waveform_index(params['run_id'], allow_remote=False)
-            if op == 'waveform_query':
-                return direct_manager.waveform_query(
-                    params['run_id'], params['dataset'], params['signals'],
-                    x_min=params.get('x_min'), x_max=params.get('x_max'),
-                    max_points=params.get('max_points', 2000),
-                    mode=params.get('mode', 'auto'),
-                    allow_remote=False,
-                )
-            if op == 'waveform_cycles':
-                return direct_manager.waveform_cycles(
-                    params['run_id'], params['dataset'], params['signals'],
-                    period=params.get('period'), clock_signal=params.get('clock_signal'),
-                    threshold=params.get('threshold'), edge=params.get('edge', 'rising'),
-                    t_start=params.get('t_start'), t_end=params.get('t_end'),
-                    worst_metric=params.get('worst_metric', 'peak_to_peak'),
-                    worst_signal=params.get('worst_signal'),
-                    cycle_index=params.get('cycle_index'),
-                    context_cycles=params.get('context_cycles', 0),
-                    overlay_cycles=params.get('overlay_cycles', 10),
-                    max_points_per_cycle=params.get('max_points_per_cycle', 2000),
-                    allow_remote=False,
-                )
-            if op == 'waveform_measure':
-                return direct_manager.waveform_measure(
-                    params['run_id'], params['dataset'], params['signal'],
-                    x_min=params.get('x_min'), x_max=params.get('x_max'),
-                    tol_pct=float(params.get('tol_pct', 2.0)),
-                    allow_remote=False,
-                )
-            if op == 'recovery_reports':
-                return {'reports': direct_manager.list_recovery_reports(query=params.get('q'), outcome=params.get('outcome'))}
-            if op == 'log_tail':
-                run_dir = direct_manager.path(params['run_id'])
-                log_file = run_dir / 'collected' / 'psf' / 'spectre.out'
-                if not log_file.is_file():
-                    log_file = run_dir / 'collected' / 'console.log'
-                if not log_file.is_file():
-                    return {'run_id': params['run_id'], 'events': [], 'rotated': False, 'note': 'No collected local log file yet.'}
-                return log_watcher.poll(params['run_id'], log_file)
-            if op == 'watch_events':
-                return {'events': watch_mgr.list_events(state=params.get('state'), limit=int(params.get('limit', 30)))}
-            if op == 'watch_policy':
-                return watch_mgr.get_policy()
-            if op == 'batch_list':
-                if params:
-                    raise DomainError('batch_list takes empty arguments.', 'invalid_tool_arguments')
-                return {'batches': batch_manager.list()}
-            if op == 'batch_inspect':
-                return batch_manager.build_summary(params['batch_id'])
-            if op == 'batch_report':
-                return batch_manager.report(params['batch_id'])
-            raise DomainError('Unknown direct read operation.', 'invalid_tool_arguments')
+            try:
+                if op == 'list':
+                    if params:
+                        raise DomainError('list takes empty arguments.', 'invalid_tool_arguments')
+                    return {'runs': direct_manager.list(batch_map=batch_manager.run_batch_map())}
+                if op == 'inspect':
+                    return direct_manager.read(params['run_id'])
+                if op == 'inputs':
+                    return direct_manager.read_inputs(params['run_id'])
+                if op == 'lookup':
+                    return direct_manager.lookup_submission(params['key'])
+                if op == 'report':
+                    return direct_manager.report(params['run_id'])
+                if op == 'waveform_index':
+                    return direct_manager.waveform_index(params['run_id'], allow_remote=False)
+                if op == 'waveform_query':
+                    return direct_manager.waveform_query(
+                        params['run_id'], params['dataset'], params['signals'],
+                        x_min=params.get('x_min'), x_max=params.get('x_max'),
+                        max_points=params.get('max_points', 2000),
+                        mode=params.get('mode', 'auto'),
+                        allow_remote=False,
+                    )
+                if op == 'waveform_cycles':
+                    return direct_manager.waveform_cycles(
+                        params['run_id'], params['dataset'], params['signals'],
+                        period=params.get('period'), clock_signal=params.get('clock_signal'),
+                        threshold=params.get('threshold'), edge=params.get('edge', 'rising'),
+                        t_start=params.get('t_start'), t_end=params.get('t_end'),
+                        worst_metric=params.get('worst_metric', 'peak_to_peak'),
+                        worst_signal=params.get('worst_signal'),
+                        cycle_index=params.get('cycle_index'),
+                        context_cycles=params.get('context_cycles', 0),
+                        overlay_cycles=params.get('overlay_cycles', 10),
+                        max_points_per_cycle=params.get('max_points_per_cycle', 2000),
+                        allow_remote=False,
+                    )
+                if op == 'waveform_measure':
+                    return direct_manager.waveform_measure(
+                        params['run_id'], params['dataset'], params['signal'],
+                        x_min=params.get('x_min'), x_max=params.get('x_max'),
+                        tol_pct=float(params.get('tol_pct', 2.0)),
+                        allow_remote=False,
+                    )
+                if op == 'recovery_reports':
+                    return {'reports': direct_manager.list_recovery_reports(query=params.get('q'), outcome=params.get('outcome'))}
+                if op == 'log_tail':
+                    run_dir = direct_manager.path(params['run_id'])
+                    log_file = run_dir / 'collected' / 'psf' / 'spectre.out'
+                    if not log_file.is_file():
+                        log_file = run_dir / 'collected' / 'console.log'
+                    if not log_file.is_file():
+                        return {'run_id': params['run_id'], 'events': [], 'rotated': False, 'note': 'No collected local log file yet.'}
+                    return log_watcher.poll(params['run_id'], log_file)
+                if op == 'watch_events':
+                    return {'events': watch_mgr.list_events(state=params.get('state'), limit=int(params.get('limit', 30)))}
+                if op == 'watch_policy':
+                    return watch_mgr.get_policy()
+                if op == 'batch_list':
+                    if params:
+                        raise DomainError('batch_list takes empty arguments.', 'invalid_tool_arguments')
+                    return {'batches': batch_manager.list()}
+                if op == 'batch_inspect':
+                    return batch_manager.build_summary(params['batch_id'])
+                if op == 'batch_report':
+                    return batch_manager.report(params['batch_id'])
+                raise DomainError('Unknown direct read operation.', 'invalid_tool_arguments')
+            except (KeyError, TypeError, ValueError) as exc:
+                raise DomainError(f'Invalid arguments for direct_read {op}: {exc}', 'invalid_tool_arguments') from None
 
         def direct_control(args, *, context):
+            import inspect as _inspect
+            import re as _re
+            from datetime import datetime, timezone
+
             op, params = args['operation'], args['arguments']
-            if op == 'prepare':
-                prep_params = dict(params)
-                if not prep_params.get('submission_group_id') and context.get('turn_id'):
-                    prep_params['submission_group_id'] = f"turn:{context['turn_id']}"
-                if not prep_params.get('source_origin'):
-                    prep_params['source_origin'] = 'agent'
-                return direct_manager.prepare(**prep_params)
-            if op == 'stage':
-                return direct_manager.stage(params['run_id'])
-            if op == 'launch':
-                return direct_manager.launch(params['run_id'], recheck_resources=params.get('recheck_resources'))
-            if op == 'status':
-                return direct_manager.status(params['run_id'])
-            if op == 'cancel':
-                action_key = params.get('action_key')
-                if action_key is None and all(context.get(field) for field in ('request_key', 'thread_id', 'turn_id', 'tool_call_id')):
-                    identity = {field: context[field] for field in ('request_key', 'thread_id', 'turn_id', 'tool_call_id')}
-                    action_key = 'cancel-' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:32]
-                return direct_manager.cancel(params['run_id'], action_key=action_key)
-            if op == 'collect':
-                return direct_manager.collect(params['run_id'])
-            if op == 'delete':
-                return direct_manager.delete(params['run_id'])
-            if op == 'watch_record_decision':
-                return watch_mgr.record_agent_decision(
-                    params['event_id'],
-                    outcome=params['outcome'],
-                    rationale=params['rationale'],
-                    resource_assessment=params.get('resource_assessment'),
-                    config_changes=params.get('config_changes'),
-                    new_run_id=params.get('new_run_id'),
-                    needs_human_review=bool(params.get('needs_human_review', False)),
-                )
-            if op == 'batch_prepare':
-                return batch_manager.prepare(**params)
-            if op == 'batch_dispatch':
-                return batch_manager.dispatch_next(
-                    params['batch_id'], limit=params.get('limit'),
-                    recheck_resources=params.get('recheck_resources'),
-                )
-            if op == 'batch_refresh':
-                return batch_manager.refresh(
-                    params['batch_id'],
-                    auto_collect=params.get('auto_collect', True),
-                    dispatch_more=params.get('dispatch_more', False),
-                    recheck_resources=params.get('recheck_resources'),
-                )
-            if op == 'batch_cancel':
-                return batch_manager.cancel(params['batch_id'])
-            raise DomainError('Unknown direct control operation.', 'invalid_tool_arguments')
+            try:
+                if op == 'prepare':
+                    prep_params = dict(params)
+                    # Convert convenient flat resource arguments into limits dict
+                    flat_lim_keys = ('cpus', 'memory_gib', 'wall_seconds', 'license_queue_seconds', 'enforce_rlimit_as')
+                    if any(k in prep_params for k in flat_lim_keys):
+                        lim = dict(prep_params.get('limits') or {}) if isinstance(prep_params.get('limits'), dict) else {}
+                        if 'cpus' in prep_params and 'cpu_count' not in lim:
+                            lim['cpu_count'] = int(prep_params.pop('cpus'))
+                        else:
+                            prep_params.pop('cpus', None)
+                        if 'memory_gib' in prep_params and 'memory_bytes' not in lim:
+                            lim['memory_bytes'] = int(round(float(prep_params.pop('memory_gib')) * 2**30))
+                        else:
+                            prep_params.pop('memory_gib', None)
+                        for lk in ('wall_seconds', 'license_queue_seconds', 'enforce_rlimit_as'):
+                            if lk in prep_params:
+                                val = prep_params.pop(lk)
+                                if lk not in lim:
+                                    lim[lk] = val
+                        prep_params['limits'] = lim
+                    # Reuse active netlist & support files opened via spiceowl_library_open if omitted
+                    if not prep_params.get('netlist_text') and active_source_box.get('netlist_text'):
+                        prep_params['netlist_text'] = active_source_box['netlist_text']
+                        if not prep_params.get('support_files') and active_source_box.get('support_files'):
+                            prep_params['support_files'] = dict(active_source_box['support_files'])
+                        for mk in ('project_name', 'library_name', 'cell_name', 'view_name', 'source_origin'):
+                            if not prep_params.get(mk) and active_source_box.get(mk):
+                                prep_params[mk] = active_source_box[mk]
+                    if not prep_params.get('netlist_text'):
+                        raise DomainError(
+                            'prepare requires netlist_text (or call spiceowl_library_open first to load a schematic/netlist).',
+                            'invalid_tool_arguments',
+                        )
+                    if not prep_params.get('run_key'):
+                        stem = _re.sub(r'[^A-Za-z0-9_-]', '_', str(prep_params.get('cell_name') or 'sim')).strip('_-')[:40] or 'sim'
+                        if not stem[0].isalnum():
+                            stem = 'sim-' + stem
+                        stamp = datetime.now(timezone.utc).strftime('%H%M%S')
+                        prep_params['run_key'] = f'{stem}-{stamp}'
+                    if not prep_params.get('submission_group_id') and context.get('turn_id'):
+                        prep_params['submission_group_id'] = f"turn:{context['turn_id']}"
+                    if not prep_params.get('source_origin'):
+                        prep_params['source_origin'] = 'agent'
+                    valid_sig = set(_inspect.signature(direct_manager.prepare).parameters)
+                    unknown = set(prep_params) - valid_sig
+                    if unknown:
+                        raise DomainError(f'Unsupported prepare arguments: {", ".join(sorted(unknown))}.', 'invalid_tool_arguments')
+                    return direct_manager.prepare(**prep_params)
+                if op == 'stage':
+                    return direct_manager.stage(params['run_id'])
+                if op == 'launch':
+                    return direct_manager.launch(params['run_id'], recheck_resources=params.get('recheck_resources'))
+                if op == 'status':
+                    return direct_manager.status(params['run_id'])
+                if op == 'cancel':
+                    action_key = params.get('action_key')
+                    if action_key is None and all(context.get(field) for field in ('request_key', 'thread_id', 'turn_id', 'tool_call_id')):
+                        identity = {field: context[field] for field in ('request_key', 'thread_id', 'turn_id', 'tool_call_id')}
+                        action_key = 'cancel-' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:32]
+                    return direct_manager.cancel(params['run_id'], action_key=action_key)
+                if op == 'collect':
+                    return direct_manager.collect(params['run_id'])
+                if op == 'delete':
+                    return direct_manager.delete(params['run_id'])
+                if op == 'watch_record_decision':
+                    return watch_mgr.record_agent_decision(
+                        params['event_id'],
+                        outcome=params['outcome'],
+                        rationale=params['rationale'],
+                        resource_assessment=params.get('resource_assessment'),
+                        config_changes=params.get('config_changes'),
+                        new_run_id=params.get('new_run_id'),
+                        needs_human_review=bool(params.get('needs_human_review', False)),
+                    )
+                if op == 'batch_prepare':
+                    return batch_manager.prepare(**params)
+                if op == 'batch_dispatch':
+                    return batch_manager.dispatch_next(
+                        params['batch_id'], limit=params.get('limit'),
+                        recheck_resources=params.get('recheck_resources'),
+                    )
+                if op == 'batch_refresh':
+                    return batch_manager.refresh(
+                        params['batch_id'],
+                        auto_collect=params.get('auto_collect', True),
+                        dispatch_more=params.get('dispatch_more', False),
+                        recheck_resources=params.get('recheck_resources'),
+                    )
+                if op == 'batch_cancel':
+                    return batch_manager.cancel(params['batch_id'])
+                raise DomainError('Unknown direct control operation.', 'invalid_tool_arguments')
+            except (KeyError, TypeError, ValueError) as exc:
+                raise DomainError(f'Invalid arguments for direct_control {op}: {exc}', 'invalid_tool_arguments') from None
 
         handlers['spiceowl_direct_read'] = direct_read
         handlers['spiceowl_direct_control'] = direct_control

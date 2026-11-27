@@ -225,6 +225,20 @@ const doneHtml = ex.renderCleanDirectTimeline([
 assert(doneHtml.includes('✓ 已完成'), 'Completed turn must render subtle completion indicator');
 assert(doneHtml.includes('3.4 秒'), 'Completed turn must render duration');
 
+// When bridge enters recovery_required / unknown state, stale running tools must NOT stay stuck showing "正在执行"
+ex.setCodex(c => {
+  c.status = {connected: true, state: 'unknown', recovery_required: true, thread_id: 'th-1', turn_id: 'turn-3'};
+});
+const brokenHtml = ex.renderCleanDirectTimeline([
+  {id: 'u1', type: 'user', text: '提交仿真', status: 'accepted'},
+  {id: 't1', type: 'tool', name: 'spiceowl_direct_control', text: '{}', status: 'running'},
+]);
+assert(!brokenHtml.includes('正在执行'), 'Stale running tool must stop displaying 正在执行 after bridge error');
+assert(brokenHtml.includes('已中断') && brokenHtml.includes('异常中断'), 'Recovery state must surface clear interrupted warning');
+ex.setCodex(c => {
+  c.status = {connected: true, state: 'complete', recovery_required: false, thread_id: 'th-1', turn_id: 'turn-2'};
+});
+
 const appliedOpen = ex.applyAgentUiPatch({
   revision: 1,
   kind: 'library_open',

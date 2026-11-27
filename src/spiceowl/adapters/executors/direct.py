@@ -391,7 +391,41 @@ def clock():
         with open("/proc/uptime") as stream:
             return float(stream.read(128).split()[0])
     except OSError:
-        return time.monotonic()
+        return getattr(time, "monotonic", time.time)()
+
+_STR_TYPES = (str,) if sys.version_info[0] >= 3 else (str, unicode)
+
+def re_fullmatch(pattern, text):
+    if not isinstance(text, _STR_TYPES):
+        return None
+    return re.match(r"\A(?:" + pattern + r")\Z", text)
+
+def sh_quote(value):
+    fn = getattr(shlex, "quote", None)
+    if fn is not None:
+        return fn(str(value))
+    s = str(value)
+    if not s:
+        return "''"
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+def which_cmd(spec, path_str=None):
+    if not spec:
+        return None
+    if spec.startswith("/"):
+        return spec if os.path.isfile(spec) and os.access(spec, os.X_OK) else None
+    if path_str is None:
+        fn = getattr(shutil, "which", None)
+        if fn is not None:
+            return fn(spec)
+        path_str = os.environ.get("PATH", "")
+    for d in (path_str or "").split(os.pathsep):
+        if not d:
+            continue
+        cand = os.path.join(d, spec)
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
 
 def wait_for(process, seconds):
     deadline = clock() + seconds
@@ -402,9 +436,9 @@ def wait_for(process, seconds):
     return process.returncode
 
 def decoded(value):
-    if not isinstance(value, str) or not re.match(r"\A[A-Za-z0-9+/]*={0,2}\Z", value):
+    if not isinstance(value, _STR_TYPES) or not re.match(r"\A[A-Za-z0-9+/]*={0,2}\Z", value):
         raise Failure("invalid_base64")
-    return base64.b64decode(value)
+    return base64.b64decode(value.encode("ascii") if not isinstance(value, bytes) else value)
 
 def js(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
@@ -481,7 +515,7 @@ def read_json(path):
     return json.loads(read_file(path, 262144).decode("ascii"))
 
 def sync_dir(path):
-    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(fd)
     finally:
@@ -553,22 +587,35 @@ def load_optional(path, name):
     return read_json(full) if os.path.lexists(full) else None
 
 def resolve_command(spec):
-    if spec.startswith("/"):
-        return spec if os.path.isfile(spec) and os.access(spec, os.X_OK) else None
-    return shutil.which(spec)
+    return which_cmd(spec)
 
-def run_bounded(argv, timeout_seconds=10, cwd=None):
-    process = subprocess.Popen(
-        argv, cwd=cwd, stdin=DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        close_fds=True, env=dict(os.environ, LC_ALL="C", LANG="C"),
-    )
+def run_bounded(argv, timeout_seconds=10, cwd=None, env=None):
+    run_env = env if env is not None else dict(os.environ, LC_ALL="C", LANG="C")
+    out_f = tempfile.TemporaryFile()
+    err_f = tempfile.TemporaryFile()
+    process = None
     try:
-        out, err = process.communicate(timeout=timeout_seconds)
-        return process.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
-        raise Failure("scheduler_command_timeout")
+        process = subprocess.Popen(
+            argv, cwd=cwd, stdin=DEVNULL, stdout=out_f, stderr=err_f,
+            close_fds=True, env=run_env,
+        )
+        try:
+            code = wait_for(process, timeout_seconds)
+        except WaitExpired:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            process.wait()
+            raise Failure("scheduler_command_timeout")
+        out_f.seek(0)
+        err_f.seek(0)
+        out_b = out_f.read(262144)
+        err_b = err_f.read(262144)
+        return code, out_b.decode("utf-8", "replace"), err_b.decode("utf-8", "replace")
+    finally:
+        out_f.close()
+        err_f.close()
 
 def parse_bsub_id(text):
     match = re.search(r"Job\s+<([0-9]{1,20})>\s+is\s+submitted", text or "")
@@ -584,7 +631,7 @@ def parse_bjobs_row(text, job_id):
             continue
         stat_code = parts[1].upper()
         exit_raw = parts[2] if len(parts) >= 3 else "-"
-        exit_code = int(exit_raw) if re.fullmatch(r"-?[0-9]{1,5}", exit_raw) else None
+        exit_code = int(exit_raw) if re_fullmatch(r"-?[0-9]{1,5}", exit_raw) else None
         exec_host = parts[3] if len(parts) >= 4 and parts[3] != "-" else None
         return {"job_id": str(job_id), "raw_state": stat_code, "exit_code": exit_code, "exec_host": exec_host}
     return None
@@ -594,7 +641,7 @@ def parse_sbatch_id(text):
         line = raw.strip()
         if not line:
             continue
-        match = re.fullmatch(r"([0-9]{1,20})(?:;([A-Za-z0-9_.-]{1,64}))?", line)
+        match = re_fullmatch(r"([0-9]{1,20})(?:;([A-Za-z0-9_.-]{1,64}))?", line)
         if match:
             return {"job_id": match.group(1), "cluster": match.group(2)}
     return None
@@ -827,15 +874,16 @@ def bounded_version(manifest, path):
         return
     simulator = manifest["simulator"]
     flag = "-W" if simulator == "spectre" else "--version"
+    exe, env = _resolve_simulator_runtime(manifest)
     def limit_output():
         os.setsid()
         resource.setrlimit(resource.RLIMIT_FSIZE, (65536, 65536))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    cmd = [manifest["executable"], flag]
+    cmd = [exe, flag]
     if os.path.isfile("/usr/bin/timeout") and os.access("/usr/bin/timeout", os.X_OK):
         cmd = ["/usr/bin/timeout", "--kill-after=1s", "8s"] + cmd
     with tempfile.TemporaryFile(dir=path) as output:
-        process = subprocess.Popen(cmd, stdin=DEVNULL, stdout=output, stderr=subprocess.STDOUT, preexec_fn=limit_output)
+        process = subprocess.Popen(cmd, stdin=DEVNULL, stdout=output, stderr=subprocess.STDOUT, preexec_fn=limit_output, env=env)
         try:
             code = wait_for(process, 10)
         except WaitExpired:
@@ -853,13 +901,13 @@ def bounded_version(manifest, path):
         matches = re.findall(r"(?im)^\s*\**\s*ngspice(?:-|\s+)([0-9]+(?:\.[0-9]+)*(?:\+|-dev)?)\b", text)
     if matches != [expected]:
         raise Failure("version_mismatch")
-    write_atomic(os.path.join(path, "version.json"), {"executable": manifest["executable"], "version": matches[0], "checked_at": now()})
+    write_atomic(os.path.join(path, "version.json"), {"executable": exe, "version": matches[0], "checked_at": now()})
 
 def requirements(manifest):
-    if not sys.platform.startswith("linux") or sys.version_info < (3, 6):
+    if not sys.platform.startswith("linux") or sys.version_info < (2, 7):
         raise Failure("unsupported_remote_runtime")
-    executable = manifest["executable"]
-    if not os.path.isfile(executable) or not os.access(executable, os.X_OK):
+    executable, _ = _resolve_simulator_runtime(manifest)
+    if not executable or not os.path.isfile(executable) or not os.access(executable, os.X_OK):
         raise Failure("missing_remote_tool")
     backend = manifest["backend"]
     if backend == "ssh_direct":
@@ -890,12 +938,15 @@ def detached_wrapper(path):
         os.close(fd)
 
 def write_scheduler_script(path, manifest):
+    py_exe = manifest["remote_python"]
+    if not os.path.isfile(py_exe) or not os.access(py_exe, os.X_OK):
+        py_exe = sys.executable
     script = (
         "#!/bin/sh\n"
         "set -u\n"
         "exec %s %s --scheduler-exec\n" % (
-            shlex.quote(manifest["remote_python"]),
-            shlex.quote(os.path.join(path, "wrapper.py")),
+            sh_quote(py_exe),
+            sh_quote(os.path.join(path, "wrapper.py")),
         )
     ).encode("ascii")
     job_path = os.path.join(path, "job.sh")
@@ -1022,6 +1073,11 @@ def launch(request):
         backend = manifest["backend"]
         if backend == "ssh_direct":
             detached_wrapper(path)
+            wait_end = clock() + 0.6
+            while clock() < wait_end:
+                if os.path.lexists(os.path.join(path, "wrapper.json")) or os.path.lexists(os.path.join(path, "status.json")):
+                    break
+                time.sleep(0.02)
         elif backend == "lsf":
             submit_lsf(path, manifest)
         elif backend == "slurm":
@@ -1080,7 +1136,7 @@ def cancel_run(request):
             return dict(base, outcome="unknown", reason="process_identity_not_alive", state=current["state"])
         return dict(base, outcome="confirmed", signaled=signaled, state="cancelling")
     scheduler = load_optional(path, "scheduler.json")
-    if not scheduler or scheduler.get("manifest_sha256") != base["manifest_sha256"] or not re.fullmatch(r"[0-9]{1,20}", str(scheduler.get("job_id", ""))):
+    if not scheduler or scheduler.get("manifest_sha256") != base["manifest_sha256"] or not re_fullmatch(r"[0-9]{1,20}", str(scheduler.get("job_id", ""))):
         return dict(base, outcome="rejected", reason="scheduler_identity_unverified", state=current["state"])
     job_id = scheduler["job_id"]
     if backend == "lsf":
@@ -1097,17 +1153,144 @@ def cancel_run(request):
         return dict(base, outcome="confirmed" if code == 0 else "unknown", job_id=job_id, exit_code=code, state="cancelling" if code == 0 else current["state"])
     raise Failure("unsupported_backend")
 
-def solver_exec(path, manifest):
-    manifest_at(path, manifest)
-    record = proc_identity(os.getpid())
-    if record is not None:
-        record.update(recorded_at=now(), role="solver_launcher_before_exec", executable=manifest["executable"])
-        write_atomic(os.path.join(path, "solver-launcher.json"), record)
-    if manifest["simulator"] == "ngspice":
-        raw_dir = os.path.join(path, "results.raw")
-        if not os.path.lexists(raw_dir):
-            os.mkdir(raw_dir, 0o700)
-    os.execv(manifest["executable"], manifest["argv"])
+_RUNTIME_CACHE = {}
+
+def _discover_cadence_setup_scripts():
+    home = home_path()
+    roots = [
+        os.path.join(home, ".cshrc"),
+        os.path.join(home, ".tcshrc"),
+        os.path.join(home, ".bashrc"),
+        os.path.join(home, ".bash_profile"),
+        os.path.join(home, ".profile"),
+    ]
+    seen = set()
+    candidates = []
+    added = set()
+    def add_cand(path_str, skind, pri):
+        if path_str in added or not os.path.isfile(path_str):
+            return
+        added.add(path_str)
+        if "crack" in path_str.lower():
+            pri += 40
+        candidates.append((pri, skind, path_str))
+    queue = [(r, 0) for r in roots if os.path.isfile(r)]
+    while queue and len(seen) < 24:
+        rcur, depth = queue.pop(0)
+        if rcur in seen:
+            continue
+        seen.add(rcur)
+        try:
+            with open(rcur, "rb") as fh:
+                txt = fh.read(65536).decode("utf-8", "replace")
+        except OSError:
+            continue
+        for line in txt.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            low = s.lower()
+            for m in re.finditer(r"(?:source|\.)\s+[\"\']?([/~][^\s;\'\"|&]+)[\"\']?", s):
+                raw_p = os.path.expanduser(m.group(1))
+                if not os.path.isfile(raw_p):
+                    continue
+                pl = raw_p.lower()
+                is_csh = ("csh" in pl) or rcur.endswith((".cshrc", ".tcshrc", ".csh")) or ("alias " in low)
+                skind = "csh" if is_csh else "sh"
+                if any(tok in pl for tok in ("spectre", "mmsim", "cadence", "ic6", "ic23", "icadv", "virtuoso")):
+                    pri = 10
+                    if "spectre" in pl or "mmsim" in pl:
+                        pri = 3
+                    elif "ic23" in pl or "icadv" in pl:
+                        pri = 5
+                    elif "ic618" in pl or "ic6" in pl:
+                        pri = 6
+                    if "virtuoso" in low or "ic6" in low or "icadv" in low or "spectre" in low:
+                        pri -= 2
+                    add_cand(raw_p, skind, pri)
+                elif depth < 2:
+                    queue.append((raw_p, depth + 1))
+    candidates.sort(key=lambda x: (x[0], x[2]))
+    return candidates[:8]
+
+def _capture_script_env(skind, script_path, base_env):
+    py_dump = sh_quote(sys.executable) + " -c \"import json,os;print(json.dumps(dict(os.environ)))\""
+    if skind == "csh":
+        csh_bin = which_cmd("csh") or which_cmd("tcsh")
+        if not csh_bin:
+            return None
+        cmd = "source %s >& /dev/null; %s" % (sh_quote(script_path), py_dump)
+        argv = [csh_bin, "-f", "-c", cmd]
+    else:
+        sh_bin = which_cmd("bash") or "/bin/sh"
+        cmd = ". %s >/dev/null 2>&1; %s" % (sh_quote(script_path), py_dump)
+        argv = [sh_bin, "-c", cmd]
+    try:
+        code, out, _ = run_bounded(argv, timeout_seconds=8, env=base_env)
+        if code == 0 and out.strip():
+            # Take last JSON line in case rc script printed banner text
+            for line in reversed(out.splitlines()):
+                line_s = line.strip()
+                if line_s.startswith("{") and line_s.endswith("}"):
+                    captured = json.loads(line_s)
+                    if isinstance(captured, dict):
+                        merged = dict(base_env)
+                        for k, v in captured.items():
+                            if isinstance(k, _STR_TYPES) and isinstance(v, _STR_TYPES):
+                                merged[str(k)] = str(v)
+                        return merged
+    except Exception:
+        pass
+    return None
+
+def _discover_sim_binary_direct(simulator, path_str=None):
+    found_path = which_cmd(simulator, path_str)
+    if found_path:
+        return found_path
+    if simulator != "spectre":
+        return None
+    for var in ("SPECTRE_HOME", "MMSIM_HOME", "MMSIMHOME", "CDSHOME", "CADENCE_HOME", "CDS_INST_DIR"):
+        base = os.environ.get(var, "")
+        if not base:
+            continue
+        for sub in ("bin/spectre", "tools/bin/spectre", "tools.lnx86/bin/spectre"):
+            cand = os.path.join(base, sub)
+            if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                return cand
+    found = []
+    for root in ("/home/cadence", "/opt/cadence", "/opt", "/eda/cadence", "/eda", "/cad", "/tools"):
+        if not os.path.isdir(root):
+            continue
+        try:
+            lvl1 = os.listdir(root)
+        except OSError:
+            continue
+        for a in lvl1:
+            al = a.lower()
+            if not any(k in al for k in ("spectre", "mmsim", "cadence")):
+                continue
+            p1 = os.path.join(root, a)
+            if not os.path.isdir(p1):
+                continue
+            checks = [
+                os.path.join(p1, "bin", "spectre"),
+                os.path.join(p1, "tools", "bin", "spectre"),
+                os.path.join(p1, "tools.lnx86", "bin", "spectre"),
+            ]
+            try:
+                for b in os.listdir(p1):
+                    p2 = os.path.join(p1, b)
+                    if os.path.isdir(p2):
+                        checks.append(os.path.join(p2, "bin", "spectre"))
+                        checks.append(os.path.join(p2, "tools", "bin", "spectre"))
+            except OSError:
+                pass
+            for c in checks:
+                if os.path.isfile(c) and os.access(c, os.X_OK):
+                    pri = 50 if "crack" in c.lower() else (5 if "hotfix" in c.lower() else 10)
+                    found.append((pri, c))
+    found.sort()
+    return found[0][1] if found else None
 
 def _build_env(manifest):
     threads = str(manifest["limits"]["cpu_count"])
@@ -1117,23 +1300,19 @@ def _build_env(manifest):
         shell_bin = "/bin/bash" if rem_env.get("shell", "bash") == "bash" else "/bin/sh"
         parts = []
         for sc in rem_env.get("setup_scripts", []):
-            parts.append(". " + shlex.quote(sc) + " >/dev/null 2>&1")
+            parts.append(". " + sh_quote(sc) + " >/dev/null 2>&1")
         for mod in rem_env.get("modules", []):
-            parts.append("module load " + shlex.quote(mod) + " >/dev/null 2>&1")
-        py_dump = shlex.quote(manifest["remote_python"]) + " -c 'import json,os;print(json.dumps(dict(os.environ)))'"
+            parts.append("module load " + sh_quote(mod) + " >/dev/null 2>&1")
+        py_dump = sh_quote(sys.executable) + " -c 'import json,os;print(json.dumps(dict(os.environ)))'"
         parts.append(py_dump)
         try:
-            proc = subprocess.run(
-                [shell_bin, "-lc", " && ".join(parts)],
-                stdin=DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                timeout=15, env=env,
-            )
-            if proc.returncode == 0 and proc.stdout:
-                captured = json.loads(proc.stdout.decode("utf-8", "replace"))
+            code, out, _ = run_bounded([shell_bin, "-lc", " && ".join(parts)], timeout_seconds=15, env=env)
+            if code == 0 and out.strip():
+                captured = json.loads(out.strip().splitlines()[-1])
                 if isinstance(captured, dict):
                     for k, v in captured.items():
-                        if isinstance(k, str) and isinstance(v, str):
-                            env[k] = v
+                        if isinstance(k, _STR_TYPES) and isinstance(v, _STR_TYPES):
+                            env[str(k)] = str(v)
         except Exception:
             pass
     if rem_env.get("extra_path"):
@@ -1144,13 +1323,63 @@ def _build_env(manifest):
     env.update(LC_ALL="C", LANG="C", OMP_NUM_THREADS=threads, MKL_NUM_THREADS=threads)
     return env
 
+def _resolve_simulator_runtime(manifest):
+    key = (manifest["simulator"], manifest["executable"], sha(js(manifest.get("remote_env") or {})))
+    cached = _RUNTIME_CACHE.get(key)
+    if cached is not None:
+        return cached[0], dict(cached[1])
+    env = _build_env(manifest)
+    exe = manifest["executable"]
+    sim = manifest["simulator"]
+    exe_ok = bool(exe and os.path.isfile(exe) and os.access(exe, os.X_OK))
+    has_lic = bool(env.get("CDS_LIC_FILE") or env.get("LM_LICENSE_FILE") or manifest.get("license_environment"))
+    if exe_ok and (sim != "spectre" or has_lic):
+        _RUNTIME_CACHE[key] = (exe, dict(env))
+        return exe, env
+    # Auto-discover simulator binary & license env from user shell rc / Cadence setup scripts
+    if sim == "spectre":
+        for _, skind, script_path in _discover_cadence_setup_scripts():
+            captured = _capture_script_env(skind, script_path, env)
+            if not captured:
+                continue
+            found_exe = exe if exe_ok else which_cmd("spectre", captured.get("PATH"))
+            if found_exe and os.path.isfile(found_exe) and os.access(found_exe, os.X_OK):
+                captured.update(manifest["license_environment"])
+                threads = str(manifest["limits"]["cpu_count"])
+                captured.update(LC_ALL="C", LANG="C", OMP_NUM_THREADS=threads, MKL_NUM_THREADS=threads)
+                _RUNTIME_CACHE[key] = (found_exe, dict(captured))
+                return found_exe, captured
+    if not exe_ok:
+        fallback = _discover_sim_binary_direct(sim, env.get("PATH"))
+        if fallback:
+            exe = fallback
+    _RUNTIME_CACHE[key] = (exe, dict(env))
+    return exe, env
+
+def solver_exec(path, manifest):
+    manifest_at(path, manifest)
+    exe, _ = _resolve_simulator_runtime(manifest)
+    argv = [exe] + list(manifest["argv"][1:])
+    record = proc_identity(os.getpid())
+    if record is not None:
+        record.update(recorded_at=now(), role="solver_launcher_before_exec", executable=exe)
+        write_atomic(os.path.join(path, "solver-launcher.json"), record)
+    if manifest["simulator"] == "ngspice":
+        raw_dir = os.path.join(path, "results.raw")
+        if not os.path.lexists(raw_dir):
+            os.mkdir(raw_dir, 0o700)
+    os.execv(str(exe), [str(a) for a in argv])
+
 def scheduler_exec_main(path, manifest):
     manifest_at(path, manifest)
     started = clock()
+    exe, env = _resolve_simulator_runtime(manifest)
+    argv = [exe] + list(manifest["argv"][1:])
     record = proc_identity(os.getpid())
     if record is not None:
         record.update(recorded_at=now(), role="scheduler_job_wrapper",
                       exec_host=socket.gethostname(),
+                      executable=exe,
                       slurm_job_id=os.environ.get("SLURM_JOB_ID"),
                       lsf_job_id=os.environ.get("LSB_JOBID"))
         write_atomic(os.path.join(path, "wrapper.json"), record)
@@ -1161,7 +1390,7 @@ def scheduler_exec_main(path, manifest):
     process = None
     try:
         process = subprocess.Popen(
-            manifest["argv"], cwd=path, stdin=DEVNULL, env=_build_env(manifest),
+            argv, cwd=path, stdin=DEVNULL, env=env,
         )
         code = process.wait()
         cancelled = os.path.lexists(os.path.join(path, "cancel-requested.json"))
@@ -1228,12 +1457,13 @@ def wrapper_main():
                 resource.setrlimit(resource.RLIMIT_AS, (limits["memory_bytes"], limits["memory_bytes"]))
             resource.setrlimit(resource.RLIMIT_FSIZE, (limits["file_size_bytes"], limits["file_size_bytes"]))
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        _, sim_env = _resolve_simulator_runtime(manifest)
         fd = os.open(os.path.join(path, "console.log"), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             process = subprocess.Popen(
                 ["/usr/bin/timeout", "--signal=TERM", "--kill-after=%ds" % limits["kill_grace_seconds"],
                  "%ds" % term_after, sys.executable, os.path.join(path, "wrapper.py"), "--solver-exec"],
-                cwd=path, stdin=DEVNULL, stdout=fd, stderr=fd, preexec_fn=constrain, env=_build_env(manifest),
+                cwd=path, stdin=DEVNULL, stdout=fd, stderr=fd, preexec_fn=constrain, env=sim_env,
             )
         finally:
             os.close(fd)
@@ -1305,7 +1535,7 @@ def collect(request):
             if root.count(os.sep) - raw_dir.count(os.sep) > 3 or len(priority_paths) + len(raw_paths) + len(dirs) + len(names) > MAX_COLLECTION_FILES:
                 raise Failure("artifact_count_limit")
             for name in dirs + names:
-                if not re.fullmatch(r"[A-Za-z0-9_.+-]{1,128}", name) or name in (".", ".."):
+                if not re_fullmatch(r"[A-Za-z0-9_.+-]{1,128}", name) or name in (".", ".."):
                     raise Failure("unsafe_artifact_name")
                 full = os.path.join(root, name)
                 if os.path.islink(full):
@@ -1354,19 +1584,24 @@ def request_main(request):
         return collect(request)
     raise Failure("unsupported_operation")
 
+def __spiceowl_run_main__(packed_req=None):
+    raw_packed = packed_req if packed_req is not None else (sys.argv[1] if len(sys.argv) > 1 else "")
+    request = json.loads(decoded(raw_packed).decode("ascii"))
+    nonce = request["nonce"]
+    try:
+        result = {"ok": True, "data": request_main(request)}
+    except Exception as exc:
+        result = {"ok": False, "error": exc.code if isinstance(exc, Failure) else "remote_operation_failed"}
+    sys.stdout.write("__SPICEOWL_DIRECT_%s_BEGIN__\n" % nonce)
+    sys.stdout.write(js(result).decode("ascii") + "\n")
+    sys.stdout.write("__SPICEOWL_DIRECT_%s_END__\n" % nonce)
+    sys.stdout.flush()
+
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] in ("--wrapper", "--solver-exec", "--scheduler-exec"):
         wrapper_main()
-    else:
-        request = json.loads(decoded(sys.argv[1]).decode("ascii"))
-        nonce = request["nonce"]
-        try:
-            result = {"ok": True, "data": request_main(request)}
-        except Exception as exc:
-            result = {"ok": False, "error": exc.code if isinstance(exc, Failure) else "remote_operation_failed"}
-        print("__SPICEOWL_DIRECT_%s_BEGIN__" % nonce)
-        print(js(result).decode("ascii"))
-        print("__SPICEOWL_DIRECT_%s_END__" % nonce)
+    elif len(sys.argv) > 1:
+        __spiceowl_run_main__(sys.argv[1])
 '''
 
 
@@ -1521,33 +1756,70 @@ def _validate(plan):
 
 
 def _exchange(profile, request):
+    import threading as _threading
+
     nonce = request["nonce"]
-    source = base64.b64encode(_REMOTE_SOURCE.encode("utf-8")).decode("ascii")
     packed = base64.b64encode(_json(request)).decode("ascii")
+    py_pref = request["manifest"]["remote_python"]
+    py_candidates = []
+    for cand in (py_pref, "/usr/bin/python3", "/usr/local/bin/python3", "/usr/bin/python", "python3", "python2", "python"):
+        if cand and cand not in py_candidates:
+            py_candidates.append(cand)
+    # POSIX sh bootstrap safe under csh/tcsh/bash; delivers script + request over stdin (no ARG_MAX limit).
     command = (
-        "exec %s -c 'import base64;exec(compile(base64.b64decode(\"%s\"),\"<direct>\",\"exec\"))' '%s'"
-        % (request["manifest"]["remote_python"], source, packed)
+        "sh -c 'for p in %s; do "
+        "if [ -x \"$p\" ] || command -v \"$p\" >/dev/null 2>&1; then exec \"$p\" -u -; fi; "
+        "done; echo SPICEOWL_NO_PYTHON >&2; exit 127'"
+        % " ".join(py_candidates)
     )
+    stdin_payload = (
+        _REMOTE_SOURCE
+        + "\n__spiceowl_run_main__(" + json.dumps(packed) + ")\n"
+    ).encode("utf-8")
     argv = _ssh_argv(profile["ssh_target"], command, ssh_hostname=profile.get("ssh_hostname"))
     process = None
+    feeder = None
     stdout = bytearray()
     stderr = _StderrHints()
+    stderr_tail = bytearray()
+    def _on_stderr(chunk):
+        stderr.feed(chunk)
+        if len(stderr_tail) < 1024:
+            stderr_tail.extend(chunk[: 1024 - len(stderr_tail)])
     deadline = time.monotonic() + SSH_TIMEOUT_SECONDS
     try:
         process = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             close_fds=True, env={**os.environ, "LC_ALL": "C", "LANG": "C"},
             **popen_isolation_kwargs(),
         )
+        def _feed_stdin():
+            try:
+                if process.stdin is not None:
+                    process.stdin.write(stdin_payload)
+                    process.stdin.flush()
+            except OSError:
+                pass
+            finally:
+                try:
+                    if process.stdin is not None:
+                        process.stdin.close()
+                except OSError:
+                    pass
+        feeder = _threading.Thread(target=_feed_stdin, daemon=True)
+        feeder.start()
         code = communicate_bounded(
             process,
             deadline=deadline,
             max_output_bytes=MAX_REPLY_BYTES,
             on_stdout=stdout.extend,
-            on_stderr=stderr.feed,
+            on_stderr=_on_stderr,
             chunk_size=65536,
         )
         if code != 0:
+            err_text = bytes(stderr_tail).decode("utf-8", "replace")
+            if "SPICEOWL_NO_PYTHON" in err_text:
+                raise DomainError("Remote host has no Python interpreter (python3 or python2).", "missing_remote_python")
             category = stderr.category() if code == 255 else None
             raise DomainError(_SSH_ERROR_MESSAGES.get(category, "The SSH exchange did not complete."), category or "direct_transport_failed")
         begin = ("__SPICEOWL_DIRECT_%s_BEGIN__\n" % nonce).encode("ascii")
@@ -1571,6 +1843,10 @@ def _exchange(profile, request):
         if process is not None:
             if process.poll() is None:
                 terminate_process_tree(process, force=True, grace_timeout=1.0)
+            if feeder is not None:
+                feeder.join(timeout=1.0)
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
             process.stdout.close()
             process.stderr.close()
 

@@ -392,7 +392,8 @@ class DirectExecutionManager:
                 "simulator_complete_pending_measurements",
                 "simulator_failed", "job_setup_failed", "input_hash_failure", "cancelled",
             }
-            if record.get("dispatch_claimed") and record.get("state") not in safe_states:
+            never_staged = record.get("remote_directory") is None and record.get("remote_state") in (None, "not_staged")
+            if record.get("dispatch_claimed") and record.get("state") not in safe_states and not never_staged:
                 raise DomainError(
                     "该任务已提交到远端且尚未确认终态，不能直接删除本地记录；请先取消作业或查询状态对账。",
                     "run_active_cannot_delete",

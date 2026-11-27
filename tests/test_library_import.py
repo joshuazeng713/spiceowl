@@ -753,10 +753,30 @@ class TestCircuitGitEntryContractAndHttp(unittest.TestCase):
                 active_rec = json.loads(active_json.read_text(encoding="utf-8"))
                 active_rec["dispatch_claimed"] = True
                 active_rec["state"] = "running_observed"
+                active_rec["remote_state"] = "running"
+                active_rec["remote_directory"] = "/tmp/fake-remote-run"
                 active_json.write_text(json.dumps(active_rec), encoding="utf-8")
                 with self.assertRaises(DomainError) as ctx_err:
                     dm.delete("agent-ff-02")
                 self.assertEqual(ctx_err.exception.code, "run_active_cannot_delete")
+
+                # 5. Agent direct_control prepare validates cleanly (DomainError, never raw TypeError)
+                # and accepts flat cpus/memory_gib + auto-reuses netlist from ui_configure/library_open
+                with self.assertRaises(DomainError) as missing_err:
+                    disp.dispatch("spiceowl_direct_control", {
+                        "operation": "prepare",
+                        "arguments": {"host_id": "sim-node-a", "simulator": "spectre"},
+                    }, context={"turn_id": "turn-val-1"})
+                self.assertEqual(missing_err.exception.code, "invalid_tool_arguments")
+
+                disp.dispatch("spiceowl_ui_configure", {"netlist_text": "simulator lang=spectre\nR1 (a 0) resistor r=5k\n"})
+                auto_run = disp.dispatch("spiceowl_direct_control", {
+                    "operation": "prepare",
+                    "arguments": {"host_id": "sim-node-a", "simulator": "spectre", "cpus": 4, "memory_gib": 16, "cell_name": "tb_auto"},
+                }, context={"turn_id": "turn-auto-1"})
+                self.assertTrue(auto_run["run_id"].startswith("tb_auto-"))
+                self.assertEqual(auto_run["limits"]["cpu_count"], 4)
+                self.assertEqual(auto_run["limits"]["memory_bytes"], 16 * 2**30)
             finally:
                 ctrl.close()
 

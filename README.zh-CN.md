@@ -53,11 +53,11 @@ SpiceOwl 原生支持 **macOS、Linux 与 Windows**，采用 **Web 优先** 架�
 
 ## 产品展示
 
-**[打开 SpiceOwl 产品展示页与完整视频剧场](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+**[打开 SpiceOwl 产品理念与九节全流程导览页](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
 
-- 在线观看 **10:45 完整产品宣传片**与 **10 节分章节真实集群操作实录**（视频按需流式加载自 GitHub Release，打开页面零额外流量消耗）。
-- 交互体验**服务器资源筛选**（CPU / 内存余量与快照新鲜度）、**首次 PDK 发现与 SQLite LUT 复用**以及**五维诊断场景**。
-- 查看真实 Spectre 原生波形与频谱证据（包括频谱改善 `+24.13 dB` 后仍独立标注的 SOA `CMI-2752` 告警），并可展开逐字核对已审公开电路源码与十阶段契约。
+- 开篇凝练呈现 SpiceOwl 端到端协作架构，并内置可按需展开的 **10:45 完整产品宣传片** 快捷播放条。
+- 围绕全部 **9 节核心实录** 采用**左文右视频**排版：左侧拆解功能边界、设计理念与工程思想，右侧以真实集群录像直观演示具体操作方法（视频按需流式加载，打开页面零额外流量消耗）。
+- 第 04 节内置双路径标签无缝切换 **04a（AI 对话模糊搜库）** 与 **04b（网页只读 Library Manager）**，并以第 09 节“未知故障严守科学红线 + 一句话沉淀永久规则”收官。
 
 **可选设计工作台集成：** [CircuitGit · AI-native 本地电路设计与 Git 版本管理](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html)。作为子模块嵌入时，SpiceOwl 直接复用其原有 Codex 窗口，绝不启动第二个平行 Agent。
 

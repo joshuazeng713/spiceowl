@@ -53,11 +53,11 @@ SpiceOwl is a web-first simulation management workbench natively supporting **ma
 
 ## Product showcase
 
-**[Explore SpiceOwl Interactive Showcase & Full Video Theater](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+**[Explore SpiceOwl Product Philosophy & 9-Chapter Video Walkthrough](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
 
-- Watch the **10:45 Full Product Launch Film** and **10 chapter-by-chapter real-cluster walkthroughs** inline (on-demand streaming from GitHub Releases; zero video bandwidth consumed until clicked).
-- Interact with the **resource recommendation calculator** (CPU, memory headroom, observation freshness), **PDK discovery vs. SQLite LUT** walkthrough, and **5-dimensional diagnosis scenarios**.
-- Inspect real Spectre native waveforms and spectra (including an improved SNDR spectrum with remaining SOA `CMI-2752` warnings) plus the audited 10-stage contract reference.
+- Starts with SpiceOwl's end-to-end collaboration architecture and a compact expandable bar for the **10:45 Full Product Launch Film**.
+- Walks through all **9 chapters** in a side-by-side editorial layout: **left column** explains the capability boundary and design philosophy, while **right column** streams the real-cluster hands-on demonstration video on demand (zero video bandwidth consumed until clicked).
+- Chapter 04 includes an interactive dual-path switcher pairing **04a (AI Fuzzy Search)** and **04b (Read-Only Web Library Manager)**, culminating in Chapter 09's scientific redlines and self-evolving `night_watch.py` rule demo.
 
 **Optional design integration:** [CircuitGit — AI-native local circuit design and Git version management](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html). Its showcase explains how a design workbench can embed SpiceOwl's tools alongside local circuit editing, Git history, and testbench CI without starting a second Agent.
 

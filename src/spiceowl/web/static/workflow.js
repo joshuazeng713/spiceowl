@@ -260,6 +260,7 @@ export function mountWorkflow(doc, locationObject = globalThis.location, history
   const parsedStage = /^#stage-(10|[1-9])$/.exec(locationObject?.hash || '');
   if (parsedStage) state.index = Number(parsedStage[1]) - 1;
   const stageList = byId('stage-list');
+  if (!stageList) return null;
   STAGES.forEach((stage, index) => {
     const li = doc.createElement('li'), button = doc.createElement('button');
     button.type = 'button'; button.dataset.stage = String(index);

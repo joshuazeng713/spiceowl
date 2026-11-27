@@ -10,6 +10,14 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const STATIC = join(ROOT, 'src/spiceowl/web/static');
 const OUTPUT = resolve(process.env.WORKFLOW_QA_DIR || join(ROOT, '.spiceowl/workflow-browser-qa'));
 const files = {'workflow.html': 'text/html', 'workflow.js': 'text/javascript', 'workflow.css': 'text/css', 'owl.svg': 'image/svg+xml',
+  'showcase.css': 'text/css', 'guide.css': 'text/css', 'guide.js': 'text/javascript', 'guide-data.js': 'text/javascript',
+  'pool-demo.json': 'application/json', 'showcase-samples.json': 'application/json', 'showcase-evidence.json': 'application/json',
+  'showcase-spectrum.svg': 'image/svg+xml', 'showcase-bootstrap-tran.svg': 'image/svg+xml',
+  'showcase-inverter-tran.svg': 'image/svg+xml', 'showcase-inverter-dc.svg': 'image/svg+xml', 'showcase-inverter-ac.svg': 'image/svg+xml',
+  'demo-poster-film.webp': 'image/webp', 'demo-poster-01.webp': 'image/webp', 'demo-poster-02.webp': 'image/webp',
+  'demo-poster-03.webp': 'image/webp', 'demo-poster-04a.webp': 'image/webp', 'demo-poster-04b.webp': 'image/webp',
+  'demo-poster-05.webp': 'image/webp', 'demo-poster-06.webp': 'image/webp', 'demo-poster-07.webp': 'image/webp',
+  'demo-poster-08.webp': 'image/webp', 'demo-poster-09.webp': 'image/webp',
   'bootstrap-dut.publication.scs': 'text/plain', 'inverter-dut.publication.scs': 'text/plain',
   'bootstrap-tb.publication.scs': 'text/plain', 'bootstrap-evidence.publication.json': 'application/json', 'source-manifest.json': 'application/json'};
 const requests = [], blocked = [], errors = [];

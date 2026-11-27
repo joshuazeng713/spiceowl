@@ -1,8 +1,12 @@
-/* Explanatory controls only. No execution, connection or mutable account state. */
+/* Explanatory controls & lazy click-to-play video theater. Zero external IO until clicked. */
 import { design, pool } from './guide-data.js';
 const root=document.getElementById('product-guide');
 const byId=id=>document.getElementById(id);
+const RELEASE_VIDEO_BASE='https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/';
+const RELEASE_TAG_URL='https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1';
+
 function group(selector,handler){const buttons=[...root.querySelectorAll(selector)];buttons.forEach(b=>{if(!b.hasAttribute('aria-pressed'))b.setAttribute('aria-pressed','false');});buttons.forEach(b=>b.addEventListener('click',()=>{buttons.forEach(x=>x.setAttribute('aria-pressed',String(x===b)));handler(b);}));}
+
 const modules={
  library:['电路库：给 Agent 和人相同的入口','当前公开清单有 4 个 library、98 个 cell。按单元声明拥有的文件和共享依赖；同一依赖保留一个物理源，避免修改了副本却没有影响顶层电路。'],
  rnl:['RNL：本地文件里的电路可以被直接看见','RNL 源或网表内的 @RNL 描述几何；浏览器 / Wasm 呈现原理图。Agent 可以一起编辑电气源与图形描述。只改网表并不自动证明历史几何已同步，也不意味着自动完成芯片版图。'],
@@ -17,7 +21,111 @@ const agentSteps=[
  ['选择模型、思考强度和操作权限。','输入框齿轮里选择可用模型和实际支持的强度。只读会话只看资料；写电路还需要操作员配置的库访问能力。模型运行、待审或结果未知时保留被冻结的设置。','会话设置只影响这个通道；不会改写本机 Codex 全局配置。'],
  ['绑定当前电路，并用一次可审查的任务开始。','选中 library / cell 后使用“使用当前电路”。Agent 获得精确源身份，再读文件、提议修改并给出 diff。仿真上下文和工具结果同步回工作台。','先读 → 设计与成组保存 → 看 diff / 版本 → 确认需要后再提交实验。']
 ];
+
+function initVideoTheater(){
+ const theaterStage=byId('theater-stage');
+ const theaterTitle=byId('theater-title');
+ const theaterDesc=byId('theater-desc');
+ const theaterDuration=byId('theater-duration');
+ const theaterStatus=byId('theater-status');
+ const theaterLinks=byId('theater-links');
+ const theaterReset=byId('theater-reset-btn');
+ if(!theaterStage)return;
+
+ const defaultFilm={
+  file:theaterStage.dataset.videoFile,
+  poster:theaterStage.dataset.videoPoster,
+  title:theaterTitle.textContent,
+  desc:theaterDesc.textContent,
+  duration:theaterDuration.textContent
+ };
+
+ const pauseOtherVideos=current=>{
+  root.querySelectorAll('video').forEach(v=>{if(v!==current&&!v.paused)v.pause();});
+ };
+
+ const setTheaterDownload=(file,label)=>{
+  if(!theaterLinks)return;
+  theaterLinks.querySelectorAll('.g-dl-link').forEach(a=>a.remove());
+  const dl=document.createElement('a');
+  dl.className='g-dl-link';
+  dl.href=RELEASE_VIDEO_BASE+file;
+  dl.target='_blank';
+  dl.rel='noopener noreferrer';
+  dl.textContent='下载 '+label+' (MP4)';
+  const all=document.createElement('a');
+  all.className='g-dl-link';
+  all.href=RELEASE_TAG_URL;
+  all.target='_blank';
+  all.rel='noopener noreferrer';
+  all.textContent='全部 11 个高清视频 Release ↗';
+  theaterLinks.append(dl,all);
+ };
+ setTheaterDownload(defaultFilm.file,'完整宣传片');
+
+ const mountVideo=(container,file,poster,title,autoplay=true)=>{
+  const video=document.createElement('video');
+  video.controls=true;
+  video.playsInline=true;
+  video.preload='metadata';
+  video.poster=poster;
+  video.setAttribute('aria-label',title||'SpiceOwl 演示视频');
+  video.src=RELEASE_VIDEO_BASE+file;
+  video.addEventListener('play',()=>pauseOtherVideos(video));
+  container.replaceChildren(video);
+  if(autoplay){
+   const p=video.play();
+   if(p&&typeof p.catch==='function')p.catch(()=>{});
+  }
+  return video;
+ };
+
+ const loadIntoTheater=(meta,autoplay=true)=>{
+  theaterTitle.textContent=meta.title;
+  theaterDesc.textContent=meta.desc;
+  theaterDuration.textContent=meta.duration;
+  theaterStage.dataset.videoFile=meta.file;
+  theaterStage.dataset.videoPoster=meta.poster;
+  setTheaterDownload(meta.file,meta.file===defaultFilm.file?'完整宣传片':'当前章节');
+  if(theaterReset)theaterReset.hidden=(meta.file===defaultFilm.file);
+  if(theaterStatus)theaterStatus.textContent='正在顶部大屏播放：'+meta.title+'（流式加载自 GitHub Release）';
+  mountVideo(theaterStage,meta.file,meta.poster,meta.title,autoplay);
+ };
+
+ byId('theater-play-btn')?.addEventListener('click',()=>loadIntoTheater(defaultFilm,true));
+ theaterReset?.addEventListener('click',()=>loadIntoTheater(defaultFilm,true));
+
+ root.querySelectorAll('.g-vcard').forEach(card=>{
+  const stage=card.querySelector('.g-vstage');
+  const posterBtn=stage?.querySelector('.g-poster-btn');
+  const bigBtn=card.querySelector('[data-load-theater]');
+  if(!stage)return;
+  const meta={
+   file:stage.dataset.videoFile,
+   poster:stage.dataset.videoPoster,
+   title:stage.dataset.videoTitle,
+   desc:stage.dataset.videoDesc,
+   duration:stage.dataset.videoDuration
+  };
+  posterBtn?.addEventListener('click',()=>{
+   mountVideo(stage,meta.file,meta.poster,meta.title,true);
+  });
+  bigBtn?.addEventListener('click',()=>{
+   loadIntoTheater(meta,true);
+   byId('so-videos')?.scrollIntoView({behavior:'smooth',block:'start'});
+  });
+ });
+
+ group('[data-vfilter]',btn=>{
+  const selected=btn.dataset.vfilter;
+  root.querySelectorAll('.g-vcard').forEach(card=>{
+   card.hidden=(selected!=='all'&&card.dataset.stageGroup!==selected);
+  });
+ });
+}
+
 if(root){
+ initVideoTheater();
  group('[data-circuit-view]',b=>{byId('native-circuit').src='./design-'+b.dataset.circuitView+'.svg';byId('native-circuit').alt=b.dataset.circuitView==='buffer'?'RNL 实际渲染的两级缓冲器':'RNL 实际渲染的原始反相器';});
  group('[data-module]',b=>{const v=modules[b.dataset.module];byId('module-title').textContent=v[0];byId('module-copy').textContent=v[1];});
  group('[data-agent-step]',b=>{const v=agentSteps[+b.dataset.agentStep];['agent-step-title','agent-step-copy','agent-step-output'].forEach((id,i)=>byId(id).textContent=v[i]);});
@@ -37,5 +145,22 @@ if(root){
  function showDiagnosis(name){if(!byId('diagnostic-status'))return;const s=scenarios[name],labels=['执行状态','测量有效性','功能 / 性能','工作条件合格性','依赖来源'];byId('diagnostic-status').replaceChildren(...labels.map((label,i)=>{const row=document.createElement('div');const span=document.createElement('span');span.textContent=label;const b=document.createElement('b');b.textContent=s.v[i];if(/unknown|fail|violations/.test(s.v[i]))b.className='unknown';row.append(span,b);return row;}));byId('diagnostic-title').textContent=s.title;byId('diagnostic-copy').textContent=s.copy;byId('diagnostic-action').textContent=s.action;}
  group('[data-diagnosis]',b=>showDiagnosis(b.dataset.diagnosis));showDiagnosis('disconnect');
  root.querySelectorAll('[data-reference]').forEach(a=>a.addEventListener('click',()=>byId('sc-reference').open=true));
- const reveal=()=>{const id=location.hash.slice(1);if(id&&/^(stage-|public-sources|responsibility|provenance)/.test(id)){byId('sc-reference').open=true;document.getElementById(id)?.scrollIntoView();}};reveal();window.addEventListener('hashchange',reveal);if(new URLSearchParams(location.search).has('stage'))byId('sc-reference').open=true;
+ const reveal=()=>{
+  const id=location.hash.slice(1);
+  if(id&&/^(stage-|public-sources|responsibility|provenance)/.test(id)){
+   byId('sc-reference').open=true;
+   document.getElementById(id)?.scrollIntoView();
+  }
+  root.querySelectorAll('.g-vcard.is-target').forEach(el=>el.classList.remove('is-target'));
+  if(id&&/^video-/.test(id)){
+   const target=byId(id);
+   if(target&&target.classList.contains('g-vcard')){
+    const allBtn=root.querySelector('[data-vfilter="all"]');
+    if(allBtn)allBtn.click();
+    target.classList.add('is-target');
+    target.scrollIntoView({block:'center'});
+   }
+  }
+ };
+ reveal();window.addEventListener('hashchange',reveal);if(new URLSearchParams(location.search).has('stage'))byId('sc-reference').open=true;
 }

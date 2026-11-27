@@ -5,86 +5,97 @@
 <h1 align="center">SpiceOwl</h1>
 
 <p align="center"><strong>You sleep. SpiceOwl keeps watch.</strong></p>
-<p align="center">An independent simulation management tool for engineers and AI agents.</p>
+<p align="center">An open-source, web-first AI Agent simulation workbench for analog &amp; mixed-signal IC engineers.</p>
 <p align="center">English · <a href="README.zh-CN.md">简体中文</a> · <a href="docs/direct-execution.md">Direct Execution &amp; Recovery</a> · <a href="docs/cross-platform.md">Cross-Platform &amp; CI</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/roadmap.md">Roadmap</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 
-<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open SpiceOwl Web Workbench (single product entry)</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/#quickstart">5-step Web Tutorial</a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">Product showcase</a> · <a href="https://github.com/spiceowl-dev/spiceowl/tree/main">Source</a></p>
+<p align="center"><a href="https://spiceowl-dev.github.io/spiceowl/"><strong>Open SpiceOwl Web Workbench</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>Watch Product Film &amp; 10-Chapter Demos</strong></a> · <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html">Product Showcase</a> · <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">Download HD Videos</a></p>
 
-SpiceOwl is a web-first simulation management workspace natively supporting **macOS, Linux, and Windows**. [`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/) is the **single formal user interface** — no second local website or daily terminal commands. When you want to connect your own SSH/LSF/Slurm servers or your local Codex Agent, install the headless **SpiceOwl Connector** once (Windows: double-click `Install SpiceOwl Connector.bat`; macOS: double-click `Install SpiceOwl Connector.command`; registers `spiceowl://` without admin privileges and stays silently in the background), then click **"Connect local connector"** right inside the web workbench.
+SpiceOwl is a web-first simulation management workbench natively supporting **macOS, Linux, and Windows**. [`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/) is the **single formal user interface** — no second local website or daily terminal commands. When you want to connect your own SSH/LSF/Slurm EDA cluster or your local Codex Agent, install the headless **SpiceOwl Connector** once (macOS: double-click `Install SpiceOwl Connector.command`; Windows: double-click `Install SpiceOwl Connector.bat`; registers `spiceowl://` without admin privileges and stays silently on `127.0.0.1:8765`), then click **"Connect local connector"** inside the web workbench.
+
+## Product Launch Film & 10-Chapter Video Walkthrough
+
+> **Watch the full voiced product launch film (`10:45`, HD 1600×812 with Chinese voiceover + original soundtrack) or jump straight into any of the 10 real-cluster workflow chapters interactively on the [Product Showcase Page](https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos).**
+
+<p align="center">
+  <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos">
+    <img src="src/spiceowl/web/static/demo-poster-film.webp" width="880" alt="SpiceOwl Launch Film: You Sleep. SpiceOwl Keeps Watch. Click to watch interactively.">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://spiceowl-dev.github.io/spiceowl/workflow.html#so-videos"><strong>▶ Watch Full Launch Film Inline (10:45)</strong></a> ·
+  <a href="https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/SpiceOwl_Launch_Film.mp4">Direct MP4 (59.8 MB)</a> ·
+  <a href="https://github.com/spiceowl-dev/spiceowl/releases/tag/demo-videos-v1">All 11 Release Assets</a>
+</p>
+
+| # | Chapter | Duration | What It Demonstrates | Watch |
+| :---: | --- | :---: | --- | --- |
+| **01** | **30-Second Zero-Config Local Connect** | `0:34` | Double-click `spiceowl://` Connector once, silent `127.0.0.1:8765` pairing & local Agent bridge | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-01) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/01_initial_connect.mp4) |
+| **02** | **1-Minute EDA Cluster Onboarding** | `0:41` | Visual SSH Wizard with `ProxyJump` reuse, automatic legacy `ssh-rsa` fallback & 5-point live probe | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-02) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/02_connect_servers.mp4) |
+| **03** | **Cluster Compute & FlexLM License Dashboard** | `0:40` | Live 512-core CPU/RAM/EDA workload + multi-server FlexLM SPICE license pool & idlest host recommendation | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-03) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/03_resource_monitor.mp4) |
+| **04a** | **One-Prompt Remote Circuit Open (AI Agent)** | `0:45` | Fuzzy remote `cds.lib` search & isolated netlist + Maestro export without Virtuoso GUI or ADE licenses | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-04a) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/04a_agent_open_workspace.mp4) |
+| **04b** | **Read-Only Web Remote Library Manager** | `0:42` | Point-and-click remote `cds.lib` browser, auto-tagged `schematic`/`maestro`, isolated `Cadence si` + read-only SKILL export | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-04b) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/04b_manual_library_manager.mp4) |
+| **05** | **One-Prompt Batch Sweep & Auto-Report Handoff** | `0:51` | Multi-temperature grouped submission, 4s auto-poll, auto-collect & automatic AI report handoff | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-05) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/05_submit_sim_and_report.mp4) |
+| **06** | **Interactive HTML Reports & 102 KB Offline Share** | `0:43` | Vector waveforms, KPI cards, multi-corner Testbench Summary & 1-click 102 KB self-contained offline HTML | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-06) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/06_simulation_reports.mp4) |
+| **07** | **Free-Create Custom AI Engineering Report** | `0:57` | Plain-language custom PSF analysis: Gain, ±0.1% Settling Time, 10–90% Rise Time & VDD Power vs. Temperature | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-07) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/07_custom_ai_report.mp4) |
+| **08** | **Natural-Language Code-First Night Watch** | `0:58` | Transparent `night_watch.py` rule engine edited in plain language + mandatory isolated Dry-Run verification | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-08) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/08_agent_edit_night_watch.mp4) |
+| **09** | **Scientific Redlines & Self-Evolving Guardrails** | `3:25` | Refuses to alter netlists on unknown `STB` failure, then turns a 1-sentence authorization into a permanent Dry-Run-verified rule | [Play](https://spiceowl-dev.github.io/spiceowl/workflow.html#video-09) · [MP4](https://github.com/spiceowl-dev/spiceowl/releases/download/demo-videos-v1/09_night_watch_new_case.mp4) |
 
 ## What's new
 
-- **Web-first formal product (`github.io`) + one-time headless `spiceowl://` Connector** ([Open SpiceOwl Web](https://spiceowl-dev.github.io/spiceowl/)): Explore **every core workflow directly in your browser with zero installation** — walk through the **5-step interactive Web UI tutorial** (`#quickstart`), use **Dual Cursors A/B (`Δt / 1/Δt / ΔV / |ΔV/Δt|`)**, **1-click Lossless Analog Metrics**, **Multi-Corner `tt/ss/ff` Overlay Comparison**, and **CSV/SVG Export** on the **500-cycle PSF Binary waveform & `#317` Cycle Slicer**, explore the **27-Corner PVT matrix & 40-Sample Monte Carlo histogram**, step through `Stage → Launch → Status → Collect`, inspect the **Overnight Watch & Agent Handoff timeline** (zero external chat pings), and run the **10-case Agent safety benchmark** (`#agents`). When real SSH/EDA servers or your local Codex Agent are needed, click **"Connect local connector"** right in the top bar (`GET /health` probe → `spiceowl://start` background wake → 1-click pairing) without leaving the webpage. Backed by real Chromium Playwright desktop & mobile (`390px`) E2E checks in [`.github/workflows/tests.yml`](.github/workflows/tests.yml).
-- **Generic lossless analog measurement recipes (M3), remote EDA `remote_env` profiles & Agent-first overnight watch handoff**: Built-in pure-Python lossless measurement engine (`spiceowl.experiments.analog_metrics`) computes rise/fall time, settling time, overshoot/undershoot, slew rate, period/duty/jitter, AC DC-gain/UGBW/phase-margin, and DC static power (wired into PVT/MC specs and `#direct`). Direct execution supports strictly validated remote environment bootstrap (`module load`, `setup_scripts`, `extra_path`), 5 zero-PDK starter netlist templates (RC, RLC ringing, two-pole op-amp AC, Level-1 CMOS inverter, ngspice RC), restart-safe incremental log streaming (`spiceowl.monitoring.log_stream`), and **Web-recorded Agent Watch Handoff (`spiceowl.watch_handoff`)**: zero external chat pings to wake the human — queue timeouts, OOMs, and license stalls are recorded quietly in the Web UI and pushed directly to the user's connected Agent, which checks host resources and submits traceable new attempts inside explicit `OvernightAutonomyPolicy` guardrails.
-- **Cross-platform `spiceowl init` & `#quickstart` 4-step real EDA onboarding** ([legacy compatibility guide](docs/legacy-compatibility.md)): When you are ready to connect your own remote Linux EDA server locally (`spiceowl serve`), `#quickstart` Step 5 auto-discovers `~/.ssh/config` aliases (zero key/password reading), verifies Spectre/ngspice, freezes a zero-PDK RC smoke netlist, and runs your first simulation from the browser. Retired `spiceowl mcp` and legacy Q&A remain clearly documented as read-only compatibility archives.
-- **Generic `next-action` orchestrator, interrupted-turn recovery & 10-case Agent E2E benchmark** ([reproducibility guide](docs/agent-reproducibility.md), [dual-mode Agent guide](docs/dual-mode-agent.md)): Deterministic 7-stage state machine (`spiceowl.orchestrator` / `spiceowl_next_action`) enforces missing-input preservation, uncertain-dispatch reconciliation, lossless measurement gates, and valid spec-failure preservation; `CodexBridge` supports explicit human-confirmed interrupted-turn archiving & unlock (`GET /api/codex/recovery`, `POST /api/codex/recover`) with zero silent replay; `spiceowl eval-agent` and `#agents` run the frozen 10-case benchmark comparing deterministic vs naive baselines (and custom model callbacks).
-- **PVT / Corner / Monte Carlo batch experiment management** ([direct execution guide](docs/direct-execution.md)): Expand deterministic PVT matrices (`process × voltage × temperature`), seeded Monte Carlo suites, or hybrid `pvt_mc` batches with bounded `max_concurrency` dispatch, lossless metric extraction, conservative yield & `Cpk` statistics (failed and missing samples remain explicit in the denominator with full `mc_seed` identity), interactive corner matrix + SVG histogram in `#direct` (including 1-click 27-corner PVT & 40-sample Monte Carlo demos), CLI (`spiceowl direct batch-*`), and Markdown/CSV exports.
-- **Binary waveforms (PSF Binary / PSFXL), compute-near-data downsampling & Cycle Slicer** ([direct execution guide](docs/direct-execution.md)): Inspect multi-thousand-cycle binary simulations without downloading gigabytes of raw files. Streams `psfbin`, `psfxl`, and `psfascii` via `seek()` locally or in-place on the remote Linux host; uses **Min-Max envelope downsampling** (`downsampled_preview`) so narrow glitches and overshoot are never lost, automatically switches to **100% lossless samples** (`exact_window`) when zooming in, and provides a **Cycle Slicer** with per-cycle trend charts, automatic worst-case anomaly detection, eye overlay, and 1-click lossless intra-cycle drill-down directly in `#direct` (including a built-in 500-cycle PSF Binary demo).
-- **Native cross-platform support (macOS / Linux / Windows) & automated test workflow** ([cross-platform guide](docs/cross-platform.md)): SpiceOwl's local control plane detects your OS automatically via [`src/spiceowl/_platform.py`](src/spiceowl/_platform.py) — no WSL required on Windows. Every push and PR runs a 17-job **Ubuntu, macOS, and Windows** matrix ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) plus an AST static guardrail (`tests/test_cross_platform.py`). New developers and users can run full local verification in one command with `scripts/run_full_tests.py`.
-- **Standalone direct execution (`ssh_direct`, `lsf`, `slurm`)** ([direct execution guide](docs/direct-execution.md)): Submit Spectre or ngspice simulations directly over registered OpenSSH hosts from the `#direct` web console, `spiceowl direct` CLI, or `--enable-direct-exec` Agent tools — no CircuitGit gateway required. Preserves frozen SHA-256 input manifests, atomic launch-claim fencing (`launch_outcome_unknown` on disconnect), verified PID/job cancellation, background `RuntimeMonitor` watches, and five-dimensional reports.
-- **M4 bounded automatic recovery & searchable recovery reports** ([direct execution guide](docs/direct-execution.md)): Opt-in, policy-bounded recovery for two operational failures only — `license_unavailable` (backoff retries) and `confirmed_oom` (memory scale-up and optional host relocation) — with restart-safe watch resumption. Never alters netlists, stimuli, corners, or acceptance criteria, and refuses to auto-retry syntax/convergence failures or design target misses. Every recovery lineage writes searchable JSON + Markdown reports in the `#direct` console (with one-click `.md` download) and via `spiceowl direct recovery-reports`.
+- **Code-First Night Watch (`night_watch.py`), Dry-Run Studio, 1-Click Toggle & Quick-Ops Skills**: Replaced opaque checkboxes with a transparent, versionable local Python rule engine (`src/spiceowl/night_watch_script.py`). Toggle watching on/off with one click in the top bar, tune timeouts/OOM caps/host-relocation rules in plain language (accelerated by instant 1-call `update_watch_config` and the `spiceowl-quick-ops` + `spiceowl-night-watch` Skills), and verify every rule edit inside an **isolated Dry-Run sandbox** before activation. When an unknown error crosses the circuit-definition boundary, SpiceOwl refuses to alter netlists, stimuli, corners, or specs, archives diagnostic evidence, and — once authorized by the engineer — evolves a permanent Dry-Run-verified recovery rule that honestly flags skipped analyses as `Skipped / Unverified`.
+- **Dual-Mode Interactive HTML Report Engine (`Fast` & `Free-Create`), Testbench Summary & 102 KB Offline Export**: Simulation completion automatically triggers 4s polling → auto-collect → AI report handoff (`src/spiceowl/report_builder.py`, `spiceowl-sim-report-fast`, `spiceowl-sim-report`). **Fast Mode** renders vector SVG waveforms, KPI cards, 5D diagnostics, multi-corner **Testbench Summary** comparison tables, and a **~102 KB single-file self-contained offline HTML** for instant design reviews. **Free-Create Mode** lets engineers ask in plain language for bespoke measurements from raw PSF files (e.g., Gain, ±0.1% Settling Time, 10–90% Rise Time, VDD Power vs. Temperature) and archives the resulting interactive plots straight back into the Testbench report.
+- **Zero-Virtuoso Remote Circuit Entry (AI Agent Fuzzy Search + Read-Only Web Library Manager)**: Open remote Cadence designs without launching a laggy Virtuoso GUI or occupying expensive ADE interactive licenses. Either ask the Agent in plain language to search `cds.lib` and export the workspace, or browse remote directories directly in the **Read-Only Web Library Manager** (`schematic`/`maestro` auto-tagging, isolated `Cadence si` + read-only SKILL export that never modifies source libraries), alongside local `.scs`/`.sp`/`.cir` import.
+- **Visual SSH Setup Wizard & Live FlexLM SPICE License Pool Dashboard**: Onboard multi-hop EDA clusters in one minute without hand-editing `~/.ssh/config` — automatic `ProxyJump` & username reuse across nodes, automatic legacy OpenSSH `ssh-rsa` compatibility fallback, local-only managed keys (passwords never saved to disk), and 5-point live verification (`onboarding_wizard.py`). The **Server Resources** page probes CPU, RAM, disk, active EDA processes, and live **FlexLM SPICE license pools** (`Spectre`, `Spectre X`, `ADE Assembler`, `ADE Explorer`, `Spectre GXL`) in parallel (`host_activity.py`) and passes the idlest host recommendation directly to the Agent.
+- **Streamlined 4-Page Unified Web Workbench, 3-Tier Codex Permissions & 5 Bundled Agent Skills**: Unified disconnected preview and live local-Connector UX into 4 focused pages (`Home & Connect`, `Server Resources`, `Simulation Workbench`, `History & Reports`), backed by 3 explicit Codex permission tiers (**Safe**, **Supervised**, **Full Access**) with live shell streaming, 1-SSH fast submission (`spiceowl-sim-submit`), and resilient remote execution (`csh`/`tcsh`, Python 2.7, auto-Spectre discovery).
+- **Binary Waveforms (PSF Binary / PSFXL), Lossless Analog Metrics (M3) & PVT / Monte Carlo Batches** ([direct execution guide](docs/direct-execution.md)): Stream multi-thousand-cycle binary waveforms in-place on remote Linux hosts via `seek()` with Min-Max envelope preview (never drops glitches), automatic 100% lossless zoom-in, **Cycle Slicer** worst-cycle drill-down, built-in lossless analog recipes (`spiceowl.experiments.analog_metrics`), and conservative PVT / Monte Carlo yield & `Cpk` analytics.
+- **Native Cross-Platform Support (macOS / Linux / Windows) & 17-Job CI Matrix** ([cross-platform guide](docs/cross-platform.md)): Centralized OS compatibility layer ([`src/spiceowl/_platform.py`](src/spiceowl/_platform.py)) — no WSL required on Windows — verified on every push across Ubuntu, macOS, and Windows plus Chromium Playwright desktop & mobile (`390px`) E2E checks ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Product showcase
 
-**[Explore SpiceOwl: let an Agent help manage every simulation](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
+**[Explore SpiceOwl Interactive Showcase & Full Video Theater](https://spiceowl-dev.github.io/spiceowl/workflow.html)**
 
-- Try server selection with CPU, memory and observation freshness, and follow PDK discovery, configuration and LUT reuse.
-- See how users, Agents and execution tools cooperate: Agent setup, testbench preparation, submission identity, long-running supervision and disconnect diagnosis.
-- Inspect real Spectre waveforms and metrics, including an improved spectrum with remaining SOA warnings, and explore the engineering behind resource checks, monitoring and numerical analysis.
+- Watch the **10:45 Full Product Launch Film** and **10 chapter-by-chapter real-cluster walkthroughs** inline (on-demand streaming from GitHub Releases; zero video bandwidth consumed until clicked).
+- Interact with the **resource recommendation calculator** (CPU, memory headroom, observation freshness), **PDK discovery vs. SQLite LUT** walkthrough, and **5-dimensional diagnosis scenarios**.
+- Inspect real Spectre native waveforms and spectra (including an improved SNDR spectrum with remaining SOA `CMI-2752` warnings) plus the audited 10-stage contract reference.
 
-The showcase distinguishes synthetic teaching controls from saved native simulation results and explains current capability boundaries. Opening it does not submit a simulation.
+**Optional design integration:** [CircuitGit — AI-native local circuit design and Git version management](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html). Its showcase explains how a design workbench can embed SpiceOwl's tools alongside local circuit editing, Git history, and testbench CI without starting a second Agent.
 
-**Optional design integration:** [CircuitGit — AI-native local circuit design and Git version management](https://circuitgit-dev.github.io/CircuitGit/workflow/index.html). Its showcase explains how a design workbench can use SpiceOwl's tools alongside local circuit editing, Git history and testbench CI.
+## Try the workbench
 
-## Try the console
+> **Try it in your browser — zero installation.** Open [`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/) to explore the unified 4-page workspace, synthetic runs, and scripted diagnoses right away. When ready to connect your real SSH/LSF/Slurm servers and local Codex Agent, click **"Connect local connector"** in the top bar (one-time headless `spiceowl://` Connector install, no admin privileges needed). See the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) for automatic Pages deployment.
 
-> **Try it in your browser — no installation.** Explore original synthetic runs, connection states and scripted diagnoses. SSH and simulation execution require a configured local runtime; Agent conversations use the standalone Codex window or CircuitGit's existing window in embedded mode. The public demo currently follows `main`; the [publishing guide](https://github.com/spiceowl-dev/spiceowl/blob/main/docs/github-pages.md) explains automatic updates.
+**Two Agent modes:** standalone SpiceOwl owns one explicitly connected Codex App-Server window with 3 permission tiers (`Safe` / `Supervised` / `Full Access`) and 5 bundled Skills; embedded SpiceOwl exports tools into CircuitGit's existing window and never starts a second Agent. See the [dual-mode Agent guide](docs/dual-mode-agent.md) and [CircuitGit integration contract](docs/circuitgit-integration.md).
 
-> **Early alpha — simulation management from SpiceOwl's own console or CLI.** Scan an authorized server pool, submit committed inputs, observe existing runs in the background, apply opt-in M4 bounded recovery for license waits and confirmed OOM, and explicitly collect results. SpiceOwl provides monitoring, Spectre diagnostics, PSF ASCII parsing and numerical analysis. Remote execution supports both the [native direct execution backend](docs/direct-execution.md) (`ssh_direct`, `lsf`, and `slurm` directly over registered OpenSSH hosts via `spiceowl direct`, `#direct` web console, or `--enable-direct-exec`) and the optional CircuitGit Service/Runner adapter. The public demo executes no simulation; solver checkpoint continuation and automatic numerical-parameter repair remain future work. Start with the [direct execution guide](docs/direct-execution.md), [cross-platform guide](docs/cross-platform.md), [standalone runtime guide](docs/standalone-runtime.md), [console guide](docs/local-console.md), or [Agent setup guide](docs/dual-mode-agent.md).
+Additional deep-dive guides: [Direct Execution & Bounded Recovery](docs/direct-execution.md) · [Simulation Intake](docs/onboarding-discovery.md) · [Guided Onboarding](docs/smart-onboarding.md) · [Cached PDK Scope SDK](docs/pdk-scope-selection.md) · [Agent-Authored Testbenches](docs/agent-testbench.md) · [Per-Device PDK LUT](docs/pdk-lut.md) · [Analysis Tools (`pip install '.[adctools]'`)](docs/adctools.md) · [Native AC/DC Measurements](docs/ac-dc-results.md) · [Agent Reproducibility](docs/agent-reproducibility.md).
 
-**Two Agent modes:** standalone SpiceOwl owns one explicitly connected Codex App-Server window; embedded SpiceOwl exports tools into CircuitGit's existing window and never starts a second Agent. Authentication stays with the selected Codex runtime. See the [dual-mode guide](docs/dual-mode-agent.md). See the [paired integration and submodule contract](docs/circuitgit-integration.md).
+![SpiceOwl web console overview](docs/images/local-console.png)
 
-[Simulation intake](docs/onboarding-discovery.md) parses imported circuit source, discovers selected SSH environments and model candidates, then freezes explicit experiment conditions through the configured backend. Discovery reports bounded coverage and never launches a simulator. Source extraction and model selection remain separate from scientific qualification.
-
-[Guided onboarding](docs/smart-onboarding.md) adds source-backed device-contract prefill, ranked model/section choices, remote-platform TMI suggestions and editable experiment presets. The onboarding tools return exact next actions; missing evidence and uncertain submissions remain explicit.
-
-The pure [cached scope selection SDK](docs/pdk-scope-selection.md) combines explicitly selected sections of one observed PDK entry, checks the full dependency namespace and TMI options, and compares a subsequent audit against every expected file hash and scope. It preserves partial-library status and requires the execution owner's fresh audit and review.
-
-[Agent-authored testbenches](docs/agent-testbench.md) preserve Spectre source and reviewed relative Verilog-A helpers, including their standard-header dependency graph. A private [per-device PDK index](docs/pdk-lut.md) reuses an explicit library observation across different circuit model combinations, with visible age and coverage; execution still requires a fresh dependency audit. Optional [analysis tools](docs/adctools.md), installed with `pip install '.[adctools]'`, provide ten named Python/CLI operations, actual pinned ADCToolbox integration, and [native AC/DC parsing and measurements](docs/ac-dc-results.md). Gain and loop margins require explicit units, references and feedback semantics; DC region codes require a declared model contract. See the [agent reproducibility guide](docs/agent-reproducibility.md) for the deterministic steps and remaining limits.
-
-![SpiceOwl beginner-friendly web console overview](docs/images/local-console.png)
-
-*Redesigned web console overview with grouped navigation, four-dimensional run statuses, and instant 5-step tutorial entry.*
-
-![SpiceOwl 5-step interactive Web UI tutorial](docs/images/quickstart-tutorial.png)
-
-*Built-in 5-step interactive Web UI tutorial (`#quickstart`) guiding newcomers directly on GitHub Pages or local installs.*
+*Unified web workbench overview with grouped navigation, live status cards, and instant onboarding entry.*
 
 ![SpiceOwl 500-cycle PSF Binary Min-Max waveform and Cycle Slicer](docs/images/waveform-slicer.png)
 
-*Four-tab `#direct` workbench showcasing 500-cycle PSF Binary Min-Max envelope preview, automatic lossless zoom-in, and Cycle Slicer `#317` glitch drill-down.*
+*Binary PSF Min-Max envelope preview, automatic lossless zoom-in, and Cycle Slicer `#317` glitch drill-down.*
 
 ## Why SpiceOwl
 
-You start a simulation before leaving the lab. In the morning, the connection is gone, a job ran out of memory, or the run finished without the signals needed for your measurement.
+You start a batch simulation before leaving the lab. By morning, SSH dropped, a job hit OOM, a license stalled, or a run finished with a missing signal or subtle SOA violation — and even when it succeeds, you still spend half an hour screenshotting waveforms into slides.
 
-SpiceOwl is being built to turn that uncertainty into a clear record: what ran, what happened, which recovery actions were taken, and whether the resulting data answers the intended experiment.
+SpiceOwl turns that fragile loop into an **auditable, self-watching engineering pipeline**: what ran, on which host with which license/PDK state, what failed, which bounded recovery rule fired (without ever tampering with circuit intent), and an interactive report ready for review.
 
-Our first target is **analog and mixed-signal research using Virtuoso and Spectre**, beginning with one validated Linux execution environment. Public development will use synthetic fixtures and a mock executor so contributors can participate without a commercial simulator or PDK.
+## Capability status
 
-## What we are building
-
-| Capability | Intended behavior | Status |
+| Capability | Intended behavior | Current status |
 | --- | --- | --- |
-| Connect | Standalone Codex window or embedded CircuitGit window | Explicit App-Server connection, SSE, human review and shared SDK tools; no second Agent when embedded |
-| Observe | Track execution identity and observation freshness | Existing-run monitor with bounded status calls/backoff, Spectre log evidence and aggregate host resource snapshots |
-| Reconnect | Reconcile an existing job after a client or controller interruption | Exact submission-key lookup, fixed-run status and durable client requests; unknown dispatch is never replayed |
-| Validate | Check inputs, required signals, measurement windows, and result completeness | Frozen inverter/prepared-transient recipes, finite authored-TB validation, and optional named ADC algorithms; general TB intent remains explicit |
-| Recover | Apply bounded, recorded recovery policies for supported failures | Opt-in bounded M4 recovery implemented for direct runs (watch resume, license backoff retry, confirmed OOM scale-up/relocation + searchable JSON/Markdown recovery reports); native checkpoint continuation and numerical-parameter repair remain unimplemented |
-| Diagnose | Explain evidence and propose actions | Deterministic Spectre classification and five-dimension reports; evidence is available in the standalone Agent conversation or an embedded host conversation |
-| Report | Separate execution outcome, measurement validity, and circuit performance | Five independent experiment dimensions: execution, measurement, performance, operating qualification and dependency provenance |
+| **Web Entry & Connector** | Single web UI on `github.io` + silent local loopback Connector | Shipped (`127.0.0.1:8765`, `spiceowl://` zero-admin installer for macOS/Windows/Linux) |
+| **SSH & License Pool** | Visual multi-hop cluster setup + live compute & FlexLM monitoring | Shipped (ProxyJump reuse, legacy RSA fallback, 5-point probe, CPU/RAM/EDA + FlexLM pools) |
+| **Zero-Virtuoso Entry** | Open remote Cadence designs without Virtuoso GUI or ADE seats | Shipped (AI Agent fuzzy `cds.lib` open + Read-Only Web Library Manager + local netlist import) |
+| **Execute & Observe** | Standalone `ssh_direct / lsf / slurm` + optional CircuitGit Runner | Shipped (SHA-256 input freeze, 1-SSH submit Skill, 4s auto-poll, `launch_outcome_unknown` fencing, PVT/MC batches) |
+| **Report & Analyze** | Fast interactive reports + bespoke AI PSF analysis + offline share | Shipped (Fast/Free-Create dual mode, Testbench Summary, ~102 KB offline HTML, lossless M3 metrics, PSF Binary/Cycle Slicer, ADCTools) |
+| **Night Watch & Recovery** | Transparent programmable rules + Dry-Run verification + redlines | Shipped (`night_watch.py`, 1-click toggle, Dry-Run Studio, M4 license/OOM recovery, human-authorized custom rules; binary solver checkpoint continuation remains future work) |
+| **5D Scientific Verdicts** | Separate execution, measurement validity, spec, SOA & provenance | Shipped (five independent dimensions; valid spec misses & skipped analyses remain explicit) |
 
-### A morning report should answer three different questions
+### A morning report answers three separate questions
 
 | Question | Example answer |
 | --- | --- |
@@ -92,82 +103,67 @@ Our first target is **analog and mixed-signal research using Virtuoso and Spectr
 | Is this a valid measurement of the requested experiment? | Inputs matched; required signals and time window are present |
 | Did the circuit meet its specification? | No — settling time exceeded the target |
 
-A valid result that misses a design target is still a result worth preserving. Recovery must not change the experiment simply to turn a failure into a pass.
-
-The report also shows observation freshness separately, so an old running status is not mistaken for a current observation.
+A valid result that misses a design target is a valuable engineering result worth preserving. Recovery must never alter netlists, stimuli, corners, or criteria just to turn a failure into a green checkmark.
 
 ## Design principles
 
-- **Execution survives the interface.** A remote execution service or scheduler owns the job; the browser and agent conversation do not.
-- **Unknown is a real state.** A missing connection is not proof of a failed simulation. Reconcile the original job before considering another submission.
-- **Rules keep watch; agents investigate.** Routine monitoring and known recovery policies should work without an LLM. An agent proposes structured actions that the policy layer evaluates.
-- **Every attempt has provenance.** Preserve the resolved inputs, tool identity, execution receipt, evidence, and changes between attempts.
-- **Recovery preserves experimental intent.** Changes to tolerances, stimuli, corners, seeds, or measurement definitions require an explicit policy or a reviewed new experiment.
-- **Resume means what the backend supports.** Controller recovery, job reconnection, and solver checkpoint recovery are separate capabilities.
-
-## Integration architecture
-
-```mermaid
-flowchart TD
-    UI[CircuitGit workspace and Codex conversation] --> Bridge[Existing app-server dynamic tools / ic-workbench]
-    Bridge --> Review[CircuitGit validation and human review]
-    Review --> SDK[SpiceOwl Python SDK]
-    SDK --> Checks[Host pool / PDK LUT / TB validation]
-    Review --> Runner[CircuitGit existing Runner]
-    Runner --> Simulator[Remote simulator]
-    Simulator --> Evidence[Logs and saved results]
-    Evidence --> SDK
-    SDK --> Report[Diagnostics / PSF / FFT / AC / DC]
-    Report --> UI
-```
-
-The [architecture](docs/architecture.md) defines ownership and failure handling. The [run contract](docs/run-contract.md) defines what must be recorded before an experiment can be trusted.
-
-The current [standalone runtime](docs/standalone-runtime.md) uses server-pool and execution-origin SDKs with CircuitGit's existing Runner. **Agent ownership is explicit:** standalone uses SpiceOwl's Codex window; embedded uses CircuitGit's existing `codex app-server` dynamic-tool bridge and `ic-workbench` integration. Historical [P0.2](docs/contracts/p02-connectivity.md), [P0.3](docs/contracts/p03-pool-agent.md) and connection designs remain for compatibility context; their separate Agent/MCP setup is superseded.
+- **Execution survives the interface.** Remote schedulers and processes own the job; closing the browser never kills a simulation.
+- **Unknown is a real state.** A dropped SSH connection is not proof of failure — reconcile the original `submission_key` before considering another launch.
+- **Transparent code keeps watch; agents investigate and evolve rules.** Routine recovery runs deterministically in readable `night_watch.py`; every Agent edit is Dry-Run verified first.
+- **Every attempt has provenance.** Preserve SHA-256 frozen inputs, tool versions, execution receipts, recovery diffs, and honest `Skipped / Unverified` flags.
+- **Scientific redlines stay hard.** Changes to netlists, tolerances, stimuli, corners, seeds, or specs require explicit human authorization.
 
 ## Repository map
 
 ```text
 spiceowl/
-├── README.md                  # English introduction
-├── README.zh-CN.md            # Chinese introduction
-├── docs/                      # Architecture, run contract, roadmap, decisions
+├── README.md                  # English introduction & video walkthrough index
+├── README.zh-CN.md            # Chinese introduction & video walkthrough index
+├── skills/                    # 5 bundled Agent Skills (quick-ops, sim-submit, report-fast, report, night-watch)
+├── docs/                      # Architecture, direct execution, run contract, roadmap, decisions
 ├── assets/brand/              # Editable project icon and exported avatar
 ├── examples/                  # Original inverter and draft configuration examples
-├── scripts/                   # Developer setup, one-command cross-platform test runner & smoke tools
+├── scripts/                   # Setup, Pages builder, link checker & cross-platform full test runner
 ├── src/spiceowl/              # Installable Python package
 │   ├── _platform.py           # Centralized macOS / Linux / Windows compatibility layer
-│   ├── direct.py              # Standalone SSH/LSF/Slurm direct execution & recovery supervisor
+│   ├── connector.py           # Zero-admin spiceowl:// Connector installer & loopback bridge
+│   ├── direct.py              # Standalone SSH/LSF/Slurm direct execution & 4s auto-watch supervisor
+│   ├── batch.py               # PVT / Corner / Monte Carlo batch execution & conservative yield stats
+│   ├── hosts.py               # Registered host pool & SSH connectivity probes
+│   ├── host_activity.py       # Parallel cluster CPU/RAM/EDA process & FlexLM SPICE license polling
+│   ├── onboarding_wizard.py   # Visual SSH setup wizard (ProxyJump reuse & legacy RSA auto-fallback)
+│   ├── report_builder.py      # Dual-mode Fast/Free-Create interactive HTML & SVG report engine
+│   ├── night_watch_script.py  # Code-first night_watch.py rule engine, AST config updater & Dry-Run sandbox
+│   ├── watch_handoff.py       # Overnight watch event log & Agent handoff policy layer
+│   ├── skills.py              # Bundled Skill loader & prompt integration
+│   ├── standalone_agent.py    # 3-tier Codex permission runtime & Agent tool dispatcher
+│   ├── simulation_tools.py    # Unified Agent simulation, library & UI sync tools
+│   ├── experiments/           # Source extraction, frozen recipes & lossless M3 analog measurements
+│   ├── onboarding/            # Remote Library Manager, authored-TB validation, PDK discovery & LUT
+│   ├── adctools/              # Optional explicit ADC algorithms & pinned ADCToolbox adapter
+│   ├── monitoring/            # Durable observation & restart-safe incremental log streaming
+│   ├── recovery/              # M4 bounded recovery engine & searchable JSON/Markdown reports
+│   ├── integrations/          # CircuitGit client/pool, Spectre diagnostics & PSF parsing
 │   ├── domain/                # Experiment, attempt, receipt, and event models
 │   ├── adapters/              # Execution (SSH, direct/LSF/Slurm, mock) and simulator integrations
-│   ├── integrations/          # CircuitGit client/pool, diagnostics and PSF ASCII parsing
-│   ├── experiments/           # Source extraction, frozen recipes and deterministic measurements
-│   ├── onboarding/            # Authored-TB validation, model discovery and private observation LUT
-│   ├── adctools/              # Optional explicit ADC algorithms and pinned upstream adapters
-│   ├── monitoring/            # Durable observation of existing real runs
-│   ├── validation/            # Input and measurement acceptance checks
-│   ├── recovery/              # M4 bounded recovery engine, searchable reports & policy evaluation
 │   ├── storage/               # Durable records and artifact references
-│   ├── agent/                 # Synthetic diagnosis and historical native compatibility
 │   ├── read_api.py            # Transport-neutral stored read views for CircuitGit
-│   ├── mcp/                   # Historical MCP compatibility shim and protocol tests
-│   ├── scheduling/            # Resource placement and simulation-origin plans
 │   ├── cli/                   # Local command interface
-│   └── web/                   # Loopback API and bundled browser assets
-└── tests/                     # Offline tests and synthetic fixtures
+│   └── web/                   # Loopback API, unified workbench & showcase assets
+└── tests/                     # Offline Python, Node, and Playwright browser E2E test suites
 ```
-
-The independently maintained SDK/CLI contains server-pool probes, PDK discovery/LUT, Agent-TB checks, diagnostics, PSF parsing, adctools, read views and the existing signed simulation client. Conversation ownership follows the explicit mode; CircuitGit retains project materialization, execution identity, review, dispatch and native collection. Its `submodules/spiceowl` gitlink and integration lock pin the same reviewed commit. The [local console guide](docs/local-console.md) explains the separate demo and real-simulation views. The [foundation decision](docs/decisions/0001-project-foundation.md) records the original design choices.
 
 ## Start here
 
-For a complete development environment, run `python3 scripts/setup_dev.py`
-after cloning, then `.venv/bin/spiceowl serve --demo`. Setup installs the pinned
-numerical extras and historical MCP test dependencies, downloads a project-local Python if needed, and runs
-a quick self-check. Use `--serve-demo` to install and start in one command.
-See [developer setup](docs/developer-setup.md) for requirements and recovery.
+### Fastest path: Web Workbench + Local Connector
 
-With Python 3.11+ on macOS, Linux, or Windows (see [cross-platform guide](docs/cross-platform.md)):
+1. Open [`https://spiceowl-dev.github.io/spiceowl/`](https://spiceowl-dev.github.io/spiceowl/).
+2. Click **"Connect local connector"** in the top bar and follow the 30-second one-time installer (macOS `.command` / Windows `.bat` / Linux script).
+3. Use the **Visual SSH Setup Wizard** to connect your EDA cluster, then open a circuit via the AI Agent or the **Read-Only Web Library Manager**.
+
+### Developer / local source install
+
+For a complete development environment, run `python3 scripts/setup_dev.py` after cloning, then `.venv/bin/spiceowl serve --demo` (see [developer setup](docs/developer-setup.md)). Or install directly with Python 3.11+ on macOS, Linux, or Windows ([cross-platform guide](docs/cross-platform.md)):
 
 ```bash
 # macOS / Linux
@@ -187,9 +183,7 @@ py -3 -m venv .venv
 .venv\Scripts\spiceowl.exe serve --demo
 ```
 
-Open the printed loopback URL. Explore Connections, inspect a synthetic run, advance its observations and request a demo diagnosis. No model, simulator, Node.js or credentials are needed. Repeating `--demo` preserves stored history. The [guide](docs/local-console.md) covers CLI commands, persistence, limitations and tests.
-
-To verify your installation locally across all features (macOS, Linux, or Windows), run the one-command test workflow:
+Run the full cross-platform verification suite in one command:
 
 ```bash
 # macOS / Linux
@@ -199,21 +193,7 @@ To verify your installation locally across all features (macOS, Linux, or Window
 .venv\Scripts\python.exe scripts\run_full_tests.py
 ```
 
-GitHub Actions automatically runs this full matrix on **macOS, Windows, and Ubuntu** ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)); see [cross-platform support & testing](docs/cross-platform.md) for compatibility rules and ongoing maintenance.
-
-To add a real connection, use **Simulation hosts → Add host**, or import an operator-authored host profile using `spiceowl hosts add --file PROFILE.json`. Registration saves local configuration; **Check connection** explicitly verifies the selected host. OpenSSH uses your existing alias and jump-host configuration. The [host onboarding guide](docs/host-onboarding.md) explains setup, safe retries and separate trust, authentication, network and stale-resource states. Version queries do not establish license availability, job state, or simulation validity.
-
-When an existing SpiceOwl history store is the intended source, CircuitGit can read it with `spiceowl.read_api.open_read_views(directory)`; no MCP dependency, process or second conversation is needed. CircuitGit's own Runner records remain authoritative and need no duplicate store. The same eight bounded views are available through `spiceowl --data-dir ABSOLUTE_STATE_DIR read ...`. See the [SDK method mapping](docs/circuitgit-integration.md#direct-sdk-read-views). The old `spiceowl mcp` launcher now returns migration guidance; importable MCP symbols and the optional extra remain for historical protocol tests.
-
-For multiple nodes, use **Simulation hosts → Import pool** to preview an explicit hostname list and register it using an existing route template, or use `hosts import-pool`. Select up to 32 rows and use **Check selected hosts**; the CLI offers `hosts scan --hosts HOST_ID ...`. The browser evaluates requested CPUs and memory within the same selected batch. Unknown or stale nodes are excluded. Placement retains a resource margin and is a proposal, not a reservation. Standalone plans select a candidate for a new exported netlist; Virtuoso-managed plans preserve the original host/native run mapping.
-
-For AI assistance, use **Agent channel in standalone SpiceOwl** and explicitly Connect, or **CircuitGit's existing Codex conversation** when embedded. Both share engine tools and preserve saved legacy Q&A. See the [dual-mode setup](docs/dual-mode-agent.md). Legacy `agents add/probe/ask` commands return migration guidance; metadata and question history remain readable. See the [unified Agent channel guide](docs/native-agent.md).
-
-## Connect the real simulation console
-
-### Option 1: Standalone direct execution (no CircuitGit gateway needed)
-
-Register an SSH host, then prepare, launch, watch, recover, and collect directly from the web console (`#direct`) or CLI (`spiceowl direct`):
+### CLI direct execution (optional)
 
 ```bash
 # Freeze inputs with opt-in M4 bounded recovery (license retries + OOM scale-up/relocation)
@@ -223,54 +203,19 @@ spiceowl direct stage amp-tran-01
 spiceowl direct launch amp-tran-01
 spiceowl direct watch amp-tran-01 --allow-collect --auto-resume-watch
 
-# Search and inspect persisted recovery reports (also viewable & downloadable in the #direct web console)
+# Search persisted recovery reports
 spiceowl direct recovery-reports --query oom
 spiceowl direct recovery-report amp-tran-01 --markdown
 ```
 
-Add `--enable-direct-exec` to `spiceowl serve` to also expose these direct execution and recovery tools (with human approval gates) to the standalone Codex window. See the [direct execution & bounded recovery guide](docs/direct-execution.md).
-
-### Option 2: Connect through a CircuitGit gateway
-
-Provision a private [live-client configuration](examples/live-client.example.json) for an authorized, running CircuitGit gateway, then use the same file for CLI and web:
-
-```bash
-spiceowl live --client-config /absolute/private/live-client.json runtime
-spiceowl serve --live-client-config /absolute/private/live-client.json
-```
-
-The [standalone runtime guide](docs/standalone-runtime.md) covers server grants, exact project/configuration/commit identity, explicit submission and collection, and unknown-request lookup. This path executes prepared netlists with remote Spectre without launching Virtuoso or OCEAN. The local client needs no PDK files; licensed models, alias mappings, hash pins and a working simulator license must exist in the remote execution environment when the circuit needs them. Keep the CircuitGit service running for background observation. Current `watch` observes an existing run; it does not automatically collect, restart a solver or change parameters.
-
-For registered experiments, [`spiceowl workflow`](docs/workflow.md) provides a deterministic `prepare → run → inspect` CLI, plus `execute` to wait through collection and five-dimensional reporting. It needs no LLM and preserves the original plan/job/key on timeout or uncertain dispatch. Recipe preparation checks remote dependencies; inspection can collect terminal results. Scientific conditions remain frozen and automatic parameter repair is not implemented.
-
-## Developer inverter smoke test
-
-The source-checkout utility [run_inverter_smoke.py](scripts/run_inverter_smoke.py) provides an explicit `prepare → stage → launch → status → collect` workflow for the [original toy MOS1 inverter](examples/inverter/README.md). It requires a registered, authorized Linux host with licensed Spectre, GNU `timeout`, and a working Python 3.6+ interpreter. Replace `HOST_ID` with a registered host ID and `PYTHON_ABSOLUTE_PATH` with that remote interpreter's absolute path. Run the steps individually and inspect each result before continuing:
-
-```bash
-PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py prepare --data-dir .spiceowl --hosts HOST_ID --run-key inverter-smoke-001 --remote-python PYTHON_ABSOLUTE_PATH
-PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py stage --run-dir .spiceowl/smoke/inverter-smoke-001
-PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py launch --run-dir .spiceowl/smoke/inverter-smoke-001
-PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py status --run-dir .spiceowl/smoke/inverter-smoke-001
-PYTHONPATH=src .venv/bin/python scripts/run_inverter_smoke.py collect --run-dir .spiceowl/smoke/inverter-smoke-001
-```
-
-If the remote launch environment needs explicit license configuration, append the optional `--license-env-json PRIVATE_LICENSE_JSON_PATH` to **prepare**. The private JSON object accepts only `CDS_LIC_FILE` and/or `LM_LICENSE_FILE`; their values are frozen in the private plan and passed to the solver environment. Omit the option when the existing environment is already configured. A successful version check does not prove that a simulation license is available. See the [example guide](examples/inverter/README.md) for the JSON shape; keep actual license configuration out of public source and shared receipts.
-
-`prepare` actively checks the selected hosts and freezes a local source/acceptance bundle; it does not reserve resources or launch a job. `stage` writes the frozen input to an isolated remote directory. `launch` rechecks resource headroom, verifies the remote identity/version and claims one bounded attempt. If delivery is uncertain, use `status` with the same saved run directory; do not prepare a new key or blindly relaunch. Collect only after a confirmed terminal result. Collection checks hashes and completion evidence, saves native PSF ASCII and logs, and produces separate execution, measurement-validity and toy-inverter results. Optional `collect --plots` needs a separately installed local matplotlib.
-
-Keep `.spiceowl/smoke/` private. The original educational models represent no fabrication process, and a passing smoke test does not qualify a PDK or unattended recovery. This utility remains a separate developer workflow. The optional real CLI/web client dispatches through CircuitGit’s existing Runner; SDK cache queries and placement-only commands retain their read-only or planning scope. Limits and acceptance criteria are documented with the [example](examples/inverter/README.md).
-
-SpiceOwl also connects to IC Workbench through a bounded, read-only gateway adapter. Use `ic register`, `ic sync`, and `ic runs` to preserve native run IDs and inspect stored observations; three transport-neutral SDK methods expose the local cache to CircuitGit. IC Workbench retains the existing submission/approval workflow and hosts a compact supervision card. That passive cache interface does not enable monitoring or automatic recovery. The optional real client enables explicit watches separately. See the [IC Workbench integration guide](docs/ic-workbench.md).
-
-CircuitGit can use the [external resource-selection API](docs/circuitgit-integration.md#resource-aware-execution-through-circuitgit) to scan a configured server pool, freeze the selected site in a reviewed plan and recheck it before its existing Runner submits the simulation. Stored runs carry optional historical library/cell and execution-target metadata. SpiceOwl’s optional real CLI/web entry point reuses that same Runner, and cached SDK views remain read-only. Both repositories’ simulation integration is delivered and tested together.
+Optional CircuitGit gateway mode (`spiceowl serve --live-client-config /absolute/private/live-client.json`) and developer smoke runner ([`scripts/run_inverter_smoke.py`](scripts/run_inverter_smoke.py)) remain documented in the [standalone runtime guide](docs/standalone-runtime.md), [direct execution guide](docs/direct-execution.md), and [inverter example guide](examples/inverter/README.md).
 
 ## Contributing
 
-We welcome analog designers, CAD engineers, and developers working on reliable scientific computing. Useful first contributions include sanitized failure cases, measurement validators, and small implementations with failure-injection tests.
+We welcome analog designers, CAD engineers, and developers working on reliable scientific computing. Useful contributions include sanitized failure cases for `night_watch.py`, lossless measurement recipes, and failure-injection tests.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before sharing data. Use [SECURITY.md](SECURITY.md) for reporting vulnerabilities and handling sensitive materials. Background references and candidate dependencies are listed in [docs/references.md](docs/references.md). The core uses Python's standard library. The optional MCP extra is retained only for historical compatibility and protocol tests; CircuitGit's SDK integration does not require it.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before sharing data. Use [SECURITY.md](SECURITY.md) for reporting vulnerabilities and handling sensitive materials. Background references are listed in [docs/references.md](docs/references.md).
 
 ## License
 
-[MIT](LICENSE), as selected for this repository. Cadence tools, PDKs, and third-party components are not distributed by this project. Any future third-party code retains its applicable license and notices.
+[MIT](LICENSE). Cadence tools, PDKs, and third-party components are not distributed by this project. Any future third-party code retains its applicable license and notices.

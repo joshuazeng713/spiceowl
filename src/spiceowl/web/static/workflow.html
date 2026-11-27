@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
-  <meta name="description" content="SpiceOwl 是独立的仿真管理工具，提供自己的控制台、Agent 会话、CLI 与 SDK，覆盖服务器资源、PDK、任务监督和结果分析。">
-  <title>SpiceOwl · 独立的 Agent 仿真管理工具</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self' https://github.com https://*.githubusercontent.com; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <meta name="description" content="SpiceOwl（仿真夜枭）是开源的 Agent 模拟电路仿真工作台：30 秒本地直连、可视化 SSH 与 FlexLM 许可监控、零 Virtuoso 导网表、批量仿真与交互式 HTML 报告、以及守红线可进化的夜间值守。">
+  <title>SpiceOwl · 你去休息，仿真我盯 — 产品宣传片与全流程导览</title>
   <link rel="icon" href="./owl.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./workflow.css">
   <script type="module" src="./workflow.js"></script>
@@ -16,40 +16,579 @@
 <body class="spice-theme">
   <a class="skip-link" href="#product-guide">跳到主要内容</a>
   <header class="site-header">
-    <a class="brand" href="./index.html"><img src="./owl.svg" width="36" height="36" alt=""><span>SpiceOwl<small>SIMULATION WORKFLOW</small></span></a>
-    <nav aria-label="页面导航"><a href="./index.html">返回控制台</a><a href="#so-servers">资源</a><a href="#so-pdk">PDK</a><a href="#so-diagnosis">诊断</a></nav>
-    <span class="static-label"><span aria-hidden="true">●</span> 静态交互 · 不连接服务</span>
+    <a class="brand" href="./index.html"><img src="./owl.svg" width="36" height="36" alt=""><span>SpiceOwl<small>AGENT SIMULATION WORKBENCH</small></span></a>
+    <nav aria-label="页面导航"><a href="./index.html">进入工作台</a><a href="#so-videos">宣传片</a><a href="#so-servers">算力与许可</a><a href="#so-reports">交互报告</a><a href="#so-nightwatch">夜间值守</a></nav>
+    <span class="static-label"><span aria-hidden="true">●</span> 静态导览 · 视频按需加载</span>
   </header>
+
   <div class="guide spice" id="product-guide" data-product="spiceowl">
-<nav class="g-nav" aria-label="SpiceOwl 展示导航"><a href="#so-agent">Agent 如何工作</a><a href="#so-servers">服务器空闲状态</a><a href="#so-pdk">配置 PDK</a><a href="#so-submit">提交与监督</a><a href="#so-diagnosis">智能诊断</a><a href="#so-engineering">工程实现</a></nav>
-<section class="g-hero"><div class="g-hero-copy"><p class="g-kicker">SPICEOWL / INDEPENDENT SIMULATION MANAGEMENT</p><h1>让 Agent 帮你<br><em>管理好每一次仿真。</em></h1><p class="g-lead">SpiceOwl 是独立的仿真管理工具，通过自己的控制台、Agent 会话、CLI 和 Python SDK，帮助你检查服务器资源、配置 PDK、组织实验、监督长任务和分析结果。从“这台机器能不能跑”到“这次结果说明了什么”，让 Agent 有工具可用、有证据可查。</p><div class="g-actions"><a class="primary" href="#so-servers">体验服务器筛选</a><a href="#so-agent">看 Agent 的具体作用</a></div></div><div class="g-hero-board"><div class="g-board-title"><strong>仿真管理的协作结构</strong><span>能力关系示意 · 页面不运行任务</span></div><div class="g-ops-row"><div class="g-agent-core"><strong>你 + Agent</strong><p>讨论目标<br>编写测试平台<br>解释证据并建议下一步</p></div><div class="g-tool-matrix"><div><b>服务器资源</b><span>连接 / CPU / RAM / 观测时间</span></div><div><b>PDK 与依赖</b><span>发现 / section / LUT / 哈希</span></div><div><b>运行管理</b><span>原任务状态 / watch / 收集</span></div><div><b>诊断与测量</b><span>日志 / PSF / FFT / AC / DC</span></div></div><div class="g-run-core"><strong>执行后端</strong><span>绑定的 Service / Runner<br>远端 Spectre + 许可与 PDK<br>原生结果与运行回执</span></div></div><p class="g-small">从 SpiceOwl 自己的控制台开始管理实验，也可以直接使用 CLI 与 Python SDK。需要与设计工作台协作时，再选择嵌入集成。</p></div></section>
-<div class="g-strip"><div><strong>启动前，知道能不能跑</strong><span>资源、工具、模型、输入和目标分别核对</span></div><div><strong>运行中，知道发生了什么</strong><span>原 run 身份、最近观测、断线与进程状态分开</span></div><div><strong>结束后，知道结果说明什么</strong><span>求解完成、有效测量、规格与工作条件分开</span></div></div>
-<div class="g-strip"><div><strong>独立使用</strong><span>自己的网页控制台、Agent 会话、CLI 与 SDK</span></div><div><strong>完整管理链路</strong><span>资源与 PDK → 实验 → 任务监督 → 结果分析</span></div><div><strong>按需集成</strong><span>可将同一套工具嵌入 CircuitGit 设计工作台</span></div></div>
-<section class="g-section" id="so-agent"><div class="g-section-head"><div><p class="g-kicker">INTELLIGENCE WITH TOOLS</p><h2>Agent 做判断，工具处理繁琐且可验证的事。</h2></div><p>不为每一种模拟电路写死一个 TB 生成器。你与 Agent 定义问题，Agent 写实验，工具检查并执行明确的输入。</p></div><div class="g-human-agent"><article class="g-card"><h3>新用户先提供什么？</h3><ul><li>电路网表 / RNL，以及希望测什么；供电、激励、负载和目标与 Agent 讨论确认。</li><li>允许连接的 SSH 主机 / 路由，自己的正常登录权限。</li><li>PDK 或环境脚本的已知线索、可搜索根目录；有多个候选时确认工艺与 corner。</li><li>实际运行所需的资源预算与执行授权。</li></ul><p class="g-small">只有模型名不能证明工艺身份或安全电压。Agent 不应凭旧会话里的私有路径替一个新用户补配置。</p></article><div class="g-transcript"><span class="g-tag">对话与工具分工示意 · 非实际 Agent 回放</span><div class="turn"><b>你</b><p>“这里有一个反相器。帮我找可用服务器，配置模型，测瞬态翻转、DC 曲线和 AC 增益。”</p></div><div class="turn"><b>Agent</b><p>读取端口和器件名；补问尚未确定的供电、负载、偏置与判据；检查被允许的环境线索。</p></div><div class="turn"><b>工具</b><p>探测主机与资源，扫描选定 PDK 范围，返回模型、section、端序、依赖证据和缺项。</p></div><div class="turn"><b>Agent</b><p>解释候选并组织配置，编写 TB 与后处理；把完整输入、目标和待解决问题交给你审阅。</p></div><div class="turn"><b>工具</b><p>验证与冻结输入，交给执行后端；返回可查询的运行身份、日志与原始结果。</p></div><div class="turn"><b>Agent</b><p>读取结果、调用分析工具，解释失败属于资源、模型、测试条件还是性能；提出具体下一步。</p></div></div></div><div class="g-two"><article class="g-card"><h3>独立使用：配置自己的 Agent 连接</h3><pre>spiceowl serve --agent-mode standalone
-# 可显式指定已安装的 Codex / model
-# 完整环境接入还需绑定 client / SDK / PDK LUT</pre><p>打开本机控制台 → Agent channel → Connect → New conversation → Send。认证由本机 Codex 管理；模型 / profile 来自配置。只读与纯计算工具可直接给结果，远端检查和执行按已配置权限审阅。</p><p class="g-small">当前完整接入与远端执行通过配置的 CircuitGit Service / Runner 适配器完成，不要求使用其设计界面。操作员绑定后端 client 配置与 SDK；缺绑定时显示不可用。</p></article><article class="g-card"><h3>可选集成：在 CircuitGit 中调用同一套工具</h3><div class="g-path"><div><strong>CircuitGit 当前 Agent 窗口</strong><span>继承所选电路、源版本、intake 或 run 上下文。</span></div><div><strong>SpiceOwl 的工具 / Python SDK</strong><span>环境、PDK、TB、资源、诊断与分析能力。</span></div><div><strong>CircuitGit 原有 Service / Runner</strong><span>复用已有运行记录与执行身份。</span></div></div><p>用户不用再开一个平行聊天窗口；工具结果同步回同一个仿真面板。</p></article></div></section>
-<section class="g-section" id="so-servers"><div class="g-section-head"><div><p class="g-kicker">CHECK CAPACITY BEFORE SUBMISSION</p><h2>“能 SSH 登录”，离“适合跑这个任务”还很远。</h2></div><p>先显式扫描选中的主机，记录资源与时间；再按这次任务的 CPU / RAM 需求筛选。推荐结果不等于占到了资源。</p></div><div class="g-controls"><strong>资源筛选交互示例</strong><label>CPU<select id="pool-cpu"><option value="4">4 核</option><option value="16">16 核</option></select></label><label>内存<select id="pool-memory"><option value="8">8 GiB</option><option value="80">80 GiB</option></select></label><span class="g-tag">合成教学快照 · 使用实际 recommend_hosts 函数计算</span></div><div class="g-server-grid"><article class="g-server"><div class="label"><strong>Server A</strong><span>32 CPU</span></div><span class="number">18%</span> CPU busy<div class="bar"><i class="usage18"></i></div><p class="stats">92 / 128 GiB 内存可用<br>10 秒前采样 · 版本可用</p><div class="verdict" id="pool-host-a">符合本次资源要求</div></article><article class="g-server busy"><div class="label"><strong>Server B</strong><span>32 CPU</span></div><span class="number">86%</span> CPU busy<div class="bar"><i class="usage86"></i></div><p class="stats">90 / 128 GiB 内存可用<br>10 秒前采样 · 版本可用</p><div class="verdict" id="pool-host-b">CPU / load 余量不足</div></article><article class="g-server stale"><div class="label"><strong>Server C</strong><span>64 CPU</span></div><span class="number">12%</span> CPU busy<div class="bar"><i class="usage12"></i></div><p class="stats">100 / 128 GiB 内存可用<br>180 秒前采样 · 已过新鲜度限制</p><div class="verdict" id="pool-host-c">数据过期，先重新扫描</div></article></div><div class="g-pool-result" aria-live="polite"><strong id="pool-result-title">推荐 Server A</strong><p id="pool-result-copy">当前请求能保留规定余量；改变内存需求，观察为什么“看起来有空”的服务器也会被排除。</p></div><div class="g-two"><article class="g-card"><h3>网页与 Agent 怎样操作</h3><p>在 Simulation hosts 注册或选择明确的主机；检查 SSH 与主机身份，然后显式扫描所选池。Agent 可以调用 <code>spiceowl_scan_resources</code> 和 <code>spiceowl_recommend_hosts</code>，用结果解释选择，而不是凭机器名字猜空闲。</p><pre>hosts scan
-hosts recommend --cpus 4 --memory-gib 8 --simulator spectre</pre><p class="g-small">上面是已配置 CLI 的子命令示意。完整命令需带自己的 state / 配置；页面不会执行命令。</p></article><article class="g-card"><h3>目前筛选规则具体看什么</h3><p>CPU busy、1/5 分钟 load、可用与总内存、磁盘、工具版本、身份与观测时间。资源快照最多 120 秒，工具版本独立使用 24 小时窗口；CPU / load / 内存保留约 20% 余量。</p><p class="g-small">这是当前实现的保守启发式。不是集群调度器预留，也不是速度预测；许可证、PDK 与实际输出目录仍需在提交前验证。缺失指标保持 unknown。</p></article></div></section>
-<section class="g-section" id="so-pdk"><div class="g-section-head"><div><p class="g-kicker">FROM MODEL NAMES TO A REPRODUCIBLE ENVIRONMENT</p><h2>换服务器、换工艺，不把路径写死在 Agent 里。</h2></div><p>从电路需要的器件出发，让 Agent 组织发现和消歧，工具保留可复用的模型与依赖证据。</p></div><div class="g-pdk-chain"><div><span>读电路</span><strong>器件 / 端口需求</strong><p>提取 model / subckt 名、端口和尺寸。名字只是线索，不直接证明工艺或额定电压。</p></div><div><span>找证据</span><strong>授权的环境范围</strong><p>探测选定服务器；读取明确环境 / 根目录线索，有限扫描候选入口与 include / section。</p></div><div><span>配置并消歧</span><strong>可解释的模型绑定</strong><p>核对器件极性、端序、corner、依赖闭包和平台动态库。多候选需解释或用户确认。</p></div><div><span>缓存并复核</span><strong>本地 SQLite LUT</strong><p>缓存观测的元数据和哈希；下次按器件与范围查询。提交前复核，避免把旧缓存当成新验证。</p></div></div><div class="g-two"><article class="g-card"><h3>以两管反相器为例</h3><pre>电路要求
+    <nav class="g-nav" aria-label="SpiceOwl 展示导航">
+      <a href="#so-videos">完整宣传片与 10 节实录</a>
+      <a href="#so-agent">Web 优先与 Agent 分工</a>
+      <a href="#so-servers">集群算力与 FlexLM 许可</a>
+      <a href="#so-pdk">零 Virtuoso 打开电路与 PDK</a>
+      <a href="#so-reports">批量仿真与交互式报告</a>
+      <a href="#so-nightwatch">可进化夜间值守与诊断</a>
+      <a href="#so-engineering">工程架构与能力边界</a>
+    </nav>
+
+    <section class="g-hero">
+      <div class="g-hero-copy">
+        <p class="g-kicker">SPICEOWL · YOU SLEEP. SPICEOWL KEEPS WATCH.</p>
+        <h1>让可控的 AI，帮你<br><em>管好每一次仿真。</em></h1>
+        <p class="g-lead">SpiceOwl 是专为模拟 / 混合信号 IC 工程师打造的开源 Agent 仿真工作台。浏览器即唯一入口，30 秒打通本机 Connector 与远端 EDA 集群——无需守在卡顿的 Virtuoso GUI 前点鼠标，把算力与 License 巡检、零交互许可导网表、一句话批量仿真、交互式工程报告与可进化的夜间值守，统一交给有证据、守红线的 AI 工具链。</p>
+        <div class="g-actions">
+          <a class="primary" href="#so-videos">▶ 观看产品宣传片 (10:45)</a>
+          <a href="#so-chapters">浏览 10 节分章实战</a>
+          <a href="./index.html">打开正式工作台 →</a>
+        </div>
+      </div>
+
+      <div class="g-hero-board">
+        <div class="g-board-title"><strong>新一代 SpiceOwl 端到端协作架构</strong><span>四页聚焦工作台 · 原生直连无需网关</span></div>
+        <div class="g-ops-row">
+          <div class="g-agent-core">
+            <strong>你 + AI Agent</strong>
+            <p>自然语言下发仿真与分析目标<br>三级权限（安全托管 / 满血受控 / 满血全权）<br>内置 5 大高频 Skill 一键提效</p>
+          </div>
+          <div class="g-tool-matrix">
+            <div><b>集群与 FlexLM 许可</b><span>可视化 SSH 向导 / CPU·RAM·EDA 进程 / Spectre &amp; ADE 席位</span></div>
+            <div><b>零 Virtuoso 打开电路</b><span>Agent 模糊搜库 / 网页只读库管理 / 隔离导网表与 Maestro</span></div>
+            <div><b>批量仿真与交互报告</b><span>1-SSH 派发 / 4s 自动巡检 / 102 KB 离线报告与自由定制曲线</span></div>
+            <div><b>可进化夜间值守</b><span>透明 night_watch.py / 沙箱 Dry-Run 验真 / 严守不改网表红线</span></div>
+          </div>
+          <div class="g-run-core">
+            <strong>远端执行后端</strong>
+            <span>原生直连 SSH / LSF / Slurm<br>兼容 csh · Python 2.7 · 自动发现 Spectre<br>也可按需嵌入 CircuitGit 工作台</span>
+          </div>
+        </div>
+        <p class="g-small">首次双击安装无界面本机 Connector（127.0.0.1:8765），之后全程在浏览器完成所有操作；密钥、密码、原始网表与 PSF 数据全程保留在本机与内网集群。</p>
+      </div>
+    </section>
+
+    <div class="g-strip g-strip-4">
+      <div><strong>30 秒零配置直连</strong><span>双击安装一次 Connector，浏览器静默配对，日常无需命令行</span></div>
+      <div><strong>0 ADE 交互席位</strong><span>脱离 Virtuoso GUI，只读解析 cds.lib 并隔离导出网表与 Maestro</span></div>
+      <div><strong>半小时 → 1 分钟</strong><span>仿真完即出交互矢量报告与 102 KB 离线网页，一句话定制任意曲线</span></div>
+      <div><strong>24/7 守红线值守</strong><span>透明 Python 规则引擎 + 沙箱 Dry-Run 验真，越界绝不擅改网表</span></div>
+    </div>
+
+    <!-- FEATURED VIDEO THEATER -->
+    <section class="g-section" id="so-videos" aria-labelledby="videos-heading">
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">PRODUCT LAUNCH FILM &amp; 10-CHAPTER WALKTHROUGH</p>
+          <h2 id="videos-heading">真实全流程实录：从零连接到可进化夜间值守。</h2>
+        </div>
+        <p>完整宣传片与 10 节独立分章实录均配自然 AI 语音解说、原创环境配乐与痛点/方案/效率导读卡片。点击封面即可在页面内流式播放高清视频（初始打开页面不消耗视频流量）。</p>
+      </div>
+
+      <article class="g-theater" id="video-film">
+        <div class="g-theater-head">
+          <div>
+            <span class="g-pill">完整产品宣传片 · DIRECTOR'S CUT</span>
+            <h3 id="theater-title">SpiceOwl 完整工作流实战：你去休息，仿真我盯</h3>
+            <p class="g-small" id="theater-desc">开篇愿景插页 + 10 节全流程真实操作（含痛点/方案/效率对比页与第 09 节双转折强调页）+ 结尾愿景页，全程 1600×812 HD 流畅衔接。</p>
+          </div>
+          <div class="g-theater-meta">
+            <span class="g-badge" id="theater-duration">10:45 · 59.8 MB</span>
+            <span class="g-badge soft">AI 语音解说 + 配乐</span>
+          </div>
+        </div>
+
+        <div class="g-theater-stage" id="theater-stage" data-video-file="SpiceOwl_Launch_Film.mp4" data-video-poster="./demo-poster-film.webp" data-video-title="SpiceOwl 完整产品宣传片">
+          <button type="button" class="g-poster-btn" id="theater-play-btn" aria-label="播放 SpiceOwl 完整产品宣传片 (10分45秒)">
+            <img src="./demo-poster-film.webp" width="1280" height="650" alt="SpiceOwl 完整产品宣传片封面：你去休息，仿真我盯">
+            <span class="g-play-overlay" aria-hidden="true">
+              <span class="g-play-circle">▶</span>
+              <span class="g-play-label">点击播放完整宣传片 · 10:45</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="g-theater-foot">
+          <span class="g-small" id="theater-status">点击封面即可立即流式播放；也可在下方任意章节卡片中单独播放或切入顶部大屏。</span>
+          <div class="g-theater-links" id="theater-links">
+            <button type="button" class="g-mini-btn" id="theater-reset-btn" hidden>回到完整宣传片 (10:45)</button>
+          </div>
+        </div>
+      </article>
+
+      <div class="g-chapters-bar" id="so-chapters">
+        <div>
+          <h3>分章节实战演示（10 节独立精剪）</h3>
+          <p class="g-small">按工作流阶段筛选，直接跳看最关心的一节，支持卡片内直接播放或载入顶部大屏。</p>
+        </div>
+        <div class="g-vfilter" role="group" aria-label="按工作流阶段筛选演示视频">
+          <button type="button" data-vfilter="all" aria-pressed="true">全部 10 节</button>
+          <button type="button" data-vfilter="setup" aria-pressed="false">接入与算力 (01–03)</button>
+          <button type="button" data-vfilter="sim" aria-pressed="false">电路与提交 (04a–05)</button>
+          <button type="button" data-vfilter="report" aria-pressed="false">报告与定制 (06–07)</button>
+          <button type="button" data-vfilter="watch" aria-pressed="false">夜间值守 (08–09)</button>
+        </div>
+      </div>
+
+      <div class="g-video-grid" id="chapter-video-grid">
+        <article class="g-vcard" id="video-01" data-stage-group="setup">
+          <div class="g-vstage" data-video-file="01_initial_connect.mp4" data-video-poster="./demo-poster-01.webp" data-video-title="01 · 30 秒零配置连接本机" data-video-duration="0:34 · 3.5 MB" data-video-desc="浏览器即工作台，双击安装一次无界面本机 Connector，30 秒内静默配对并打通本机 Codex Agent。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 01 节：30 秒零配置连接本机 (0分34秒)">
+              <img src="./demo-poster-01.webp" width="1280" height="650" loading="lazy" alt="第 01 节封面：30 秒零配置连接本机">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:34</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 01</span><span class="g-vdur">0:34 · 3.5 MB</span></div>
+            <h4>30 秒零配置连接本机</h4>
+            <p>告别配 Python、装依赖与多端切换：双击一次安装无界面 Connector，网页 127.0.0.1 静默配对，同时接管本机 Agent。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>spiceowl://</span><span>零命令行</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-02" data-stage-group="setup">
+          <div class="g-vstage" data-video-file="02_connect_servers.mp4" data-video-poster="./demo-poster-02.webp" data-video-title="02 · 1 分钟纳管整套 EDA 集群" data-video-duration="0:41 · 4.3 MB" data-video-desc="可视化 SSH 配置向导自动识别旧版跳板机 RSA 兼容，添加新节点自动复用跳板机与账号，1 分钟完成多台主机 5 项全绿校验。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 02 节：1 分钟纳管整套 EDA 集群 (0分41秒)">
+              <img src="./demo-poster-02.webp" width="1280" height="650" loading="lazy" alt="第 02 节封面：1 分钟纳管整套 EDA 集群">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:41</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 02</span><span class="g-vdur">0:41 · 4.3 MB</span></div>
+            <h4>1 分钟纳管整套 EDA 集群</h4>
+            <p>告别手写 SSH Config 与反复输密码：自动识别旧版跳板机 RSA 兼容，新增节点自动复用跳板机与账号，密码绝不落盘。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>ProxyJump 复用</span><span>旧版 RSA 兼容</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-03" data-stage-group="setup">
+          <div class="g-vstage" data-video-file="03_resource_monitor.mp4" data-video-poster="./demo-poster-03.webp" data-video-title="03 · 集群算力与 FlexLM License 洞察" data-video-duration="0:40 · 4.6 MB" data-video-desc="并行探测数百核集群的 CPU、内存、活跃 EDA 进程与多台 FlexLM License 服务，自动标出最空闲推荐节点并同步给 AI。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 03 节：集群算力与 FlexLM License 洞察 (0分40秒)">
+              <img src="./demo-poster-03.webp" width="1280" height="650" loading="lazy" alt="第 03 节封面：集群算力与 License 洞察">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:40</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 03</span><span class="g-vdur">0:40 · 4.6 MB</span></div>
+            <h4>集群算力与 License 一屏透明</h4>
+            <p>无需逐台 SSH 敲 top 和 lmstat：512 核负载、活跃 Spectre 进程与 3 台 FlexLM 许可席位一屏聚合，自动推荐空闲主机。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>FlexLM 许可池</span><span>空闲节点推荐</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-04a" data-stage-group="sim">
+          <div class="g-vstage" data-video-file="04a_agent_open_workspace.mp4" data-video-poster="./demo-poster-04a.webp" data-video-title="04a · 一句话让 AI 打开远端电路" data-video-duration="0:45 · 4.9 MB" data-video-desc="切换满血全权模式，用自然语言模糊检索远端 cds.lib 并隔离导出原理图网表、RNL 几何与 Maestro 仿真配置，零占用 ADE 许可。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 04a 节：一句话让 AI 打开远端电路 (0分45秒)">
+              <img src="./demo-poster-04a.webp" width="1280" height="650" loading="lazy" alt="第 04a 节封面：一句话打开远端电路">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:45</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 04a</span><span class="g-vdur">0:45 · 4.9 MB</span></div>
+            <h4>一句话打开远端电路（AI 驱动）</h4>
+            <p>彻底脱离卡顿 Virtuoso GUI：用大白话报出电路关键词，AI 自动跨目录模糊检索并隔离导出原理图网表与 Maestro 配置。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>满血全权模式</span><span>0 ADE 交互许可</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-04b" data-stage-group="sim">
+          <div class="g-vstage" data-video-file="04b_manual_library_manager.mp4" data-video-poster="./demo-poster-04b.webp" data-video-title="04b · 网页只读远程 Library Manager" data-video-duration="0:42 · 4.6 MB" data-video-desc="纯点选只读浏览远端 SSH 目录与 cds.lib，自动标记 schematic/maestro 视图，经隔离 Cadence si 与只读 SKILL 导出，绝不改动源库。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 04b 节：网页只读远程 Library Manager (0分42秒)">
+              <img src="./demo-poster-04b.webp" width="1280" height="650" loading="lazy" alt="第 04b 节封面：网页只读 Library Manager">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:42</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 04b</span><span class="g-vdur">0:42 · 4.6 MB</span></div>
+            <h4>网页只读 Library Manager</h4>
+            <p>习惯亲手选库？浏览器直连远端目录自动解析 cds.lib、标注 schematic/maestro，隔离导出且绝不修改原始设计文件。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>只读安全隔离</span><span>cds.lib 解析</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-05" data-stage-group="sim">
+          <div class="g-vstage" data-video-file="05_submit_sim_and_report.mp4" data-video-poster="./demo-poster-05.webp" data-video-title="05 · 一句话批量温度扫描与自动出报" data-video-duration="0:51 · 4.9 MB" data-video-desc="自然语言下发多温度批量扫描，SpiceOwl 自动拆分分组提交、每 4 秒轮询状态、收齐波形并自动推送给 AI 生成交互报告。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 05 节：一句话批量温度扫描与自动出报 (0分51秒)">
+              <img src="./demo-poster-05.webp" width="1280" height="650" loading="lazy" alt="第 05 节封面：批量温度扫描与自动出报">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:51</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 05</span><span class="g-vdur">0:51 · 4.9 MB</span></div>
+            <h4>批量温度扫描与自动出报闭环</h4>
+            <p>一句话提交多温度扫描：自动拆分任务分组提交、4 秒自动巡检、收齐波形并推送 AI 出报，中途可随时切走处理别的工作。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>1-SSH 极速提交</span><span>4s 自动巡检</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-06" data-stage-group="report">
+          <div class="g-vstage" data-video-file="06_simulation_reports.mp4" data-video-poster="./demo-poster-06.webp" data-video-title="06 · 交互式仿真报告与 102 KB 离线分享" data-video-duration="0:43 · 8.4 MB" data-video-desc="单点交互报告与多温度 TB 综合报告自动归档，矢量波形实时悬停读数，一键导出仅 102 KB 的独立离线 HTML 随时开评审会。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 06 节：交互式仿真报告与 102 KB 离线分享 (0分43秒)">
+              <img src="./demo-poster-06.webp" width="1280" height="650" loading="lazy" alt="第 06 节封面：交互式仿真报告与离线分享">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:43</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 06</span><span class="g-vdur">0:43 · 8.4 MB</span></div>
+            <h4>交互式工程报告与 102 KB 离线分享</h4>
+            <p>半小时截波形贴 PPT 缩至 1 分钟：单点 KPI、可缩放矢量波形与多温度 TB 综合横评一步到位，102 KB 离线 HTML 发给同事双击即看。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>TB 综合报告</span><span>102 KB 离线 HTML</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-07" data-stage-group="report">
+          <div class="g-vstage" data-video-file="07_custom_ai_report.mp4" data-video-poster="./demo-poster-07.webp" data-video-title="07 · 自由创作定制温度特性曲线" data-video-duration="0:57 · 7.2 MB" data-video-desc="切至自由创作模式，用自然语言让 AI 编写统一 PSF 测量脚本，精确提取多温度下的增益、±0.1% 建立时间、上升时间与功耗趋势曲线并自动归档。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 07 节：自由创作定制温度特性曲线 (0分57秒)">
+              <img src="./demo-poster-07.webp" width="1280" height="650" loading="lazy" alt="第 07 节封面：自由创作定制温度特性曲线">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:57</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 07</span><span class="g-vdur">0:57 · 7.2 MB</span></div>
+            <h4>自由创作定制温度特性曲线</h4>
+            <p>想要专属分析？一句话让 AI 现写统一口径的 PSF 测量脚本，算出增益、±0.1% 建立时间、10–90% 上升时间与 VDD 功耗曲线并回写报告。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>自由创作模式</span><span>现算原始 PSF</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard" id="video-08" data-stage-group="watch">
+          <div class="g-vstage" data-video-file="08_agent_edit_night_watch.mp4" data-video-poster="./demo-poster-08.webp" data-video-title="08 · 自然语言编程夜间值守脚本" data-video-duration="0:58 · 6.4 MB" data-video-desc="告别黑盒开关：夜间值守由本地透明 Python 脚本 night_watch.py 驱动，自然语言即可修改恢复边界，强制沙箱试运行验真后即时生效。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 08 节：自然语言编程夜间值守脚本 (0分58秒)">
+              <img src="./demo-poster-08.webp" width="1280" height="650" loading="lazy" alt="第 08 节封面：自然语言编程夜间值守脚本">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放 0:58</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 08</span><span class="g-vdur">0:58 · 6.4 MB</span></div>
+            <h4>自然语言编程夜间值守脚本</h4>
+            <p>透明可控的 Code-First 值守引擎：支持一键启停与自然语言修改 <code>night_watch.py</code>，每次改动先经独立沙箱 Dry-Run 验真。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>night_watch.py</span><span>沙箱 Dry-Run 验真</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+
+        <article class="g-vcard featured-watch" id="video-09" data-stage-group="watch">
+          <div class="g-vstage" data-video-file="09_night_watch_new_case.mp4" data-video-poster="./demo-poster-09.webp" data-video-title="09 · 压轴实战：未知故障守红线 &amp; 沉淀永久规则" data-video-duration="3:25 · 15.5 MB" data-video-desc="面对未知的 STB probe 缺失报错，AI 坚决拒改原始网表并完整留证；收到工程师一句授权后，现场编写有界规则写入 night_watch.py、沙箱验真、自动恢复出报并诚实标注跳过项。">
+            <button type="button" class="g-poster-btn" aria-label="播放第 09 节：压轴实战 未知故障守红线与沉淀永久规则 (3分25秒)">
+              <img src="./demo-poster-09.webp" width="1280" height="650" loading="lazy" alt="第 09 节封面：未知故障守红线与沉淀永久规则">
+              <span class="g-play-overlay" aria-hidden="true"><span class="g-play-circle sm">▶</span><span class="g-play-label">播放压轴实战 · 3:25</span></span>
+            </button>
+          </div>
+          <div class="g-vbody">
+            <div class="g-vtop"><span class="g-vnum">CHAPTER 09 · 压轴实战</span><span class="g-vdur">3:25 · 15.5 MB</span></div>
+            <h4>未知故障守红线 &amp; 一句话沉淀永久规则</h4>
+            <p>最怕 AI 瞎改网表造假数据：遇到未覆盖的 STB probe 缺失，AI 严守红线留证待审；一句授权后即沉淀为永久 Python 规则并自动恢复出报，跳过项诚实标为 <code>Skipped / Unverified</code>。</p>
+            <div class="g-vfoot"><div class="g-vtags"><span>严守科学红线</span><span>一次教会 · 永久免疫</span></div><button type="button" class="g-link-btn" data-load-theater>大屏播放</button></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 1: WEB-FIRST & AGENT -->
+    <section class="g-section" id="so-agent">
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">WEB-FIRST WORKBENCH &amp; AGENT SKILLS</p>
+          <h2>浏览器即唯一界面，Agent 做判断，确定性工具守底线。</h2>
+        </div>
+        <p>不再要求日常敲命令行，也不为每种模拟电路写死僵硬向导。Web 工作台、三级权限控制与 5 大内置 Skill 让 Agent 既干活利落，又全程可审计。</p>
+      </div>
+
+      <div class="g-human-agent">
+        <article class="g-card">
+          <h3>三级 Agent 权限 + 5 大内置高频 Skill</h3>
+          <div class="g-mode-grid">
+            <div><strong>安全托管（Safe）</strong><span>读取、规划与写本地分析脚本；凡涉及远端命令与文件改动均先征求确认。</span></div>
+            <div><strong>满血受控（Supervised）</strong><span>开放完整工具链，关键写操作与远端执行呈现逐项审批卡并实时流式展示输出。</span></div>
+            <div><strong>满血全权（Full Access）</strong><span>一键授权端到端自动化：模糊搜库、批量提交、自动出报与夜间值守演进一气呵成。</span></div>
+          </div>
+          <div class="g-skill-row">
+            <code>spiceowl-quick-ops</code>
+            <code>spiceowl-sim-submit</code>
+            <code>spiceowl-sim-report-fast</code>
+            <code>spiceowl-sim-report</code>
+            <code>spiceowl-night-watch</code>
+          </div>
+          <p class="g-small">Skill 将高频工程流程沉淀为 1-SSH 极速提交、单调用更新值守配置与双模式报告规范，减少多轮试探，显著提升 Agent 稳定性与响应速度。</p>
+        </article>
+
+        <div class="g-transcript">
+          <span class="g-tag">典型端到端协作流 · 对应实录第 04a–09 节</span>
+          <div class="turn"><b>你</b><p>“帮我打开远端库里的运算放大器测试台，在 -40°C / 27°C / 125°C 下跑瞬态扫描，跑完做一份增益、±0.1% 建立时间和 VDD 功耗随温度变化的曲线报告。”</p></div>
+          <div class="turn"><b>Agent</b><p>调用算力推荐挑出最空闲节点，跨目录模糊定位 <code>cds.lib</code> 与 Maestro 视图；通过只读隔离流程导出网表与激励，绝不占用 ADE 交互许可。</p></div>
+          <div class="turn"><b>工具链</b><p>按 1-SSH 规范冻结 SHA-256 输入并分组派发至远端 Spectre；每 4 秒自动巡检状态，遇排队超时或 OOM 交由 <code>night_watch.py</code> 有界处理。</p></div>
+          <div class="turn"><b>Agent</b><p>收齐全部原生 PSF 后自动生成交互式单点报告与 TB 综合横评；在自由创作模式下编写统一口径测量脚本绘制工程趋势曲线，并导出 102 KB 独立离线 HTML。</p></div>
+        </div>
+      </div>
+
+      <div class="g-two">
+        <article class="g-card">
+          <h3>原生直连独立使用（推荐主力模式）</h3>
+          <pre>双击安装一次：Install SpiceOwl Connector.command / .bat
+浏览器打开：https://spiceowl-dev.github.io/spiceowl/
+点击右上角「连接本机」→ 127.0.0.1:8765 静默配对</pre>
+          <p>原生支持 <strong>macOS / Linux / Windows</strong>（无需 WSL），免管理员权限注册 <code>spiceowl://</code> 协议。直接经已登记的 OpenSSH 主机执行 <code>ssh_direct / lsf / slurm</code> 远端 Spectre 与 ngspice 仿真，无需额外部署中转网关。</p>
+        </article>
+        <article class="g-card">
+          <h3>可选集成：在 CircuitGit 中复用同一套引擎</h3>
+          <div class="g-path">
+            <div><strong>CircuitGit 当前 Codex 窗口</strong><span>继承所选电路、Git 版本、RNL 几何与运行上下文，绝不启动第二个平行 Agent。</span></div>
+            <div><strong>SpiceOwl 工具 / Python SDK</strong><span>共用集群选址、PDK 发现与 LUT、PSF 无损解析、交互报告与夜间值守能力。</span></div>
+            <div><strong>共享运行记录与原执行身份</strong><span>既可走原生直连后端，也可无缝复用 CircuitGit 已有 Service / Runner。</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 2: SERVERS & LICENSES -->
+    <section class="g-section" id="so-servers">
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">SSH WIZARD · CLUSTER COMPUTE · FLEXLM LICENSES</p>
+          <h2>“能 SSH 登录”，离“现在适合跑这个任务”还很远。</h2>
+        </div>
+        <p>可视化向导 1 分钟纳管整套跳板机与计算集群，并行探测 CPU、内存、活跃 EDA 进程与 FlexLM SPICE 许可池，用新鲜快照替你与 Agent 选出最空闲主机。</p>
+      </div>
+
+      <div class="g-controls">
+        <strong>资源筛选交互示例</strong>
+        <label>CPU<select id="pool-cpu"><option value="4">4 核</option><option value="16">16 核</option></select></label>
+        <label>内存<select id="pool-memory"><option value="8">8 GiB</option><option value="80">80 GiB</option></select></label>
+        <span class="g-tag">合成教学快照 · 使用实际 recommend_hosts 函数计算</span>
+      </div>
+      <div class="g-server-grid">
+        <article class="g-server"><div class="label"><strong>Server A</strong><span>32 CPU</span></div><span class="number">18%</span> CPU busy<div class="bar"><i class="usage18"></i></div><p class="stats">92 / 128 GiB 内存可用<br>10 秒前采样 · 版本可用</p><div class="verdict" id="pool-host-a">符合本次资源要求</div></article>
+        <article class="g-server busy"><div class="label"><strong>Server B</strong><span>32 CPU</span></div><span class="number">86%</span> CPU busy<div class="bar"><i class="usage86"></i></div><p class="stats">90 / 128 GiB 内存可用<br>10 秒前采样 · 版本可用</p><div class="verdict" id="pool-host-b">CPU / load 余量不足</div></article>
+        <article class="g-server stale"><div class="label"><strong>Server C</strong><span>64 CPU</span></div><span class="number">12%</span> CPU busy<div class="bar"><i class="usage12"></i></div><p class="stats">100 / 128 GiB 内存可用<br>180 秒前采样 · 已过新鲜度限制</p><div class="verdict" id="pool-host-c">数据过期，先重新扫描</div></article>
+      </div>
+      <div class="g-pool-result" aria-live="polite">
+        <strong id="pool-result-title">推荐 Server A</strong>
+        <p id="pool-result-copy">当前请求能保留规定余量；改变内存需求，观察为什么“看起来有空”的服务器也会被排除。</p>
+      </div>
+
+      <div class="g-two">
+        <article class="g-card">
+          <h3>可视化 SSH 向导与多机批量接入（实录第 02 节）</h3>
+          <p>针对高校与企业常见的多级 <code>ProxyJump</code> 跳板机与旧版 OpenSSH 环境，可视化向导自动检测并启用 <code>ssh-rsa</code> 兼容，本机托管免密密钥且密码绝不落盘；添加第 2、3 台集群节点时自动复用跳板机与账号，并完成 5 项全绿连通校验。</p>
+          <p class="g-small">原生兼容远端 <code>csh / tcsh</code>、旧版 Python 2.7 以及自动扫描定位 Spectre 安装路径。</p>
+        </article>
+        <article class="g-card">
+          <h3>实时 FlexLM SPICE License 池监控（实录第 03 节）</h3>
+          <p>除了每台节点的 CPU、1/5 分钟负载、内存、磁盘与活跃仿真进程外，服务器资源页还会实时聚合多台 FlexLM 许可服务的 <code>Spectre</code>、<code>Spectre X</code>、<code>ADE Assembler / Explorer</code> 与 <code>Spectre GXL</code> 席位余量，并把“最空闲推荐节点”直接同步给 AI 调度池。</p>
+          <p class="g-small">资源快照默认保留 120 秒新鲜度窗口与约 20% 安全余量，缺失指标诚实保持 unknown，不猜也不假装预留。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 3: ZERO-VIRTUOSO WORKSPACE & PDK -->
+    <section class="g-section" id="so-pdk">
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">ZERO-VIRTUOSO CIRCUIT ENTRY &amp; REPRODUCIBLE PDK</p>
+          <h2>脱离卡顿 Virtuoso GUI 打开电路，换工艺不写死路径。</h2>
+        </div>
+        <p>双路径零 ADE 交互许可导出远端电路，再结合跨服务器 PDK 发现与 SQLite LUT，让任何新电路都能可复现地绑定模型。</p>
+      </div>
+
+      <div class="g-two">
+        <article class="g-card">
+          <h3>路径 A：一句话让 AI 找库并导出（实录第 04a 节）</h3>
+          <p>只需用自然语言描述目标单元或 Testbench，Agent 自动跨远端目录检索 <code>cds.lib</code>、识别原理图与 <code>maestro</code> 视图，在隔离临时目录导出可独立运行的网表、RNL 几何与全部仿真变量/模型配置，直接拉起网页工作台。</p>
+        </article>
+        <article class="g-card">
+          <h3>路径 B：网页只读 Library Manager（实录第 04b 节）</h3>
+          <p>在浏览器直接浏览远端 SSH 目录与 <code>cds.lib</code>，自动过滤标注 <code>schematic</code> / <code>maestro</code>，通过隔离 <code>Cadence si</code> 与只读 SKILL 导出网表和仿真设置——<strong>全程只读、绝不改动原库、零占用昂贵 ADE 交互席位</strong>；也支持直接导入本地 <code>.scs / .sp / .cir</code> 网表。</p>
+        </article>
+      </div>
+
+      <div class="g-pdk-chain">
+        <div><span>读电路</span><strong>器件 / 端口需求</strong><p>提取 model / subckt 名、端口和尺寸。名字只是线索，不直接证明工艺或额定电压。</p></div>
+        <div><span>找证据</span><strong>授权的环境范围</strong><p>探测选定服务器；读取明确环境 / 根目录线索，有限扫描候选入口与 include / section。</p></div>
+        <div><span>配置并消歧</span><strong>可解释的模型绑定</strong><p>核对器件极性、端序、corner、依赖闭包和平台动态库。多候选需解释或用户确认。</p></div>
+        <div><span>缓存并复核</span><strong>本地 SQLite LUT</strong><p>缓存观测的元数据和哈希；下次按器件与范围查询。提交前复核，避免把旧缓存当成新验证。</p></div>
+      </div>
+
+      <div class="g-two">
+        <article class="g-card">
+          <h3>以两管反相器为例</h3>
+          <pre>电路要求
   M9  → nch_ulvt_mac  (d, g, s, b)
   M10 → pch_ulvt_mac  (d, g, s, b)
 
 配置输出
   选定 entry + sections + corner
   核对模型端序与平台依赖
-  保存观察范围与内容指纹</pre><p>Agent 处理含义、选择和缺项；确定性工具提取与比较证据。通用流程依赖允许访问的环境，不假装仅从两行模型名就知道全部 PDK。</p></article><article class="g-card"><h3>首次发现与后续复用，分开设计</h3><div class="g-tabs" role="group" aria-label="PDK读取方式"><button data-pdk-mode="first" aria-pressed="true">首次接入</button><button data-pdk-mode="cached" aria-pressed="false">已有 LUT</button></div><h4 id="pdk-title">先找到授权范围内的真实入口。</h4><p id="pdk-copy">读取环境线索、扫描指定 PDK 根、解析 include / section 和模型包装。对找不到或有歧义的器件返回缺项；由 Agent 提议下一步或请用户补充范围。</p><p class="g-note">LUT 缓存模型元数据与观测身份，不把专有 PDK 源码打包给每个客户端。缓存未覆盖、指纹变化或超期会明确 miss / stale，而不是悄悄套用另一台服务器的配置。</p></article></div></section>
-<section class="g-section" id="so-submit"><div class="g-section-head"><div><p class="g-kicker">A JOB IS MORE THAN A SHELL COMMAND</p><h2>Agent 写实验，运行有自己的身份和生命周期。</h2></div><p>测试平台与判据由你和 Agent 确认。冻结代码、模型、条件与预算后，现有执行后端完成远端操作。</p></div><div class="g-runline"><div><b>定义目标</b><span>用户 + Agent：测什么、什么条件、怎样判断</span></div><div><b>编写与检查 TB</b><span>Agent 写网表 / 后处理；工具检查源、单位与依赖</span></div><div><b>冻结与提交</b><span>审阅或明确授权；锁定 source、PDK、host 与 key</span></div><div><b>观察原运行</b><span>run ID、原提交 key、最近观测和事件历史</span></div><div><b>收集与分析</b><span>原生 PSF、日志、算法与分项结论</span></div></div><div class="g-two"><article class="g-card"><h3>把夜间长任务交给持续观测</h3><p>monitor 在服务进程内持续查询原任务，保存最近成功观测和退避。默认观测间隔 30 秒、失败退避上限 300 秒；浏览器关闭不等于求解器被取消。</p><p>Agent 读取这些证据，解释进度、停滞和错误。现有 live watch 不自动收集、重提或改数值参数；<code>workflow inspect</code> 则可在确认终态后按既有回执收集。</p><p class="g-small">服务必须保持运行。服务重启后需显式恢复 watch，或由操作员配置恢复已授权的监控。</p></article><article class="g-card"><h3>最容易做错的情形：提交时断线</h3><div class="g-path"><div><strong>保留原 key 与输入身份</strong><span>超时不说明远端没有收到任务。</span></div><div><strong>lookup 原提交 / status 原 run</strong><span>已找到映射就观察该任务；没找到映射仍不能自动判定没执行。</span></div><div><strong>解释，再决定下一步</strong><span>Agent 根据证据提出处理建议，不换新 key 制造重复仿真。</span></div></div></article></div></section>
-<section class="g-section" id="so-diagnosis"><div class="g-section-head"><div><p class="g-kicker">INTELLIGENT MANAGEMENT NEEDS SEPARATE VERDICTS</p><h2>别让一个绿色“完成”，掩盖真正的问题。</h2></div><p>智能化不只是看到失败就重跑。先区分连接、求解、测量、指标、模型工作条件和依赖，再给出可执行建议。</p></div><div class="g-two"><article class="g-card"><span class="g-tag">交互诊断场景 · 教学示意</span><div class="g-tabs" role="group" aria-label="运行诊断场景"><button data-diagnosis="disconnect" aria-pressed="true">连接中断</button><button data-diagnosis="target">规格未达</button><button data-diagnosis="soa">模型告警</button></div><div class="g-status-list" id="diagnostic-status"></div></article><article class="g-card"><h3 id="diagnostic-title">先恢复观测，不先重提任务。</h3><p id="diagnostic-copy">最后确认状态为 running，当前 SSH 查询失败。Agent 应保留 run / key，查看最近成功观测与原任务状态，不能把连接失败解释成求解器失败。</p><div class="g-prompt" id="diagnostic-action">下一步：查询原任务并核对日志。不要立即 resubmit。</div><p class="g-small">自动重启求解器、自动迁移任务、自动修复数值参数尚未形成完整实现；建议与实际执行权限分开。</p></article></div><div class="g-results"><p class="g-kicker">REAL CASE / A BETTER SPECTRUM IS NOT THE WHOLE STORY</p><h3>真实例子：频谱变好了，但 SOA 告警没有因此消失。</h3><div class="g-two"><figure><img src="./showcase-spectrum.svg" alt="两次自举采样保持仿真的真实频谱对比"><figcaption>multi=1 → 16，SNDR 33.44 → 57.57 dB，1 GS/s，4,096 点。同一算法独立复算原 PSF。</figcaption></figure><article><div class="metric">+24.13 dB SNDR</div><p>这证明这组确定性采样实验的频谱改善，不证明完整 ADC 精度或器件工作条件合格。</p><pre>原日志已核对的实例
+  保存观察范围与内容指纹</pre>
+          <p>Agent 处理含义、选择和缺项；确定性工具提取与比较证据，绝不凭旧会话里的私有路径替新环境猜测 PDK。</p>
+        </article>
+        <article class="g-card">
+          <h3>首次发现与后续复用，分开设计</h3>
+          <div class="g-tabs" role="group" aria-label="PDK读取方式"><button data-pdk-mode="first" aria-pressed="true">首次接入</button><button data-pdk-mode="cached" aria-pressed="false">已有 LUT</button></div>
+          <h4 id="pdk-title">先找到授权范围内的真实入口。</h4>
+          <p id="pdk-copy">读取环境线索、扫描指定 PDK 根、解析 include / section 和模型包装。对找不到或有歧义的器件返回缺项；由 Agent 提议下一步或请用户补充范围。</p>
+          <p class="g-note">LUT 仅缓存模型元数据与观测指纹，不把专有 PDK 源码打包给外部客户端。指纹变化或超期会明确标注 miss / stale。</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 4: BATCH SUBMIT & INTERACTIVE REPORTS -->
+    <section class="g-section" id="so-submit">
+      <div id="so-reports" class="g-anchor"></div>
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">BATCH SWEEPS · AUTO-POLL · INTERACTIVE HTML REPORTS</p>
+          <h2>一句话批量派发，仿真结束即出可交互工程报告。</h2>
+        </div>
+        <p>从 1-SSH 冻结提交、4 秒自动巡检收尾，到双模式交互式报告与 102 KB 独立离线分享，把半小时截波形贴 PPT 压缩到 1 分钟。</p>
+      </div>
+
+      <div class="g-runline">
+        <div><b>1. 冻结与分组派发</b><span>SHA-256 锁定网表/条件，支持温度、PVT 与 Monte Carlo 批量提交</span></div>
+        <div><b>2. 4 秒自动巡检</b><span>后台持续跟踪原 run ID 与增量日志，断连不丢失身份也不盲重发</span></div>
+        <div><b>3. 自动收齐与五维验收</b><span>自动拉取原生 PSF / 日志，分离执行、测量、规格与工作条件结论</span></div>
+        <div><b>4. 快速交互报告</b><span>矢量波形缩放读数、单点 KPI 与多工况 TB 综合横评，一键导出 102 KB HTML</span></div>
+        <div><b>5. 自由创作定制</b><span>自然语言现算原始 PSF，定制增益/建立时间/功耗等专属趋势曲线</span></div>
+      </div>
+
+      <div class="g-two">
+        <article class="g-card">
+          <h3>双模式交互式报告引擎（实录第 06–07 节）</h3>
+          <p><strong>快速报告（Fast Mode）：</strong>仿真刚结束即自动生成带矢量波形、KPI 卡片与五维诊断的网页报告，多工况自动归档至「TB 综合报告」横向对比；点击导出即可得到仅约 <strong>102 KB 的单文件独立离线 HTML</strong>，发给同事或导师双击即可悬停读数与开关曲线。</p>
+          <p><strong>自由创作（Free-Create Mode）：</strong>当评审需要自定义工程图表（如增益、±0.1% 建立时间、10–90% 上升时间、VDD 静态/动态功耗随温度变化曲线）时，直接用中文提需求——Agent 编写统一口径的 PSF 测量脚本现算原始数据、绘制高清晰度矢量图并自动归档到报告面板。</p>
+        </article>
+        <article class="g-card">
+          <h3>二进制大波形与提交断线保护</h3>
+          <div class="g-path">
+            <div><strong>PSF Binary / PSFXL 原位流式解析</strong><span>无需全量下载数 GB 大波形：全局 Min-Max 包络绝不丢毛刺，缩放自动切 100% 原始无损点并内置 Cycle Slicer 异常周期钻取。</span></div>
+            <div><strong>原子占位防重发（断线不盲重提）</strong><span>提交超时不等于远端没收到任务，系统保留原 submission key 记为 <code>launch_outcome_unknown</code>，先对账原任务再决定下一步。</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 5: CODE-FIRST NIGHT WATCH & DIAGNOSIS -->
+    <section class="g-section" id="so-diagnosis">
+      <div id="so-nightwatch" class="g-anchor"></div>
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">CODE-FIRST NIGHT WATCH &amp; FIVE-DIMENSIONAL VERDICTS</p>
+          <h2>透明可进化的夜间值守：安全时不打扰，越界时绝不乱改。</h2>
+        </div>
+        <p>用可读、可审计的本地 Python 脚本 <code>night_watch.py</code> 替代黑盒开关；常规运维故障有界自愈，未知报错严守科学红线，一句话即可把工程师经验沉淀为永久规则。</p>
+      </div>
+
+      <div class="g-watch-flow">
+        <div><span>STEP 1 · 一键启停与透明代码</span><strong><code>night_watch.py</code></strong><p>顶部提供一键「开启 / 暂停夜间值守」开关；全部触发条件、内存上限与主机迁移边界都在一份可读 Python 脚本中清晰可见。</p></div>
+        <div><span>STEP 2 · 自然语言改规则 + 沙箱验真</span><strong>Dry-Run Studio</strong><p>用大白话让 Agent 调整排队超时、OOM 扩内存策略或新增排障规则；所有修改必须先通过隔离沙箱 Dry-Run 验真才会生效。</p></div>
+        <div><span>STEP 3 · 严守红线 + 自进化沉淀</span><strong>一次教会 · 永久免疫</strong><p>遇跨过电路定义边界的新错（如 STB 缺少 probe），坚决拒改网表并完整留证；获人工一句授权后即沉淀为永久有界规则，后续自动恢复并诚实标注跳过项为 <code>Skipped / Unverified</code>。</p></div>
+      </div>
+
+      <div class="g-two">
+        <article class="g-card">
+          <span class="g-tag">五维交互诊断场景 · 教学示意</span>
+          <div class="g-tabs" role="group" aria-label="运行诊断场景"><button data-diagnosis="disconnect" aria-pressed="true">连接中断</button><button data-diagnosis="target">规格未达</button><button data-diagnosis="soa">模型告警</button></div>
+          <div class="g-status-list" id="diagnostic-status"></div>
+        </article>
+        <article class="g-card">
+          <h3 id="diagnostic-title">先恢复观测，不先重提任务。</h3>
+          <p id="diagnostic-copy">最后确认状态为 running，当前 SSH 查询失败。Agent 应保留 run / key，查看最近成功观测与原任务状态，不能把连接失败解释成求解器失败。</p>
+          <div class="g-prompt" id="diagnostic-action">下一步：查询原任务并核对日志。不要立即 resubmit。</div>
+          <p class="g-small">M4 有界自动恢复默认仅对明确运维故障（License 排队超时、确认 OOM 内存扩配/换机）生效；严禁擅自修改原始网表、激励、Corner 或验收标准，未经人工授权绝不把失败“修”成通过。</p>
+        </article>
+      </div>
+
+      <div class="g-results">
+        <p class="g-kicker">REAL CASE / A BETTER SPECTRUM IS NOT THE WHOLE STORY</p>
+        <h3>真实例子：频谱变好了，但 SOA 告警没有因此消失。</h3>
+        <div class="g-two">
+          <figure><img src="./showcase-spectrum.svg" alt="两次自举采样保持仿真的真实频谱对比"><figcaption>multi=1 → 16，SNDR 33.44 → 57.57 dB，1 GS/s，4,096 点。同一算法独立复算原 PSF。</figcaption></figure>
+          <article>
+            <div class="metric">+24.13 dB SNDR</div>
+            <p>这证明这组确定性采样实验的频谱改善，不证明完整 ADC 精度或器件工作条件合格。</p>
+            <pre>原日志已核对的实例
 CMI-2752 · XDUT.M8
 Vgs ≈ 999.947 mV
 vgs_max = 990 mV
 
 执行结果：退出码 0
-工作条件：出现 SOA 相关告警</pre><p>Agent 应指出超限与分析范围，提出调整偏置或检查模型适用性的下一次实验；不能把“跑完”和“性能改善”合并成总通过。</p></article></div><details><summary>展开原始信号视角：时钟、采样保持、自举栅压</summary><figure><img src="./showcase-bootstrap-tran.svg" alt="原生采样保持瞬态结果中的CLK VIN VOUT VBST和VGS"><figcaption>64–70 ns 的显示窗口；曲线为显示降采样，频谱使用完整 4,096 点序列。</figcaption></figure></details></div></section>
-<section class="g-section" id="so-analysis"><div class="g-section-head"><div><p class="g-kicker">NUMERICAL TOOLS THE AGENT CAN USE</p><h2>结果分析提供工具，不替用户发明指标。</h2></div><p>Agent 选择合适方法、编写后处理；算法检查采样、单位与窗口。测量定义随实验保存。</p></div><div class="g-two"><div class="g-results"><h3>CMOS 反相器：时域证据</h3><figure><img src="./showcase-inverter-tran.svg" alt="真实反相器输入输出瞬态波形"><figcaption>0.9 V、10 fF；50% 交叉重算 tPHL 22.60 ps、tPLH 28.91 ps。</figcaption></figure><div class="g-two"><figure><img src="./showcase-inverter-dc.svg" alt="真实反相器DC传输曲线"><figcaption>DC 传输曲线</figcaption></figure><figure><img src="./showcase-inverter-ac.svg" alt="真实反相器AC增益幅值"><figcaption>AC 偏置 0.435 V；不是反馈环路相位裕度</figcaption></figure></div></div><article class="g-card"><h3>SpiceOwl 提供的分析积木</h3><div class="g-path"><div><strong>PSF 解析与信号身份</strong><span>按分析类型读取原生信号，检查采样、有限值、时间轴与单位。</span></div><div><strong>频谱与拟合</strong><span>相干 / 加窗 FFT，SNDR / SFDR / THD，正弦拟合。</span></div><div><strong>ADC 与瞬态工具</strong><span>码字重建、权重校准、INL / DNL，以及延时、建立、过冲等指标。</span></div><div><strong>AC / DC</strong><span>幅频响应、直流工作点与传输数据；不混用不同分析的身份。</span></div></div><p>已有数值库由 Agent 调用，不要求项目维护者给每种电路手写专用 TB 生成算法。测量条件不充分时保留未知，不用“有数值”冒充有效结论。</p></article></div></section>
-<section class="g-section" id="so-engineering"><div class="g-section-head"><div><p class="g-kicker">WHERE THE ENGINEERING WORK IS</p><h2>工程量在于把一次次人工排查，变成可复用能力。</h2></div><p>SpiceOwl 的落脚点是辅助 Agent 管理仿真。资源、依赖、运行状态和科学结论需要一起维护，才能支持长时间实验。</p></div><div class="g-work-grid"><article><h3>带时间与余量的资源推荐</h3><p>分离连接和资源观测，检查身份、时效、CPU / RAM / load 余量；保留每个候选被排除的原因。</p><code>hosts / scheduling / circuitgit_pool</code></article><article><h3>跨环境的 PDK 发现与索引</h3><p>有限扫描、include / section 依赖闭包、器件索引、平台动态库选择，SQLite 持久化与精确缓存范围。</p><code>onboarding / pdk_discovery / pdk_lut</code></article><article><h3>Agent 编写的实验可检查</h3><p>从任意明确电路源与 TB 出发检查绑定、输入、依赖和判据；不把目标锁死成预置反相器流程。</p><code>agent_tb / experiments</code></article><article><h3>长任务与未知结果处理</h3><p>提交 key、请求日记、原任务查询、持续监控与退避；连接出错不会自动创建另一个仿真。</p><code>live_client / workflow / monitor adapter</code></article><article><h3>懂仿真语义的诊断与分析</h3><p>许可、模型缺失、语法、SOA、尺寸与收敛分别分类；PSF 与数学工具保留分析身份和测量前提。</p><code>spectre_diagnostics / spectre_results / adctools</code></article><article><h3>独立与嵌入的 Agent 通道</h3><p>独立控制台、Agent 会话、CLI 与 SDK 共用管理能力。需要嵌入设计环境时导出工具，复用宿主会话和原运行身份。</p><code>codex_bridge / standalone_agent / embedded</code></article></div><div class="g-table-wrap"><table class="g-table"><thead><tr><th>能力</th><th>当前可以做到</th><th>仍需明确的边界</th></tr></thead><tbody><tr><td>Agent 辅助仿真</td><td>组织配置、写 TB、调用工具、解释结果</td><td>目标和运行条件需要确认；并非自动知道所有工艺与意图</td></tr><tr><td>持续监督</td><td>观察原任务，记录状态、事件和断连</td><td>服务持续运行；不等于自动恢复求解器</td></tr><tr><td>自动优化 / 恢复</td><td>可据证据提出下一步计划</td><td>自动迁移、重启与数值修复尚未完成</td></tr><tr><td>真实数据证据</td><td>本页三次 Spectre 原生结果、波形与复算</td><td>单独 Runner 补跑；不证明原向导或所有 Agent 功能已端到端验证</td></tr></tbody></table></div><div class="g-proof-links"><a href="./pool-demo.json" download>教学资源推荐数据</a><a href="./showcase-samples.json" download>真实 FFT 样本</a><a href="./showcase-evidence.json" download>运行与测量来源</a><a href="#sc-reference" data-reference>完整电路源码与十阶段参考</a></div><p class="g-source-note">依据：server-pool.md、host-onboarding.md、pdk-lut.md、onboarding-boundaries.md、dual-mode-agent.md、standalone-runtime.md、workflow.md；资源互动由生产推荐函数在明确的合成样例上计算。</p></section>
-</div>
-<details class="sc-legacy" id="sc-reference"><summary>深入查看：十阶段操作、工具契约和完整电路源码</summary><p>下面保留的是先前发布的向导快照与接口说明。其“等待审核 / 尚无结果”指该历史向导记录，不是上方单独补跑的实验。展开后可核对所有源文件与步骤。</p><main>
+工作条件：出现 SOA 相关告警</pre>
+            <p>SpiceOwl 将执行状态、测量有效性、指标达成与工作条件合格性严格拆分为独立维度，不能把“跑完”和“性能改善”合并成总通过。</p>
+          </article>
+        </div>
+        <details><summary>展开原始信号视角：时钟、采样保持、自举栅压</summary><figure><img src="./showcase-bootstrap-tran.svg" alt="原生采样保持瞬态结果中的CLK VIN VOUT VBST和VGS"><figcaption>64–70 ns 的显示窗口；曲线为显示降采样，频谱使用完整 4,096 点序列。</figcaption></figure></details>
+      </div>
+    </section>
+
+    <!-- SECTION 6: NUMERICAL ANALYSIS -->
+    <section class="g-section" id="so-analysis">
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">LOSSLESS NUMERICAL TOOLS FOR AGENTS</p>
+          <h2>结果分析提供无损算子，绝不用降采样预览糊弄指标。</h2>
+        </div>
+        <p>Agent 选择方法并编写统一口径后处理脚本；底层确定性算法严格核对无损采样、单位与窗口，测量定义随实验一起归档。</p>
+      </div>
+      <div class="g-two">
+        <div class="g-results">
+          <h3>CMOS 反相器：真实 Spectre 原生证据</h3>
+          <figure><img src="./showcase-inverter-tran.svg" alt="真实反相器输入输出瞬态波形"><figcaption>0.9 V、10 fF；50% 交叉重算 tPHL 22.60 ps、tPLH 28.91 ps。</figcaption></figure>
+          <div class="g-two">
+            <figure><img src="./showcase-inverter-dc.svg" alt="真实反相器DC传输曲线"><figcaption>DC 传输曲线</figcaption></figure>
+            <figure><img src="./showcase-inverter-ac.svg" alt="真实反相器AC增益幅值"><figcaption>AC 偏置 0.435 V；不是反馈环路相位裕度</figcaption></figure>
+          </div>
+        </div>
+        <article class="g-card">
+          <h3>SpiceOwl 提供的无损分析积木</h3>
+          <div class="g-path">
+            <div><strong>PSF Binary / PSFXL / ASCII 解析</strong><span>按分析类型读取原生信号，流式原位读取大波形并严格拦截降采样预览进入科学测量。</span></div>
+            <div><strong>通用模拟量测配方（M3）</strong><span>10–90% 上升/下降时间、±0.1%/2% 建立时间、过冲、压摆率、周期/抖动、DC 增益/UGBW/相位裕度与静态功耗。</span></div>
+            <div><strong>频谱与 ADC 工具链</strong><span>相干 / 加窗 FFT、SNDR / SFDR / THD、正弦拟合、码字重建、INL / DNL 与固定版本 ADCToolbox 集成。</span></div>
+            <div><strong>PVT / Monte Carlo 统计</strong><span>保守良率与 Cpk 计算，失败与缺失样本留在分母并完整保留 <code>mc_seed</code> 身份。</span></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- SECTION 7: ENGINEERING & CAPABILITY MATRIX -->
+    <section class="g-section" id="so-engineering">
+      <div class="g-section-head">
+        <div>
+          <p class="g-kicker">ENGINEERING ARCHITECTURE &amp; HONEST BOUNDARIES</p>
+          <h2>工程量在于把一次次人工救火，沉淀为可复用的硬能力。</h2>
+        </div>
+        <p>所有模块均可离线单测与跨平台（macOS / Linux / Windows）CI 回归；公开展示页面同样透明写明每一项能力的当前边界。</p>
+      </div>
+
+      <div class="g-work-grid">
+        <article><h3>本机直连与跨平台控制面</h3><p>免管理员 <code>spiceowl://</code> 协议唤醒、<code>127.0.0.1:8765</code> 本地 Connector、可视化 SSH 向导与 Windows/macOS/Linux 原生兼容。</p><code>connector.py / _platform.py / onboarding_wizard.py</code></article>
+        <article><h3>集群负载与 FlexLM 许可感知</h3><p>并行探测多台主机 CPU/RAM/EDA 进程与 FlexLM 许可池，按时效与 20% 余量输出可解释推荐，供人机共用。</p><code>hosts.py / host_activity.py / scheduling</code></article>
+        <article><h3>零 Virtuoso 选库与 PDK LUT</h3><p>网页只读 Remote Library Manager、隔离 <code>Cadence si</code> + 只读 SKILL 导出、跨服务器 PDK 依赖闭包与 SQLite LUT 缓存。</p><code>onboarding / pdk_discovery / pdk_lut</code></article>
+        <article><h3>原生直连执行与批量管理</h3><p>不依赖网关直接驱动 <code>ssh_direct / lsf / slurm</code>，SHA-256 输入冻结、原子占位防重发、4 秒自动巡检与 PVT/MC 批量并发。</p><code>direct.py / batch.py / monitoring</code></article>
+        <article><h3>双模式交互式报告与无损分析</h3><p>快速报告矢量引擎、TB 综合横评、102 KB 单文件离线 HTML 导出，以及自由创作模式 PSF 测量与 ADCTools 集成。</p><code>report_builder.py / analog_metrics / adctools</code></article>
+        <article><h3>可进化夜间值守与 Skill 体系</h3><p>透明 <code>night_watch.py</code> 引擎、隔离沙箱 Dry-Run 验真、1-call 配置更新、5 大内置 Skill 与 3 级 Codex 权限通道。</p><code>night_watch_script.py / watch_handoff.py / skills.py</code></article>
+      </div>
+
+      <div class="g-table-wrap">
+        <table class="g-table">
+          <thead><tr><th>能力模块</th><th>当前已落地能力</th><th>明确坚持的工程与科学边界</th></tr></thead>
+          <tbody>
+            <tr><td>Web 工作台与本机直连</td><td>github.io 唯一正式入口 + 30 秒双击安装本机 Connector，原生支持 macOS / Linux / Windows</td><td>密钥、密码、原始网表与 PSF 数据留在本机与内网，公共静态页绝不接触私有凭据</td></tr>
+            <tr><td>SSH 集群与 License 洞察</td><td>可视化 ProxyJump / 旧版 RSA 向导、5 项全绿校验、多机 CPU/RAM/EDA 进程与 FlexLM 席位监控</td><td>资源推荐基于带新鲜度窗口的保守启发式，不等于集群硬预留；缺失指标保持 unknown</td></tr>
+            <tr><td>零 Virtuoso 电路接入</td><td>一句话 AI 模糊搜库导出 + 网页只读 Library Manager（cds.lib / 隔离 si / 只读 SKILL）</td><td>全程只读隔离、不改动远端源库、不占 ADE 交互许可；远端仍需已授权 PDK 与 Spectre 环境</td></tr>
+            <tr><td>批量仿真与交互报告</td><td>1-SSH 派发、4s 自动巡检、单点 + TB 综合报告、102 KB 离线 HTML、自由创作定制 PSF 曲线</td><td>严禁将降采样预览送入科学量测；PVT / MC 失败样本显式计入保守良率分母</td></tr>
+            <tr><td>夜间值守与异常恢复</td><td>透明 <code>night_watch.py</code>、一键启停、自然语言编辑 + 沙箱 Dry-Run 验真、M4 有界恢复（License 退避 / OOM 扩配换机）与人工授权沉淀自定义规则</td><td>严守科学红线：未经人工明确授权绝不改写网表、激励、Corner 或规格；求解器二进制 checkpoint 续算留作后续路线</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="g-proof-links">
+        <a href="./pool-demo.json" download>教学资源推荐数据</a>
+        <a href="./showcase-samples.json" download>真实 FFT 样本</a>
+        <a href="./showcase-evidence.json" download>运行与测量来源</a>
+        <a href="#sc-reference" data-reference>完整公开电路源码与十阶段契约参考</a>
+      </div>
+      <p class="g-source-note">公开展示页默认不发起任何远端 API 请求，视频流仅在你主动点击播放时按需加载自 GitHub Release；下方保留完整的已审核十阶段接口契约与公开电路源文件供逐字核对。</p>
+    </section>
+  </div>
+
+  <details class="sc-legacy" id="sc-reference"><summary>深入查看：十阶段操作、工具契约和完整电路源码</summary><p>下面保留的是先前发布的向导快照与接口说明。其“等待审核 / 尚无结果”指该历史向导记录，不是上方单独补跑的实验。展开后可核对所有源文件与步骤。</p><main>
     <section class="hero" aria-labelledby="page-title">
       <div class="hero-copy"><p class="eyebrow">FROM CIRCUIT TO EVIDENCE</p><h1 id="page-title">一次仿真，<br>十个可核对的阶段。</h1><p class="lead">Agent 帮你组织实验。确定性工具保存身份、检查依赖、计算结果。每一步都有输入、有输出，也有明确的停止条件。</p>
         <div class="circuit-switch" role="group" aria-label="选择说明电路"><button type="button" data-circuit="bootstrap" aria-pressed="true">Bootstrap 采样测试</button><button type="button" data-circuit="inverter" aria-pressed="false">CMOS Inverter</button></div>
@@ -82,7 +621,8 @@ vgs_max = 990 mV
     <section id="responsibility" class="responsibility" aria-labelledby="responsibility-title"><p class="eyebrow">CLEAR OWNERSHIP</p><h2 id="responsibility-title">谁作决定，谁提供证据。</h2><p>聊天权限、配置选择与仿真执行授权分别保留。工具返回值和模型回答都不能替人签署审核。</p><div class="table-scroll" tabindex="0" role="region" aria-label="角色边界表，可横向滚动"><table><caption class="sr-only">用户、AI 和确定性引擎的责任及禁止行为</caption><thead><tr><th scope="col">阶段</th><th scope="col">用户 / 人工审核</th><th scope="col">AI</th><th scope="col">确定性引擎与执行所有者</th><th scope="col">禁止的行为</th></tr></thead><tbody id="responsibility-rows"></tbody></table></div></section>
     <section id="provenance" class="provenance" aria-labelledby="provenance-title"><div><p class="eyebrow">PROVENANCE, NOT A PERFORMANCE CLAIM</p><h2 id="provenance-title">真实结构，清楚标注的示例。</h2><p>2026-11-24 的已审公开材料包含两个电路源、Bootstrap 冻结 TB 和手工白名单摘要。Bootstrap 的依赖静态审计匹配，revision 10 仍在等待人工审核；无 job、求解、波形或 FFT 结果。步骤 9 / 10 是 planned。</p><p>阶段输入 / 输出 JSON 仍是接口说明，原始私有 ID 保持空值。完整源与摘要可在上方核对；构建及测试对所有固定公开文件校验 SHA-256，不加载私有运行时。本页不会连接服务。</p></div><div class="sources"><h3>可在仓库查阅的依据</h3><ul><li><code>CircuitGit/lib/pipetisar-real/RS9_L5_9bit_Bootstrap/README.md</code></li><li><code>CircuitGit/lib/basics/cmos-inverter/README.md</code></li><li><code>docs/agent-testbench.md</code> · TB 与 helper 契约</li><li><code>docs/pdk-lut.md</code> · 缓存和 section 审计</li><li><code>docs/adctools.md</code> · 测量定义与单位</li></ul><p id="snapshot-source-note">公开副本来源：CircuitGit workflow publication allowlist。没有复制私有 runtime dump；没有复用历史结果。接口已实现 / fake protocol 已测，与真实 provider 推理 unknown 分别标注。</p></div></section>
   </main></details>
-  <footer class="site-footer"><a href="./index.html">← 返回 SpiceOwl</a><span>身份不丢失 · 缺失不猜测 · 没有结果就不显示通过</span></footer>
-  <noscript><p class="noscript">图表可直接阅读。切换案例与阶段需要 JavaScript；原向导历史快照仍停在待审核阶段。</p></noscript>
+
+  <footer class="site-footer"><a href="./index.html">← 进入 SpiceOwl 工作台</a><span>你去休息，仿真我盯 · 身份不丢失 · 严守科学红线</span></footer>
+  <noscript><p class="noscript">图表与介绍可直接阅读。播放内嵌视频、筛选章节与切换阶段需要开启 JavaScript。</p></noscript>
 </body>
 </html>
